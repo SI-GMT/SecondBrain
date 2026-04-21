@@ -1,4 +1,4 @@
-# memory-kit
+# SecondBrain
 
 Mémoire persistante inter-sessions pour CLI LLM. Vault Markdown local, adapters natifs par plateforme, déclenchement automatique sur langage naturel.
 
@@ -6,7 +6,7 @@ Mémoire persistante inter-sessions pour CLI LLM. Vault Markdown local, adapters
 
 ## Aperçu
 
-Claude Code, Gemini CLI, Codex et Mistral Vibe ne persistent pas le contexte entre sessions. `memory-kit` déploie dans chaque CLI détectée un adapter natif qui lit et écrit un vault Markdown structuré — `/clear` cesse d'être une perte de contexte, et le langage naturel (« reprends », « on s'arrête ») déclenche chargement et archivage automatiquement.
+Claude Code, Gemini CLI, Codex et Mistral Vibe ne persistent pas le contexte entre sessions. `SecondBrain` déploie dans chaque CLI détectée un adapter natif qui lit et écrit un vault Markdown structuré — `/clear` cesse d'être une perte de contexte, et le langage naturel (« reprends », « on s'arrête ») déclenche chargement et archivage automatiquement.
 
 Logique procédurale canonique dans `core/procedures/`, traduite en livrables plateforme-spécifiques par `deploy.ps1`.
 
@@ -30,8 +30,8 @@ Détection : présence du binaire sur `$PATH` **ou** dossier de config utilisate
 ## Installation
 
 ```powershell
-git clone <repo> C:\path\to\memory-kit
-cd C:\path\to\memory-kit
+git clone https://github.com/SI-GMT/SecondBrain.git
+cd SecondBrain
 .\deploy.ps1
 ```
 
@@ -60,7 +60,7 @@ Réponse attendue sur vault vierge :
 ## Architecture
 
 ```
-memory-kit/
+SecondBrain/
 ├── core/procedures/              # Spec canonique, agnostique plateforme
 │   ├── archive.md                # Placeholder : {{CONFIG_FILE}}
 │   └── recall.md

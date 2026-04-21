@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Nature du dépôt
 
-**KIT-MÉMOIRE — dépôt de développement.** Ce dossier contient le code source d'un kit qui donne à Claude Code (puis Gemini/Codex dans une phase ultérieure) une mémoire persistante entre les sessions via un vault Obsidian. Ce n'est **pas** un projet où on prend des notes — c'est le kit lui-même.
+**SecondBrain — dépôt de développement.** Ce dossier contient le code source d'un kit qui donne aux CLI LLM (Claude Code, Gemini CLI, Codex, Mistral Vibe) une mémoire persistante entre les sessions via un vault Markdown (visualisable avec Obsidian). Ce n'est **pas** un projet où on prend des notes — c'est le kit lui-même.
 
 Langue de travail : **français** (code, commentaires, messages, procédures). Accents complets, pas d'ASCII volontaire.
 
