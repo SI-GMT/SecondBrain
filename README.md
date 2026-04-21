@@ -164,4 +164,4 @@ Retirer à la main le bloc `<!-- MEMORY-KIT:START --> … <!-- MEMORY-KIT:END --
 
 ## Licence
 
-À définir.
+MIT — voir [LICENSE](LICENSE). Utilisez, modifiez, redistribuez. Attribution minimale (conserver la notice de copyright), aucune garantie, aucune restriction.
