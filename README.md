@@ -2,6 +2,8 @@
 
 Mémoire persistante inter-sessions pour CLI LLM. Vault Markdown local, adapters natifs par plateforme, déclenchement automatique sur langage naturel.
 
+> Basé sur le travail original de **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)) — voir [Crédits](#crédits).
+
 ## Aperçu
 
 Claude Code, Gemini CLI, Codex et Mistral Vibe ne persistent pas le contexte entre sessions. `memory-kit` déploie dans chaque CLI détectée un adapter natif qui lit et écrit un vault Markdown structuré — `/clear` cesse d'être une perte de contexte, et le langage naturel (« reprends », « on s'arrête ») déclenche chargement et archivage automatiquement.
@@ -161,6 +163,18 @@ Remove-Item "$HOME\.codex\skills\archive","$HOME\.codex\skills\recall" -Recurse 
 ```
 
 Retirer à la main le bloc `<!-- MEMORY-KIT:START --> … <!-- MEMORY-KIT:END -->` dans `~/.claude/CLAUDE.md` et `~/.vibe/instructions.md`. Retirer l'entrée vault de `permissions.additionalDirectories` dans `~/.claude/settings.json`. Le vault lui-même est conservé — les archives restent.
+
+## Crédits
+
+Le cycle d'archivage/recall, la séparation snapshot mutable (`contexte.md`) / instantané immuable (`archives/`), et le rituel `/clear` comme « sommeil propre » sont conçus par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)).
+
+Ressources de Raphaël :
+
+- Agence : <https://fractality.studio/>
+- Communauté Skool : <https://www.skool.com/ica-9283>
+- YouTube : <https://www.youtube.com/@raphfages>
+
+Ce dépôt étend le concept original avec une architecture `core/` + `adapters/` pour déployer le kit sur plusieurs CLI LLM (Claude Code, Gemini CLI, Codex, Mistral Vibe) depuis un seul script de déploiement.
 
 ## Licence
 
