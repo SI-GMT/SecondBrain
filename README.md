@@ -21,41 +21,99 @@ Logique procédurale canonique dans `core/procedures/`, traduite en livrables pl
 
 Détection : présence du binaire sur `$PATH` **ou** dossier de config utilisateur (`~/.{claude,gemini,codex,vibe}/`). Une plateforme absente est ignorée sans erreur ; aucune CLI trouvée entraîne un message informatif et une sortie propre.
 
+## Rôle d'Obsidian
+
+Le vault est un dossier de fichiers Markdown ordinaires. Les CLI LLM lisent et écrivent ces fichiers **directement** — il n'y a aucune API ni aucun serveur Obsidian dans la chaîne technique.
+
+**Obsidian est l'interface humaine sur ce même dossier** : graphe des liens entre notes, backlinks automatiques, recherche transverse, édition rapide, daily notes, tags. Sans Obsidian, le kit continue d'écrire les archives et de maintenir `contexte.md`, mais la moitié de la valeur disparaît — un second cerveau qui ne peut pas être relu par le premier n'est qu'un tas de fichiers.
+
+Pour cette raison, Obsidian est considéré comme **requis** à l'usage normal du kit. Gratuit, cross-platform, pas de compte à créer.
+
 ## Prérequis
 
-- **PowerShell 7+** (`pwsh`) pour `deploy.ps1`.
-- Au moins une CLI LLM initialisée (dossier de config créé par la CLI à son premier lancement).
-- Obsidian (optionnel) pour visualiser le vault comme graphe.
+- **PowerShell 7+** (`pwsh`) — exécute `deploy.ps1`. Installation : `winget install Microsoft.PowerShell` ou <https://github.com/PowerShell/PowerShell>.
+- **Obsidian** — voir section précédente. Téléchargement : <https://obsidian.md>.
+- **Au moins une CLI LLM** installée et initialisée (lancée au moins une fois pour que son dossier de config existe). Voir l'étape 2 ci-dessous.
 
 ## Installation
+
+### 1. Installer Obsidian
+
+Télécharger et installer depuis <https://obsidian.md>. Ne pas ouvrir de vault pour l'instant — on le fera à l'étape 5.
+
+### 2. Installer au moins une CLI LLM
+
+Une ou plusieurs — SecondBrain déploie dans toutes celles qu'il détecte :
+
+| CLI             | Installation                           |
+| --------------- | -------------------------------------- |
+| Claude Code     | <https://claude.com/claude-code>       |
+| Gemini CLI      | `npm install -g @google/gemini-cli`    |
+| Codex (OpenAI)  | `npm install -g @openai/codex`         |
+| Mistral Vibe    | <https://docs.mistral.ai/>             |
+
+**Important** : lance chaque CLI au moins une fois après installation (`claude`, `gemini`, `codex`, `vibe`) pour que son dossier de config utilisateur (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`) soit créé. Sans ça, `deploy.ps1` ignorera la CLI.
+
+### 3. Cloner SecondBrain
 
 ```powershell
 git clone https://github.com/SI-GMT/SecondBrain.git
 cd SecondBrain
+```
+
+### 4. Déployer dans chaque CLI
+
+```powershell
 .\deploy.ps1
 ```
 
-Vault ailleurs que dans le dépôt :
+Le script détecte automatiquement les CLI présentes (binaire sur `$PATH` **ou** dossier de config présent) et déploie l'adapter pour chacune. Une CLI absente est ignorée sans erreur ; aucune CLI trouvée affiche un message et sort proprement.
+
+Par défaut, le vault est créé à `SecondBrain/memory/`. Pour le placer ailleurs (partage réseau, synchro tierce, dossier de notes existant) :
 
 ```powershell
 .\deploy.ps1 -VaultPath "D:\notes\cerveau"
 ```
 
-Redéploiement après édition d'un template ou d'une procédure :
+### 5. Ouvrir le vault dans Obsidian
 
-```powershell
-.\deploy.ps1 -Force   # réécrit memory-kit.json
-```
+1. Lancer Obsidian.
+2. **« Ouvrir un coffre »** → **« Ouvrir un dossier comme coffre »**.
+3. Sélectionner le dossier `SecondBrain/memory/` (ou le chemin passé à `-VaultPath` à l'étape 4).
+4. Obsidian crée son propre `.obsidian/` dans ce dossier à la première ouverture. Rien d'autre à configurer.
 
-Test depuis une nouvelle session Claude Code :
+Le vault contient déjà un `_index.md` vide, prêt à être rempli au fil des archives.
+
+### 6. Vérifier
+
+Ouvrir une **nouvelle** session sur l'une des CLI déployées (ou redémarrer une session existante — les skills/prompts sont chargés au démarrage).
+
+Depuis Claude Code, Gemini ou Codex, taper :
 
 ```
 /recall
 ```
 
-Réponse attendue sur vault vierge :
+Depuis Mistral Vibe (pas de slash commands exposés au niveau user), simplement dire :
+
+> reprends
+
+Réponse attendue sur vault vierge, sur toutes les plateformes :
 
 > Aucune session trouvée. Mémoire initialisée — memory/_index.md est prêt. Décris ce sur quoi tu travailles et on commence.
+
+La mémoire est opérationnelle.
+
+## Mise à jour
+
+Après un `git pull` ou une modification locale (procédure, template d'adapter, frontmatter de skill) :
+
+```powershell
+.\deploy.ps1          # redéploie, préserve memory-kit.json existant
+.\deploy.ps1 -Force   # idem, mais écrase memory-kit.json
+```
+
+Toutes les opérations sont idempotentes — redéployer ne duplique jamais d'entrée.
 
 ## Architecture
 
