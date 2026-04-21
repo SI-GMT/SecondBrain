@@ -1,0 +1,7 @@
+description = "Archiver la session de travail dans le vault mémoire (mode complet)."
+prompt = """
+{{PROCEDURE}}
+
+---
+Note éventuelle de l'utilisateur à intégrer au résumé : {{args}}
+"""

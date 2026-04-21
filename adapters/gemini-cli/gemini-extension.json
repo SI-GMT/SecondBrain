@@ -1,0 +1,6 @@
+{
+  "name": "memory-kit",
+  "version": "1.0.0",
+  "description": "Second cerveau persistant : /recall pour reprendre le contexte d'un projet, /archive pour sauvegarder la session avant /clear.",
+  "contextFileName": "GEMINI.md"
+}
