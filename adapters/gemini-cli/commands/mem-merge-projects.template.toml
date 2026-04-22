@@ -1,4 +1,4 @@
-description = "Fusionner deux projets du vault mémoire."
+description = "Fusionner deux projets du vault mémoire en retaggant les archives de la source, en fusionnant l'historique de la cible et en retirant la source de l'index."
 prompt = """
 {{PROCEDURE}}
 

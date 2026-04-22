@@ -1,4 +1,4 @@
-description = "Renommer le slug d'un projet dans le vault mémoire."
+description = "Renommer un projet dans le vault mémoire de manière complète, y compris dossier projet, contexte.md, historique.md, _index.md et fichiers d'archives."
 prompt = """
 {{PROCEDURE}}
 

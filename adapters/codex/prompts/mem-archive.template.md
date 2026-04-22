@@ -1,5 +1,5 @@
 ---
-description: Archiver la session de travail dans le vault mémoire (mode complet).
+description: Archiver la session de travail dans le vault mémoire en mode complet, avec création d'un fichier dans archives/ puis mise à jour de contexte.md, historique.md et _index.md.
 ---
 
 {{PROCEDURE}}
