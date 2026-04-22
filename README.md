@@ -1,117 +1,126 @@
-# SecondBrain — Mémoire persistante pour agents CLI
+# SecondBrain
 
-Résout l'amnésie inter-sessions des CLI agentiques : quand tu fais `/clear` (ou que tu fermes l'IDE), le contexte n'est pas perdu. Il est archivé localement et rechargeable en 30 secondes à la prochaine session.
+> Mémoire persistante pour agents CLI — Claude Code, Gemini CLI, Codex, Mistral Vibe.
 
-**Gain concret** : la reprise de session consomme 2× moins de tokens qu'un re-briefing manuel.
+Licence MIT · Version v0.2.0 · Documentation en français
 
-**CLI supportées** : **Claude Code** (écosystème de référence, le plus abouti), **Gemini CLI**, **Codex**, **Mistral Vibe**. Le kit détecte automatiquement les CLI installées sur le poste et déploie l'adapter correspondant.
-
-> Ce kit a été conçu et éprouvé d'abord sur Claude Code. Les adapters Gemini CLI, Codex et Mistral Vibe bénéficient de la même source de vérité procédurale, mais leur maturité en conditions réelles est moindre — retours et PR bienvenus.
+SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
 ---
 
-## Le problème
+## Sommaire
 
-Les CLI LLM agentiques (Claude Code, Gemini CLI, Codex, Mistral Vibe…) n'ont pas de mémoire entre les sessions. Après un `/clear` ou une fermeture d'IDE, tu dois tout ré-expliquer : l'état du projet, les décisions prises, les prochaines étapes.
-
-Ce kit installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau **utilisateur** (dans la config de la CLI, par exemple `~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`) — donc disponible depuis n'importe quel projet sur ton poste.
+- [Présentation](#présentation)
+- [Fonctionnement](#fonctionnement)
+- [Installation](#installation)
+- [Architecture](#architecture)
+- [Commandes](#commandes)
+- [Performances](#performances)
+- [Multi-projets](#multi-projets)
+- [Feuille de route](#feuille-de-route)
+- [Désinstallation](#désinstallation)
+- [Licence et crédits](#licence-et-crédits)
 
 ---
 
-## Le cycle de la mémoire
+## Présentation
 
-C'est un rituel biologique : l'agent prend des notes en continu, les relit en se réveillant.
+Les CLI LLM agentiques n'ont pas de mémoire entre les sessions. Après un `/clear` ou une fermeture d'IDE, l'intégralité du contexte — état du projet, décisions prises, prochaines étapes — doit être ré-exposée manuellement à l'agent.
 
-```
-En arrivant    →  Dire « reprends », « on continue », ou taper /mem-recall.
-                  L'agent charge le contexte en 30 secondes.
-                  Pas de re-briefing. Travail immédiat.
+SecondBrain installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau utilisateur (dans `~/.claude/`, `~/.gemini/`, `~/.codex/` ou `~/.vibe/` selon la CLI). Le contexte devient disponible depuis n'importe quel projet sur le poste.
 
-En travaillant →  L'agent met à jour silencieusement le contexte
-                  dès qu'une décision ou un fait important émerge.
+**Gain mesurable** : la reprise de session consomme environ 2× moins de tokens qu'un re-briefing manuel équivalent.
 
-En partant     →  Dire « on s'arrête », « je pars », ou taper /mem-archive.
-                  L'agent résume la session (décisions, état, prochaines étapes).
+### CLI supportées
 
-                  /clear
-                  Session propre. Mémoire intacte.
-```
+| CLI | Maturité | Surface d'installation |
+|---|---|---|
+| **Claude Code** | Référence, éprouvée en production | Skills + slash commands + bloc `CLAUDE.md` + permissions |
+| **Gemini CLI** | Fonctionnel, tests terrain en cours | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
+| **Codex** | Fonctionnel, tests terrain en cours | Prompts + skills |
+| **Mistral Vibe** | Fonctionnel (pas de slash commands : tout passe par les instructions) | Bloc injecté dans `instructions.md` |
 
-Le `/clear` n'est plus une perte — c'est un sommeil propre.
+Le script d'installation détecte automatiquement les CLI présentes sur le poste et ne déploie que les adapters correspondants. Les retours d'expérience et contributions sur les trois adapters non-Claude sont les bienvenus.
 
-Le déclenchement par langage naturel repose sur les instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `instructions.md`…). Sa fiabilité dépend du modèle sous-jacent : très fiable sur Claude Code, bon sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`) fonctionnent partout de la même manière.
+---
+
+## Fonctionnement
+
+Le cycle de mémoire se décompose en trois phases :
+
+1. **Reprise** — L'utilisateur écrit « reprends », « on continue », ou tape `/mem-recall`. L'agent charge le contexte du projet en quelques secondes, sans re-briefing.
+2. **Session** — L'agent met à jour silencieusement le `contexte.md` du projet dès qu'une décision structurante émerge. Aucune intervention explicite requise.
+3. **Archivage** — L'utilisateur écrit « on s'arrête », « je pars », ou tape `/mem-archive`. L'agent produit un résumé horodaté de la session (décisions, état, prochaines étapes) avant que `/clear` ne soit lancé.
+
+### Fiabilité du déclenchement par langage naturel
+
+Le déclenchement automatique repose sur des instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `instructions.md`). Sa fiabilité dépend du modèle sous-jacent : très élevée sur Claude Code, bonne sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`, etc.) produisent un comportement identique sur toutes les plateformes qui les exposent.
 
 ---
 
 ## Installation
 
 ### Prérequis
+
 - **PowerShell 7+** (`pwsh`) pour exécuter `deploy.ps1`.
-- **Au moins une CLI supportée** installée, avec une session déjà lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`). Le script se contente silencieusement des CLI qu'il trouve.
-- **Obsidian** (optionnel) — pour visualiser le vault comme graphe.
+- **Au moins une CLI supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/` ou `~/.vibe/`).
+- **Obsidian** (optionnel) — pour visualiser le vault sous forme de graphe.
 
-### Étape 1 — Placer le kit
+### Déploiement
 
-Cloner ou copier le kit dans un dossier stable de ton poste, par exemple :
+1. Cloner le dépôt dans un dossier stable du poste :
+   ```powershell
+   git clone https://github.com/SI-GMT/SecondBrain.git
+   ```
 
-```
-C:\Users\{toi}\SecondBrain\
-```
+2. Lancer le déploiement depuis la racine :
+   ```powershell
+   .\deploy.ps1
+   ```
 
-Le dossier contiendra `core/`, `adapters/`, `memory/`, `deploy.ps1` et ce README.
+Le script détecte les CLI présentes, déploie l'adapter correspondant à chacune, et ignore silencieusement les CLI absentes. Si aucune CLI n'est trouvée, un message listant les liens d'installation est affiché puis l'exécution s'arrête proprement.
 
-### Étape 2 — Lancer le déploiement
+### Surfaces installées par plateforme
 
-Depuis la racine du kit, dans un terminal PowerShell :
+| CLI | Fichiers déployés |
+|---|---|
+| Claude Code | `~/.claude/commands/mem-*.md`, `~/.claude/skills/mem-*.md`, `memory-kit.json`, bloc dans `CLAUDE.md`, vault ajouté à `permissions.additionalDirectories` dans `settings.json` |
+| Gemini CLI | Extension dans `~/.gemini/extensions/memory-kit/`, `memory-kit.json`, activation dans `extension-enablement.json` |
+| Codex | `~/.codex/prompts/mem-*.md`, `~/.codex/skills/mem-*/SKILL.md`, `memory-kit.json` |
+| Mistral Vibe | Bloc injecté dans `~/.vibe/instructions.md` |
 
-```powershell
-.\deploy.ps1
-```
+### Choix du vault
 
-Le script :
-- Détecte les CLI IA installées sur le poste : **Claude Code**, **Gemini CLI**, **Codex**, **Mistral Vibe**. Binaire sur le `PATH` ou dossier de config utilisateur présent.
-- Déploie l'adapter correspondant pour chaque CLI détectée. Une CLI absente est simplement ignorée (pas d'erreur).
-- Si **aucune** CLI n'est trouvée, affiche un message amical avec les liens d'installation et s'arrête proprement.
+| Scénario | Commande |
+|---|---|
+| Première installation (défaut) | `.\deploy.ps1` — vault à `{racine du kit}\memory` |
+| Première installation, chemin personnalisé | `.\deploy.ps1 -VaultPath "D:\mes-notes\cerveau"` |
+| Mise à jour | `.\deploy.ps1` — le chemin du vault existant est relu automatiquement depuis les `memory-kit.json` déjà déployés. Le script peut être lancé depuis n'importe quel répertoire |
+| Migration vers un nouvel emplacement | `.\deploy.ps1 -VaultPath "D:\nouveau\chemin"` — met à jour les configs mais ne déplace pas les fichiers existants (à faire manuellement) |
 
-Par plateforme :
+### Vérification
 
-- **Claude Code** — slash commands dans `~/.claude/commands/`, skills dans `~/.claude/skills/`, `memory-kit.json` + bloc MEMORY-KIT injecté dans `~/.claude/CLAUDE.md`, vault ajouté à `permissions.additionalDirectories` dans `~/.claude/settings.json`.
-- **Gemini CLI** — extension `memory-kit` dans `~/.gemini/extensions/memory-kit/` (manifest, `GEMINI.md`, slash commands TOML), `memory-kit.json` + activation dans `extension-enablement.json`.
-- **Codex** — slash commands dans `~/.codex/prompts/`, skills dans `~/.codex/skills/{nom}/SKILL.md`, `memory-kit.json`.
-- **Mistral Vibe** — bloc MEMORY-KIT injecté dans `~/.vibe/instructions.md` (Vibe n'a pas de slash commands user-level exposés ; tout passe par les instructions globales et le tool use).
-
-**Choix du vault** :
-
-- **Première installation** : par défaut `{racine du kit}\memory` (créé côté kit). Surcharge possible :
-  ```powershell
-  .\deploy.ps1 -VaultPath "D:\mes-notes\cerveau"
-  ```
-- **Mise à jour** (le kit est déjà installé sur le poste) : `deploy.ps1` lit le chemin du vault déjà enregistré dans les `memory-kit.json` existants (`~/.claude/`, `~/.gemini/`, `~/.codex/`) et le réutilise automatiquement. **Plus besoin de repasser `-VaultPath`**. Le script peut donc être relancé depuis n'importe quel répertoire de travail sans avoir à se positionner sur le vault.
-- **Migration du vault** vers un nouvel emplacement : passer explicitement `-VaultPath "D:\nouveau\chemin"`. Note : `deploy.ps1` met à jour les configs, mais ne déplace pas les fichiers existants — c'est à faire manuellement avant ou après.
-
-### Étape 3 — (Optionnel) Ouvrir le vault dans Obsidian
-
-1. Télécharger Obsidian : https://obsidian.md
-2. Ouvrir Obsidian → « Ouvrir un vault » → sélectionner `memory/`.
-
-Le dossier `memory/` est déjà un vault Obsidian valide.
-
-### Étape 4 — Vérifier
-
-Depuis n'importe quel projet, ouvrir une CLI supportée (Claude Code, Gemini CLI, Codex ou Mistral Vibe) et taper :
+Depuis n'importe quel projet, ouvrir une CLI supportée et taper :
 
 ```
 /mem-recall
 ```
 
-L'agent doit répondre quelque chose comme :
+L'agent doit répondre :
 
 ```
 Aucune session trouvée. Mémoire initialisée — memory/_index.md est prêt.
 Décris ce sur quoi tu travailles et on commence.
 ```
 
-La mémoire est opérationnelle. (Sur Mistral Vibe, qui n'expose pas de slash commands user-level, déclenche plutôt avec une phrase : *« charge mon contexte mémoire »*.)
+Sur Mistral Vibe, qui n'expose pas de slash commands user-level, déclencher avec une phrase : *« charge mon contexte mémoire »*.
+
+### Ouvrir le vault dans Obsidian (optionnel)
+
+1. Installer Obsidian : <https://obsidian.md>
+2. Ouvrir Obsidian → *Open folder as vault* → sélectionner `memory/`.
+
+Le dossier `memory/` est déjà un vault Obsidian valide.
 
 ---
 
@@ -130,87 +139,89 @@ SecondBrain/
 │   └── mem-rollback-archive.md
 ├── adapters/
 │   ├── claude-code/            Skills + slash commands + bloc CLAUDE.md
-│   ├── gemini-cli/             Extension `memory-kit` + GEMINI.md + TOML
+│   ├── gemini-cli/             Extension memory-kit + GEMINI.md + TOML
 │   ├── codex/                  Prompts + skills
 │   └── mistral-vibe/           Bloc injecté dans ~/.vibe/instructions.md
 ├── memory/                     Vault Obsidian local (non versionné)
 │   ├── _index.md
 │   ├── archives/               Une archive par session complète (immuable)
-│   └── projets/                Un dossier par projet
+│   └── projets/
 │       └── {nom}/
 │           ├── contexte.md     Snapshot mutable — toujours à jour
 │           └── historique.md   Fil chronologique des sessions
-└── deploy.ps1                  Assemble les procédures + installe chaque
+└── deploy.ps1                  Assemble les procédures et installe chaque
                                 adapter dans la config utilisateur de la CLI
 ```
 
-**Règle d'or — single source of truth** : toute logique procédurale vit dans `core/procedures/`. Les adapters n'ajoutent que du frontmatter et du formatage spécifique à leur plateforme. `deploy.ps1` assemble à la volée en substituant `{{PROCEDURE}}` par le contenu du fichier core correspondant. Pas de duplication, pas de fork entre plateformes.
+**Single source of truth** — toute logique procédurale vit dans `core/procedures/`. Les adapters n'apportent que du frontmatter et du formatage spécifique à leur plateforme. `deploy.ps1` substitue à la volée le marqueur `{{PROCEDURE}}` par le contenu du fichier core correspondant. Pas de duplication, pas de divergence entre plateformes.
 
 ---
 
-## Déclenchement automatique et commandes
+## Commandes
 
-Toutes les commandes sont préfixées `mem-*` pour éviter les collisions avec de futures commandes natives des CLI.
+Toutes les commandes sont préfixées `mem-*` pour éviter les collisions avec les commandes natives des CLI.
 
-### Cycle session
+### Cycle de session
 
-| Canal | Quand | Ce que l'agent fait |
+| Déclencheur | Contexte | Effet |
 |---|---|---|
-| Langage naturel (« reprends », « on continue », « tu te rappelles ») | Début de session | Charge le contexte automatiquement |
-| `/mem-recall` | Début de session (explicite) | Charge le contexte, affiche le briefing |
-| `/mem-recall {projet}` | Si plusieurs projets existent | Charge directement le projet nommé |
-| **Silencieux (incrémental)** | Pendant la session, dès qu'un fait important émerge | Met à jour `contexte.md` sans créer d'archive |
+| Langage naturel (« reprends », « on continue », « tu te rappelles ») | Début de session | Chargement automatique du contexte |
+| `/mem-recall` | Début de session (explicite) | Chargement + briefing affiché |
+| `/mem-recall {projet}` | Plusieurs projets existent | Chargement direct du projet nommé |
+| *Silencieux (incrémental)* | Fait important émergeant en cours de session | Mise à jour de `contexte.md` sans création d'archive |
 | Langage naturel (« on s'arrête », « je pars ») | Fin de session | Mode archive complet |
-| `/mem-archive` | Avant `/clear` (explicite) | Résume la session, écrit les fichiers |
+| `/mem-archive` | Avant `/clear` (explicite) | Résumé + écriture des fichiers |
 
 ### Gestion du vault
 
-| Commande | Intention naturelle | Ce que ça fait |
+| Commande | Intention | Effet |
 |---|---|---|
-| `/mem-list-projects` | « liste mes projets », « quels projets j'ai en mémoire ? » | Tableau des projets : slug, phase, dernière session, nb sessions |
-| `/mem-search {requête}` | « cherche dans la mémoire X », « trouve les archives qui parlent de Y » | Recherche plein-texte sur le vault avec contexte |
-| `/mem-rename-project {ancien} {nouveau}` | « renomme le projet X en Y » | Renomme le slug partout (dossier, frontmatters, tags, index). Préserve les noms de fichiers d'archives |
-| `/mem-merge-projects {source} {cible}` | « fusionne X dans Y » | Retaggue les archives de la source, concatène l'historique, supprime le dossier source. `contexte.md` à fusionner manuellement |
-| `/mem-digest {projet} [N]` | « résume-moi les N dernières sessions de X », « fil rouge de X » | Synthèse des arcs, décisions structurantes, dérive (N=5 par défaut). Lecture seule |
-| `/mem-rollback-archive [projet]` | « annule la dernière archive », « rollback l'archive de X » | Supprime la dernière archive + retire ses références. N'auto-restaure PAS `contexte.md` |
+| `/mem-list-projects` | Lister les projets en mémoire | Tableau : slug, phase, dernière session, nombre de sessions |
+| `/mem-search {requête}` | Rechercher dans le vault | Recherche plein-texte avec contexte |
+| `/mem-rename-project {ancien} {nouveau}` | Renommer un projet | Renomme le slug partout (dossier, frontmatters, tags, index) |
+| `/mem-merge-projects {source} {cible}` | Fusionner deux projets | Retaggue les archives, concatène l'historique, supprime la source. `contexte.md` à fusionner manuellement |
+| `/mem-digest {projet} [N]` | Synthétiser les N dernières sessions | Arcs majeurs, décisions structurantes, dérive des prochaines étapes. Lecture seule (N = 5 par défaut) |
+| `/mem-rollback-archive [projet]` | Annuler la dernière archive | Supprime l'archive et retire ses références. N'auto-restaure pas `contexte.md` |
 
 ---
 
-## Pourquoi 2× moins de tokens ?
+## Performances
 
 Chaque archive complet produit deux fichiers :
 
-- Une **archive** complète (~70 lignes) — immuable, trace historique
-- Un **`contexte.md`** synthétisé (~25 lignes) — écrasé à chaque session
+- Une **archive** complète (~70 lignes) — immuable, trace historique.
+- Un **`contexte.md`** synthétisé (~25 lignes) — écrasé à chaque session.
 
-Au `/mem-recall` suivant, l'agent lit `contexte.md` en priorité. Résultat : briefing en 25 lignes au lieu de parser 70 lignes d'archive.
+Au `/mem-recall` suivant, l'agent lit `contexte.md` en priorité. Le briefing fait donc 25 lignes au lieu de 70, soit approximativement 2× moins de tokens qu'un re-briefing manuel qui reproduirait tout le contexte historique.
 
 ---
 
 ## Multi-projets
 
-Un seul vault, N projets. Chaque projet a son propre dossier dans `memory/projets/`.
+Un seul vault peut contenir N projets. Chaque projet a son propre dossier dans `memory/projets/` :
 
 ```
 /mem-recall site-client-a
 /mem-recall app-mobile
 ```
 
-Le kit est installé au niveau utilisateur — pas besoin de le recopier dans chaque projet.
+Le kit étant installé au niveau utilisateur, il n'est pas nécessaire de le recopier dans chaque projet.
 
 ---
 
 ## Feuille de route
 
-- **Phase 1 (terminée)** — Détection multi-CLI + adapters Claude Code, Gemini CLI, Codex et Mistral Vibe sur un poste unique. Claude Code est le plus éprouvé ; les trois autres adapters sont fonctionnels mais demandent encore des tests terrain.
-- **Phase 2** — Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale.
-- **Phase 3** — Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims qui délèguent au MCP ; une seule implémentation, toutes les CLI compatibles MCP d'un coup.
+| Phase | État | Portée |
+|---|---|---|
+| **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe. Claude Code éprouvé ; les trois autres adapters fonctionnels mais tests terrain en cours. |
+| **Phase 2** | À venir | Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale. |
+| **Phase 3** | À venir | Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims délégant au MCP ; une seule implémentation pour toutes les CLI compatibles MCP. |
 
 ---
 
 ## Désinstallation
 
-Selon les CLI installées, retirer l'installation correspondante. Les commandes ci-dessous utilisent les chemins par défaut — adapter si `CLAUDE_CONFIG_DIR` (ou l'équivalent) est défini.
+Retirer les installations correspondant aux CLI déployées. Chemins par défaut ci-dessous ; adapter si `CLAUDE_CONFIG_DIR` (ou équivalent) est défini.
 
 ```powershell
 # Claude Code
@@ -234,12 +245,31 @@ Remove-Item "$HOME\.codex\memory-kit.json" -Force
 # Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\instructions.md
 ```
 
-Le vault `memory/` reste intact — tes archives sont conservées.
+Le vault `memory/` reste intact. Les archives et les projets sont préservés.
 
 ---
 
 ## Licence et crédits
 
-MIT — © SI Groupe Mondial Tissus.
+### Licence
 
-Concept original : Raphaël Fages / [Fractality Studio](https://fractality.studio/). Le projet porte le double nom **SecondBrain** (distribution SI-GMT) / **memory-kit** (artefacts techniques : fichier de config, extension Gemini, futur MCP) pour honorer ce lignage.
+Distribué sous licence **MIT** — © SI Groupe Mondial Tissus.
+
+### Concept original — Raphaël Fages / Fractality Studio
+
+SecondBrain est l'adaptation d'un concept développé à l'origine par **Raphaël Fages** au sein de son agence [Fractality Studio](https://fractality.studio/) : structurer la mémoire d'un agent LLM comme un *second cerveau* personnel, avec un cycle de prise de notes et de relecture analogue à un rythme biologique veille-sommeil.
+
+Les principes fondateurs suivants viennent directement de ce travail initial :
+
+- Une couche de fichiers Markdown lus et écrits par l'agent suffit à briser l'amnésie inter-sessions, sans infrastructure serveur.
+- Le triptyque **archive immuable / contexte mutable / historique chronologique** permet à la fois la traçabilité et la reprise rapide.
+- Le déclenchement par langage naturel — et pas seulement par commande explicite — rend le cycle ergonomique pour l'utilisateur final.
+
+L'implémentation présente dans ce dépôt adapte ces principes au contexte SI Groupe Mondial Tissus : support multi-CLI, vault Obsidian, procédures factorisées en une source unique de vérité, déploiement PowerShell, préparation aux Phases 2 (déploiement équipe) et 3 (serveur MCP).
+
+### Double nommage
+
+Le projet conserve volontairement un double nom pour honorer cette origine :
+
+- **SecondBrain** — nom de la distribution SI-GMT, du dépôt GitHub et de la documentation utilisateur.
+- **memory-kit** — nom technique conservé pour les artefacts internes : fichier de configuration (`memory-kit.json`), extension Gemini CLI, futur serveur MCP.
