@@ -1,0 +1,7 @@
+---
+name: mem-rollback-archive
+description: Annuler la dernière archive d'un projet. Supprime le fichier archive + retire ligne de historique.md + retire ligne de _index.md. NE RESTAURE PAS contexte.md. DÉCLENCHEMENT via /mem-rollback-archive [projet] ou langage naturel — « annule la dernière archive », « rollback l'archive de X ».
+user-invocable: true
+---
+
+{{PROCEDURE}}

@@ -1,0 +1,7 @@
+---
+name: mem-search
+description: Recherche plein-texte dans le vault mémoire. Retourne les occurrences avec contexte, groupées par fichier, triées archives récentes d'abord. DÉCLENCHEMENT via /mem-search {requête} ou langage naturel — « cherche dans la mémoire X », « trouve les archives qui parlent de Y ». Lecture seule.
+user-invocable: true
+---
+
+{{PROCEDURE}}

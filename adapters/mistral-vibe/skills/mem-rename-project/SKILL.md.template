@@ -1,0 +1,7 @@
+---
+name: mem-rename-project
+description: Renommer un projet dans le vault mémoire de manière COMPLÈTE — aucune référence à l'ancien slug ni à l'ancien label ne doit subsister. Met à jour dossier projet, frontmatters + H1 + corps de contexte.md + historique.md + archives, renomme les fichiers archives (slug dans le nom, horodatage préservé), met à jour _index.md (Projets + Archives), nettoie workspace.json. Vérification finale par grep. DÉCLENCHEMENT via /mem-rename-project {ancien} {nouveau} ou langage naturel — « renomme le projet X en Y ». Si nouveau label non fourni, dériver du slug.
+user-invocable: true
+---
+
+{{PROCEDURE}}
