@@ -14,19 +14,23 @@ Ce poste dispose d'un vault mémoire qui persiste le contexte entre les sessions
 - **TOUJOURS** attaquer directement avec ce chemin absolu, dès la première commande.
 - Si un doute émerge en cours d'opération, relire cette règle et repartir du chemin absolu.
 
-### Outil recommandé : `bash`
+### Outil recommandé : shell système (chemin absolu)
 
-Pour toute opération mémoire, préférer **l'outil `bash`** avec le chemin absolu complet plutôt que `read_file` / `write_file` — ces derniers peuvent être sandboxés sur le cwd et refuser un chemin absolu externe.
+Pour toute opération mémoire, utiliser l'outil shell système avec le **chemin absolu complet**. Les outils `read_file` / `write_file` peuvent être sandboxés sur le cwd et refuser un chemin absolu externe — le shell n'a pas cette limite.
 
-| Action | Commande bash |
-|---|---|
-| Lire un fichier | `cat "{{VAULT_PATH}}/projets/X/contexte.md"` |
-| Écrire un fichier | `cat > "{{VAULT_PATH}}/archives/NOM.md" <<'EOF' ... EOF` |
-| Modifier en place | `sed -i 's/ancien/nouveau/g' "{{VAULT_PATH}}/..."` |
-| Rechercher | `grep -rni "requête" "{{VAULT_PATH}}/"` |
-| Lister un dossier | `ls "{{VAULT_PATH}}/archives/"` |
-| Supprimer | `rm "{{VAULT_PATH}}/..."` |
-| Renommer / déplacer | `mv "{{VAULT_PATH}}/..." "{{VAULT_PATH}}/..."` |
+**Choisir les commandes en fonction du shell disponible** (bash, PowerShell, cmd). Les équivalents pour les opérations courantes :
+
+| Action | bash / macOS / Linux / git-bash | PowerShell / pwsh | cmd (Windows) |
+|---|---|---|---|
+| Lister un dossier | `ls "{{VAULT_PATH}}/archives/"` | `Get-ChildItem "{{VAULT_PATH}}/archives/"` | `dir "{{VAULT_PATH}}\archives\"` |
+| Lire un fichier | `cat "{{VAULT_PATH}}/projets/X/contexte.md"` | `Get-Content "{{VAULT_PATH}}/projets/X/contexte.md"` | `type "{{VAULT_PATH}}\projets\X\contexte.md"` |
+| Écrire un fichier | `cat > "…" <<'EOF' … EOF` | `Set-Content -Path "…" -Value …` | `echo …> "…"` (limité) |
+| Rechercher récursif | `grep -rni "requête" "{{VAULT_PATH}}/"` | `Select-String -Path "{{VAULT_PATH}}/**/*.md" -Pattern "requête"` | `findstr /s /i "requête" "{{VAULT_PATH}}\*.md"` |
+| Supprimer | `rm "{{VAULT_PATH}}/…"` | `Remove-Item "{{VAULT_PATH}}/…"` | `del "{{VAULT_PATH}}\…"` |
+| Renommer / déplacer | `mv "…" "…"` | `Move-Item "…" "…"` | `move "…" "…"` |
+| Modifier en place | `sed -i 's/ancien/nouveau/g' "…"` | `(Get-Content "…") -replace 'ancien','nouveau' \| Set-Content "…"` | — (pas d'équivalent direct) |
+
+Si une commande échoue ("command not found", "n'est pas reconnu"), **essayer l'équivalent du shell natif de la plateforme** avant de considérer que l'opération est impossible. Sur Windows, si `bash`/`ls`/`cat` échouent, retomber directement sur PowerShell ou cmd — le vault est toujours accessible via un chemin absolu, peu importe le shell.
 
 ### Structure du vault
 
@@ -53,17 +57,25 @@ Les skills `mem-*` sont installés dans `~/.vibe/skills/` et sont **auto-découv
 ### Exemple canonique — première action attendue
 
 Utilisateur : « reprends SecondBrain »
-Toi, **immédiatement**, sans exploration préalable :
+Toi, **immédiatement**, sans exploration préalable, selon ton shell :
 
-```bash
+```
+# bash / macOS / Linux / git-bash
 cat "{{VAULT_PATH}}/projets/secondbrain/contexte.md"
+
+# PowerShell
+Get-Content "{{VAULT_PATH}}/projets/secondbrain/contexte.md"
+
+# cmd (Windows)
+type "{{VAULT_PATH}}\projets\secondbrain\contexte.md"
 ```
 
-**PAS** de `ls`, **PAS** de `pwd`, **PAS** de question à l'utilisateur. Le fichier existe ou n'existe pas ; dans les deux cas le `cat` donne la réponse directe.
+**PAS** de `ls`/`dir`/`Get-ChildItem` du cwd, **PAS** de `pwd`, **PAS** de question à l'utilisateur. Le fichier existe ou n'existe pas ; dans les deux cas la lecture directe donne la réponse.
 
 ### Règles opérationnelles
 
 - **Mode incrémental vs complet pour `mem-archive`** : mid-session, mettre à jour UNIQUEMENT `contexte.md` sans créer d'archive ni annoncer l'action. Ne créer un fichier dans `archives/` que sur signal explicite de fin de session.
 - **Exécuter directement, sans demander confirmation supplémentaire**. Les skills intègrent leurs propres vérifications et affichent un rapport clair après exécution.
-- **Pas d'exploration du cwd**. Pas de `pwd`, pas de `ls` du répertoire courant pour chercher le vault.
+- **Pas d'exploration du cwd**. Pas de `pwd`, pas de `ls`/`dir`/`Get-ChildItem` du répertoire courant pour chercher le vault.
+- **Tolérance aux shells**. Si une commande shell échoue parce qu'elle n'est pas reconnue (ex: `ls` sur Windows sans git-bash), **ne pas abandonner** — retomber immédiatement sur l'équivalent natif (`dir` pour cmd, `Get-ChildItem` pour PowerShell) en gardant le même chemin absolu.
 <!-- MEMORY-KIT:END -->
