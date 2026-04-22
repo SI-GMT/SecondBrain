@@ -2,7 +2,12 @@
 
 > Mémoire persistante pour agents CLI — Claude Code, Gemini CLI, Codex, Mistral Vibe.
 
-Licence MIT · Version v0.2.0 · Documentation en français
+[![License: MIT](https://img.shields.io/github/license/SI-GMT/SecondBrain?color=blue)](./LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](#prérequis)
+[![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-5391FE?logo=powershell&logoColor=white)](#prérequis)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe-8A2BE2)](#cli-supportées)
+[![Docs](https://img.shields.io/badge/docs-français-informational)](#sommaire)
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
