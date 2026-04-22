@@ -4,7 +4,7 @@ tags: [type/index]
 
 # Vault Mémoire — Index
 
-Point d'entrée du second cerveau. Mis à jour automatiquement par le skill `archive` en mode complet.
+Point d'entrée du second cerveau. Mis à jour automatiquement par le skill `mem-archive` en mode complet.
 
 ## Projets
 
@@ -12,4 +12,4 @@ Point d'entrée du second cerveau. Mis à jour automatiquement par le skill `arc
 
 ## Archives
 
-<!-- Liste chronologique. Ajoutée automatiquement à chaque /archive. -->
+<!-- Liste chronologique. Ajoutée automatiquement à chaque /mem-archive. -->

@@ -8,11 +8,11 @@ Ce poste dispose d'un vault mémoire qui persiste le contexte entre les sessions
 ### Structure du vault
 
 - `{{VAULT_PATH}}/_index.md` — catalogue des projets et archives.
-- `{{VAULT_PATH}}/archives/YYYY-MM-DD-HHhMM-{projet}-{résumé}.md` — archives immuables (une par session complète).
+- `{{VAULT_PATH}}/archives/YYYY-MM-DD-HHhMM-{projet}-{résumé}.md` — archives de fin de session (une par session complète). Nom de fichier et contenu narratif immuables ; frontmatter (`projet:`, `tags:`) peut être mis à jour par les skills `mem-rename-project` et `mem-merge-projects`.
 - `{{VAULT_PATH}}/projets/{nom}/contexte.md` — snapshot mutable du projet (toujours à jour, voie rapide).
 - `{{VAULT_PATH}}/projets/{nom}/historique.md` — fil chronologique des sessions du projet.
 
-### Déclenchement automatique du chargement (recall)
+### `mem-recall` — déclenchement automatique du chargement de contexte
 
 Dès que l'utilisateur exprime en langage naturel :
 
@@ -28,7 +28,7 @@ Dès que l'utilisateur exprime en langage naturel :
 
 Si `_index.md` est absent ou vide : répondre « Mémoire initialisée — aucune session trouvée. Décris ton projet et on commence. »
 
-### Mémoire vivante silencieuse (archive incrémental)
+### `mem-archive` — mémoire vivante silencieuse (mode incrémental)
 
 **Pendant** la session, dès qu'un fait, une décision ou une prochaine étape **importante** émerge ET n'est pas déjà dans le `contexte.md` du projet en cours :
 
@@ -38,7 +38,7 @@ Si `_index.md` est absent ou vide : répondre « Mémoire initialisée — aucun
 
 Justification : `contexte.md` est un snapshot mutable fait pour évoluer en continu ; `archives/` est réservé aux instantanés de fin de session.
 
-### Archive complet en fin de session
+### `mem-archive` — mode complet (fin de session)
 
 Déclenché **uniquement** sur signal explicite : l'utilisateur dit « on s'arrête », « je pars », « on termine », ou demande explicitement d'archiver.
 
@@ -64,7 +64,25 @@ Exécuter alors la procédure complète :
 
 5. **Confirmer** à l'utilisateur : « Archive créée : {chemin}. Le /clear est safe — redis simplement "reprends" la prochaine fois. »
 
-### Règle absolue
+### Règle absolue (archive)
 
 Ne jamais créer de nouveau fichier dans `archives/` sans signal explicite de fin de session. Un archive complet = une session complète, pas une décision isolée.
+
+### Autres opérations `mem-*` — gestion du vault
+
+Déclenchées sur intention exprimée en langage naturel :
+
+- **`mem-list-projects`** — « liste mes projets », « quels projets j'ai en mémoire ? ». Lire `_index.md` (section Projets) + frontmatter de chaque `contexte.md`. Afficher un tableau : slug | label | phase | dernière session | nb de sessions. Trier par dernière session décroissante.
+
+- **`mem-search {requête}`** — « cherche dans la mémoire X », « trouve les archives qui parlent de Y ». Rechercher récursivement dans `_index.md`, `archives/*.md`, `projets/**/*.md`. Exclure `.obsidian/`, `*.canvas`, `*.excalidraw.md`, `*.base`. Retourner les occurrences avec 2 lignes de contexte, groupées par fichier, triées archives récentes d'abord.
+
+- **`mem-rename-project {ancien} {nouveau}`** — « renomme le projet X en Y ». Renommer de manière COMPLÈTE : aucune référence à l'ancien slug ni à l'ancien label ne doit subsister. Actions : (a) renommer le dossier `projets/{ancien}/` → `projets/{nouveau}/` ; (b) mettre à jour frontmatters + H1 + corps narratif de `contexte.md`, `historique.md` et de toutes les archives référencées ; (c) **renommer les fichiers archives** en remplaçant le slug dans leur nom (préserver l'horodatage) ; (d) mettre à jour `_index.md` (section Projets ET section Archives — labels + chemins) ; (e) nettoyer `.obsidian/workspace.json` des entrées stales. Si le nouveau label n'est pas fourni, le dériver du nouveau slug (tirets/underscores → espaces + capitalisation). Vérification finale : grep sur le vault pour confirmer zéro occurrence résiduelle. Refuser si le nouveau slug existe déjà (suggérer `mem-merge-projects`).
+
+- **`mem-merge-projects {source} {cible}`** — « fusionne le projet X dans Y ». Retagger (frontmatter) les archives de la source au nom de la cible, concaténer `historique.md` (trié par horodatage), supprimer le dossier `projets/{source}/`, retirer la ligne de la section Projets de `_index.md`. Avertir l'utilisateur que `contexte.md` de la cible doit être fusionné manuellement (décision éditoriale).
+
+- **`mem-digest {projet} [N=5]`** — « résume-moi les N dernières sessions de X », « fais un digest de X ». Lire les N dernières archives du projet, extraire Résumé / Décisions / Prochaines étapes de chacune, synthétiser en : arcs majeurs, décisions structurantes, dérive des prochaines étapes, état actuel. Lecture seule, n'écrit rien.
+
+- **`mem-rollback-archive [projet]`** — « annule la dernière archive », « rollback l'archive de X ». Identifier la dernière archive (du projet si spécifié, sinon globale), afficher ce qui va être supprimé, puis supprimer le fichier + retirer la ligne de `historique.md` + retirer la ligne de `_index.md`. AVERTIR que `contexte.md` n'est PAS restauré (l'archive contenait elle-même le snapshot du moment) et suggérer `/mem-recall` pour régénérer un contexte à partir des archives restantes.
+
+Pour toutes les opérations `mem-*` : exécuter directement, sans demander de confirmation supplémentaire. Les procédures intègrent déjà leurs propres vérifications et affichent un rapport clair après exécution.
 <!-- MEMORY-KIT:END -->

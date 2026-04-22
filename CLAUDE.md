@@ -29,11 +29,13 @@ Si une procédure doit diverger entre plateformes, c'est le signe qu'il manque u
 
 ## Workflow de développement
 
-1. Éditer la procédure dans `core/procedures/{archive,recall}.md` — c'est la source de vérité.
-2. Éditer le frontmatter dans `adapters/claude-code/skills/{archive,recall}.template.md` si le champ `description` doit changer (il contrôle le déclenchement automatique par Claude).
-3. Éditer le shim dans `adapters/claude-code/commands/{archive,recall}.md` si l'invocation user-facing change.
+1. Éditer la procédure dans `core/procedures/mem-{nom}.md` — c'est la source de vérité.
+2. Éditer le frontmatter dans `adapters/claude-code/skills/mem-{nom}.template.md` si le champ `description` doit changer (il contrôle le déclenchement automatique par Claude).
+3. Éditer le shim dans `adapters/claude-code/commands/mem-{nom}.md` si l'invocation user-facing change.
 4. Lancer `.\deploy.ps1` pour pousser vers `~/.claude/`.
-5. Tester en tapant `/recall` ou `/archive` dans n'importe quelle session Claude Code.
+5. Tester en tapant `/mem-{nom}` dans n'importe quelle session Claude Code.
+
+Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-projects`, `mem-search`, `mem-rename-project`, `mem-merge-projects`, `mem-digest`, `mem-rollback-archive` (gestion du vault).
 
 ## Ajouter un nouvel adapter (Gemini CLI, Codex, MCP)
 
@@ -49,7 +51,7 @@ Phase 3 prévue : extraire la logique dans un serveur MCP `memory-kit`. Les adap
 - `archives/` — fichiers horodatés, **immuables** (un par session complète)
 - `projets/{nom}/contexte.md` — snapshot mutable du projet
 - `projets/{nom}/historique.md` — fil chronologique avec liens vers les archives
-- `.obsidian/` — config Obsidian (déplacer ici depuis la racine GMT au premier setup)
+- `.obsidian/` — config Obsidian (créée automatiquement à l'ouverture du vault par Obsidian)
 
 **Fichiers Obsidian spéciaux** dans `memory/` : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec `Edit`/`Write`, passer par Obsidian.
 
