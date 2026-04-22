@@ -1,0 +1,7 @@
+description = "Fusionner deux projets du vault mémoire."
+prompt = """
+{{PROCEDURE}}
+
+---
+Arguments fournis par l'utilisateur ({source} {cible}) : {{args}}
+"""

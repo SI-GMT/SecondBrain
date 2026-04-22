@@ -1,0 +1,7 @@
+description = "Renommer le slug d'un projet dans le vault mémoire."
+prompt = """
+{{PROCEDURE}}
+
+---
+Arguments fournis par l'utilisateur ({ancien} {nouveau}) : {{args}}
+"""

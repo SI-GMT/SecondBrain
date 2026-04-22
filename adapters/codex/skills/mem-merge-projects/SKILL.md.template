@@ -1,0 +1,6 @@
+---
+name: mem-merge-projects
+description: Fusionner deux projets du vault mémoire. Le projet source est supprimé ; la cible récupère ses archives (retaggées) et son historique. Le contexte.md de la cible n'est PAS modifié (fusion sémantique manuelle). DÉCLENCHEMENT via /mem-merge-projects {source} {cible} ou langage naturel — « fusionne X dans Y ».
+---
+
+{{PROCEDURE}}

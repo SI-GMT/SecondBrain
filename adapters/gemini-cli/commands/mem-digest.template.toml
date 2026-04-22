@@ -1,0 +1,7 @@
+description = "Synthèse des N dernières archives d'un projet."
+prompt = """
+{{PROCEDURE}}
+
+---
+Arguments fournis par l'utilisateur (`{projet} [N]`) : {{args}}
+"""
