@@ -662,6 +662,14 @@ if ($pending.Count -gt 0) {
     Write-Host ("En attente : {0} (adapter a implementer)" -f ($pending -join ', ')) -ForegroundColor Yellow
 }
 Write-Host ''
-if ($deployed -contains 'Claude Code') {
-    Write-Host 'Teste avec : /recall (dans une nouvelle session Claude Code)' -ForegroundColor Cyan
+if ($deployed.Count -gt 0) {
+    Write-Host 'Test :' -ForegroundColor Cyan
+    foreach ($cli in $deployed) {
+        switch ($cli) {
+            'Claude Code'    { Write-Host "  [Claude Code]  /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
+            'Gemini CLI'     { Write-Host "  [Gemini CLI]   /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
+            'Codex (OpenAI)' { Write-Host "  [Codex]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
+            'Mistral Vibe'   { Write-Host "  [Mistral Vibe] dis 'charge mon contexte memoire' (Vibe n'expose pas de slash commands)" -ForegroundColor Cyan }
+        }
+    }
 }
