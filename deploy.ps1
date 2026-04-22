@@ -460,7 +460,7 @@ function Deploy-MistralVibe {
         [string]$KitRoot,
         [string]$ConfigDir,
         [string]$VaultPath,
-        [switch]$Force   # non utilise, garde pour signature uniforme
+        [switch]$Force
     )
 
     Write-Host ''
@@ -472,31 +472,80 @@ function Deploy-MistralVibe {
     }
 
     $adapterDir = Join-Path $KitRoot 'adapters\mistral-vibe'
+    $startMarker = '<!-- MEMORY-KIT:START -->'
+    $endMarker   = '<!-- MEMORY-KIT:END -->'
+    $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
+
+    # --- Migration : cleanup de l'ancien bloc dans instructions.md ---
+    # L'adapter visait initialement ~/.vibe/instructions.md en assumant que Vibe
+    # le chargerait comme un system prompt, ce qui etait faux. On retire le
+    # bloc pour que l'utilisateur ne se retrouve pas avec deux copies.
+    $legacyFile = Join-Path $ConfigDir 'instructions.md'
+    if (Test-Path $legacyFile) {
+        $legacyContent = (Get-Content -Path $legacyFile -Raw) ?? ''
+        if ($legacyContent -match [regex]::Escape($startMarker)) {
+            $cleaned = [regex]::Replace($legacyContent, $pattern, '').TrimEnd()
+            if ([string]::IsNullOrWhiteSpace($cleaned)) {
+                Remove-Item -Path $legacyFile -Force
+                Write-Info "instructions.md : fichier legacy supprime (ne contenait que le bloc MEMORY-KIT)"
+            } else {
+                Set-Content -Path $legacyFile -Value $cleaned -Encoding UTF8 -NoNewline
+                Write-Info "instructions.md : bloc MEMORY-KIT retire (reste du contenu preserve)"
+            }
+        }
+    }
+
+    # --- Injection du bloc dans ~/.vibe/AGENTS.md (vrai fichier charge par Vibe) ---
+    # Source : vibe/core/system_prompt.py charge ~/.vibe/AGENTS.md comme
+    # user-level instructions a chaque session.
     $blockPath = Join-Path $adapterDir 'instructions-block.md'
     if (-not (Test-Path $blockPath)) {
         Write-Warn2 "instructions-block.md manquant : $blockPath"
         return $false
     }
-
-    # Charger le bloc, substituer VAULT_PATH (chemin absolu direct, Vibe n'a pas
-    # de mecanisme clair de config runtime)
     $blockContent = Get-Content -Path $blockPath -Raw
     $blockContent = $blockContent -replace '\{\{VAULT_PATH\}\}', ($VaultPath -replace '\\', '/')
 
-    # Merger dans ~/.vibe/instructions.md avec markers idempotents
-    $instructionsFile = Join-Path $ConfigDir 'instructions.md'
-    $existing = if (Test-Path $instructionsFile) {
-        (Get-Content -Path $instructionsFile -Raw) ?? ''
-    } else {
-        ''
-    }
-    $startMarker = '<!-- MEMORY-KIT:START -->'
-    $endMarker   = '<!-- MEMORY-KIT:END -->'
-    $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
+    $agentsFile = Join-Path $ConfigDir 'AGENTS.md'
+    $existing = if (Test-Path $agentsFile) { (Get-Content -Path $agentsFile -Raw) ?? '' } else { '' }
     $cleaned = [regex]::Replace($existing, $pattern, '').TrimEnd()
     $final = if ($cleaned) { $cleaned + "`n`n" + $blockContent } else { $blockContent }
-    Set-Content -Path $instructionsFile -Value $final -Encoding UTF8 -NoNewline
-    Write-Ok "instructions.md : bloc MEMORY-KIT injecte"
+    Set-Content -Path $agentsFile -Value $final -Encoding UTF8 -NoNewline
+    Write-Ok "AGENTS.md : bloc MEMORY-KIT injecte"
+
+    # --- Skills (format ~/.vibe/skills/{nom}/SKILL.md) ---
+    $skillsTarget = Join-Path $ConfigDir 'skills'
+    if (-not (Test-Path $skillsTarget)) {
+        New-Item -ItemType Directory -Path $skillsTarget -Force | Out-Null
+    }
+    $skillsSource = Join-Path $adapterDir 'skills'
+    $coreSource   = Join-Path $KitRoot 'core\procedures'
+    $configFileRef = '`~/.vibe/AGENTS.md` (bloc MEMORY-KIT)'
+    if (Test-Path $skillsSource) {
+        Get-ChildItem -Path $skillsSource -Directory | ForEach-Object {
+            $name = $_.Name
+            $tplFile = Join-Path $_.FullName 'SKILL.md.template'
+            if (-not (Test-Path $tplFile)) {
+                Write-Warn2 "SKILL.md.template manquant pour $name (ignore)"
+                return
+            }
+            $tpl = Get-Content -Path $tplFile -Raw
+            $procPath = Join-Path $coreSource "$name.md"
+            if (-not (Test-Path $procPath)) {
+                Write-Warn2 "Procedure core manquante pour skill $name (ignore)"
+                return
+            }
+            $proc = Get-Content -Path $procPath -Raw
+            $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
+            $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
+            $destDir = Join-Path $skillsTarget $name
+            if (-not (Test-Path $destDir)) {
+                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            }
+            Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding UTF8 -NoNewline
+            Write-Ok "Skill   : $name/SKILL.md"
+        }
+    }
 
     return $true
 }
