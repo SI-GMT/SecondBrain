@@ -1,16 +1,20 @@
-# KIT-MÉMOIRE — Mémoire de session pour Claude Code
+# SecondBrain — Mémoire persistante pour agents CLI
 
-Résout l'amnésie inter-sessions de Claude : quand tu fais `/clear`, le contexte n'est pas perdu. Il est archivé localement et rechargeable en 30 secondes à la prochaine session.
+Résout l'amnésie inter-sessions des CLI agentiques : quand tu fais `/clear` (ou que tu fermes l'IDE), le contexte n'est pas perdu. Il est archivé localement et rechargeable en 30 secondes à la prochaine session.
 
 **Gain concret** : la reprise de session consomme 2× moins de tokens qu'un re-briefing manuel.
+
+**CLI supportées** : **Claude Code** (écosystème de référence, le plus abouti), **Gemini CLI**, **Codex**, **Mistral Vibe**. Le kit détecte automatiquement les CLI installées sur le poste et déploie l'adapter correspondant.
+
+> Ce kit a été conçu et éprouvé d'abord sur Claude Code. Les adapters Gemini CLI, Codex et Mistral Vibe bénéficient de la même source de vérité procédurale, mais leur maturité en conditions réelles est moindre — retours et PR bienvenus.
 
 ---
 
 ## Le problème
 
-Claude Code n'a pas de mémoire entre les sessions. Après un `/clear` ou une fermeture d'IDE, tu dois tout ré-expliquer : l'état du projet, les décisions prises, les prochaines étapes.
+Les CLI LLM agentiques (Claude Code, Gemini CLI, Codex, Mistral Vibe…) n'ont pas de mémoire entre les sessions. Après un `/clear` ou une fermeture d'IDE, tu dois tout ré-expliquer : l'état du projet, les décisions prises, les prochaines étapes.
 
-Ce kit installe une mémoire locale structurée que Claude lit et écrit automatiquement, au niveau **utilisateur** (dans `~/.claude/`) — donc disponible depuis n'importe quel projet sur ton poste.
+Ce kit installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau **utilisateur** (dans la config de la CLI, par exemple `~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`) — donc disponible depuis n'importe quel projet sur ton poste.
 
 ---
 
@@ -20,14 +24,14 @@ C'est un rituel biologique : l'agent prend des notes en continu, les relit en se
 
 ```
 En arrivant    →  Dire « reprends », « on continue », ou taper /mem-recall.
-                  Claude charge le contexte en 30 secondes.
+                  L'agent charge le contexte en 30 secondes.
                   Pas de re-briefing. Travail immédiat.
 
-En travaillant →  Claude met à jour silencieusement le contexte
+En travaillant →  L'agent met à jour silencieusement le contexte
                   dès qu'une décision ou un fait important émerge.
 
 En partant     →  Dire « on s'arrête », « je pars », ou taper /mem-archive.
-                  Claude résume la session (décisions, état, prochaines étapes).
+                  L'agent résume la session (décisions, état, prochaines étapes).
 
                   /clear
                   Session propre. Mémoire intacte.
@@ -35,13 +39,15 @@ En partant     →  Dire « on s'arrête », « je pars », ou taper /mem-archiv
 
 Le `/clear` n'est plus une perte — c'est un sommeil propre.
 
+Le déclenchement par langage naturel repose sur les instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `instructions.md`…). Sa fiabilité dépend du modèle sous-jacent : très fiable sur Claude Code, bon sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`) fonctionnent partout de la même manière.
+
 ---
 
 ## Installation
 
 ### Prérequis
 - **PowerShell 7+** (`pwsh`) pour exécuter `deploy.ps1`.
-- **Claude Code** installé (au moins une session déjà lancée pour que `~/.claude/` existe).
+- **Au moins une CLI supportée** installée, avec une session déjà lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`). Le script se contente silencieusement des CLI qu'il trouve.
 - **Obsidian** (optionnel) — pour visualiser le vault comme graphe.
 
 ### Étape 1 — Placer le kit
@@ -49,7 +55,7 @@ Le `/clear` n'est plus une perte — c'est un sommeil propre.
 Cloner ou copier le kit dans un dossier stable de ton poste, par exemple :
 
 ```
-C:\Users\{toi}\memory-kit\
+C:\Users\{toi}\SecondBrain\
 ```
 
 Le dossier contiendra `core/`, `adapters/`, `memory/`, `deploy.ps1` et ce README.
@@ -92,27 +98,27 @@ Le dossier `memory/` est déjà un vault Obsidian valide.
 
 ### Étape 4 — Vérifier
 
-Depuis n'importe quel projet, ouvrir Claude Code et taper :
+Depuis n'importe quel projet, ouvrir une CLI supportée (Claude Code, Gemini CLI, Codex ou Mistral Vibe) et taper :
 
 ```
 /mem-recall
 ```
 
-Claude doit répondre :
+L'agent doit répondre quelque chose comme :
 
 ```
 Aucune session trouvée. Mémoire initialisée — memory/_index.md est prêt.
 Décris ce sur quoi tu travailles et on commence.
 ```
 
-La mémoire est opérationnelle.
+La mémoire est opérationnelle. (Sur Mistral Vibe, qui n'expose pas de slash commands user-level, déclenche plutôt avec une phrase : *« charge mon contexte mémoire »*.)
 
 ---
 
 ## Architecture
 
 ```
-kit/
+SecondBrain/
 ├── core/procedures/            Spec procédurale agnostique (source de vérité)
 │   ├── mem-archive.md
 │   ├── mem-recall.md
@@ -123,10 +129,10 @@ kit/
 │   ├── mem-digest.md
 │   └── mem-rollback-archive.md
 ├── adapters/
-│   └── claude-code/            Seul adapter actif pour l'instant
-│       ├── skills/             Templates (frontmatter + {{PROCEDURE}})
-│       ├── commands/           Slash commands user-facing
-│       └── claude-md-block.md  Bloc injecté dans ~/.claude/CLAUDE.md
+│   ├── claude-code/            Skills + slash commands + bloc CLAUDE.md
+│   ├── gemini-cli/             Extension `memory-kit` + GEMINI.md + TOML
+│   ├── codex/                  Prompts + skills
+│   └── mistral-vibe/           Bloc injecté dans ~/.vibe/instructions.md
 ├── memory/                     Vault Obsidian local (non versionné)
 │   ├── _index.md
 │   ├── archives/               Une archive par session complète (immuable)
@@ -134,8 +140,11 @@ kit/
 │       └── {nom}/
 │           ├── contexte.md     Snapshot mutable — toujours à jour
 │           └── historique.md   Fil chronologique des sessions
-└── deploy.ps1                  Assemble et installe dans ~/.claude/
+└── deploy.ps1                  Assemble les procédures + installe chaque
+                                adapter dans la config utilisateur de la CLI
 ```
+
+**Règle d'or — single source of truth** : toute logique procédurale vit dans `core/procedures/`. Les adapters n'ajoutent que du frontmatter et du formatage spécifique à leur plateforme. `deploy.ps1` assemble à la volée en substituant `{{PROCEDURE}}` par le contenu du fichier core correspondant. Pas de duplication, pas de fork entre plateformes.
 
 ---
 
@@ -145,7 +154,7 @@ Toutes les commandes sont préfixées `mem-*` pour éviter les collisions avec d
 
 ### Cycle session
 
-| Canal | Quand | Ce que Claude fait |
+| Canal | Quand | Ce que l'agent fait |
 |---|---|---|
 | Langage naturel (« reprends », « on continue », « tu te rappelles ») | Début de session | Charge le contexte automatiquement |
 | `/mem-recall` | Début de session (explicite) | Charge le contexte, affiche le briefing |
@@ -174,7 +183,7 @@ Chaque archive complet produit deux fichiers :
 - Une **archive** complète (~70 lignes) — immuable, trace historique
 - Un **`contexte.md`** synthétisé (~25 lignes) — écrasé à chaque session
 
-Au `/mem-recall` suivant, Claude lit `contexte.md` en priorité. Résultat : briefing en 25 lignes au lieu de parser 70 lignes d'archive.
+Au `/mem-recall` suivant, l'agent lit `contexte.md` en priorité. Résultat : briefing en 25 lignes au lieu de parser 70 lignes d'archive.
 
 ---
 
@@ -193,21 +202,44 @@ Le kit est installé au niveau utilisateur — pas besoin de le recopier dans ch
 
 ## Feuille de route
 
-- **Phase 1 (terminée)** — Détection multi-CLI + adapters Claude Code, Gemini CLI, Codex et Mistral Vibe sur un poste unique.
+- **Phase 1 (terminée)** — Détection multi-CLI + adapters Claude Code, Gemini CLI, Codex et Mistral Vibe sur un poste unique. Claude Code est le plus éprouvé ; les trois autres adapters sont fonctionnels mais demandent encore des tests terrain.
 - **Phase 2** — Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale.
-- **Phase 3** — Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims qui délèguent au MCP ; une seule implémentation, tous les LLM compatibles via le protocole MCP.
+- **Phase 3** — Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims qui délèguent au MCP ; une seule implémentation, toutes les CLI compatibles MCP d'un coup.
 
 ---
 
 ## Désinstallation
 
+Selon les CLI installées, retirer l'installation correspondante. Les commandes ci-dessous utilisent les chemins par défaut — adapter si `CLAUDE_CONFIG_DIR` (ou l'équivalent) est défini.
+
 ```powershell
-# Supprimer les fichiers installés (adapter les chemins si CLAUDE_CONFIG_DIR est défini)
+# Claude Code
 Remove-Item "$HOME\.claude\commands\mem-*.md" -Force
 Remove-Item "$HOME\.claude\skills\mem-*.md" -Force
 Remove-Item "$HOME\.claude\memory-kit.json" -Force
 # Retirer manuellement le bloc MEMORY-KIT dans $HOME\.claude\CLAUDE.md
 # Retirer manuellement les patterns allow mem-* dans $HOME\.claude\settings.json
+
+# Gemini CLI
+Remove-Item "$HOME\.gemini\extensions\memory-kit" -Recurse -Force
+Remove-Item "$HOME\.gemini\memory-kit.json" -Force
+# Retirer l'entrée memory-kit dans $HOME\.gemini\extension-enablement.json
+
+# Codex
+Remove-Item "$HOME\.codex\prompts\mem-*.md" -Force
+Remove-Item "$HOME\.codex\skills\mem-*" -Recurse -Force
+Remove-Item "$HOME\.codex\memory-kit.json" -Force
+
+# Mistral Vibe
+# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\instructions.md
 ```
 
 Le vault `memory/` reste intact — tes archives sont conservées.
+
+---
+
+## Licence et crédits
+
+MIT — © SI Groupe Mondial Tissus.
+
+Concept original : Raphaël Fages / [Fractality Studio](https://fractality.studio/). Le projet porte le double nom **SecondBrain** (distribution SI-GMT) / **memory-kit** (artefacts techniques : fichier de config, extension Gemini, futur MCP) pour honorer ce lignage.
