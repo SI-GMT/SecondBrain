@@ -78,4 +78,17 @@ type "{{VAULT_PATH}}\projets\secondbrain\contexte.md"
 - **Exécuter directement, sans demander confirmation supplémentaire**. Les skills intègrent leurs propres vérifications et affichent un rapport clair après exécution.
 - **Pas d'exploration du cwd**. Pas de `pwd`, pas de `ls`/`dir`/`Get-ChildItem` du répertoire courant pour chercher le vault.
 - **Tolérance aux shells**. Si une commande shell échoue parce qu'elle n'est pas reconnue (ex: `ls` sur Windows sans git-bash), **ne pas abandonner** — retomber immédiatement sur l'équivalent natif (`dir` pour cmd, `Get-ChildItem` pour PowerShell) en gardant le même chemin absolu.
+
+### ⚙ Encodage des fichiers du vault
+
+Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) doivent être en **UTF-8 sans BOM**, fins de ligne **LF**. Jamais de CP1252, Windows-1252, UTF-8 avec BOM, ni encodage OEM — ça corrompt les accents français et les caractères diacritiques (apparaît en `�` dans Obsidian).
+
+| Shell | Commande d'écriture UTF-8 sans BOM |
+|---|---|
+| bash / macOS / Linux / git-bash | `cat > "path" <<'EOF' … EOF` (natif UTF-8 sans BOM) |
+| PowerShell 7+ (pwsh) | `Set-Content -Path "path" -Value $contenu -Encoding utf8NoBOM` |
+| Windows PowerShell 5.1 | `[System.IO.File]::WriteAllText("path", $contenu, [System.Text.UTF8Encoding]::new($false))` |
+| cmd.exe | **à éviter pour le Markdown accentué** — basculer sur PowerShell ou bash |
+
+Si la commande d'écriture du shell disponible ajoute un BOM ou corrompt les accents, **rebasculer sur un shell compatible** plutôt que tenter de produire le fichier ainsi.
 <!-- MEMORY-KIT:END -->

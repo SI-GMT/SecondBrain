@@ -36,4 +36,8 @@ Ce skill fonctionne dans deux modes distincts. **Ne jamais les confondre.**
 - `mem-rollback-archive` — « annule la dernière archive », « oublie la dernière session », « rollback l'archive de X ».
 
 Pour toutes les opérations `mem-*` : exécuter directement, sans demander de confirmation supplémentaire à l'utilisateur. Les procédures intègrent déjà leurs propres vérifications (existence des fichiers, conflits de slug, etc.) et affichent un rapport clair après exécution.
+
+### Encodage des fichiers du vault
+
+Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) doivent être en **UTF-8 sans BOM**, fins de ligne **LF**. Jamais de CP1252, Windows-1252, UTF-8 avec BOM, ni encodage OEM — ça corrompt les accents français et les caractères diacritiques (apparaît en `�` dans Obsidian). Les procédures détaillées précisent la commande exacte selon le shell/outil utilisé.
 <!-- MEMORY-KIT:END -->

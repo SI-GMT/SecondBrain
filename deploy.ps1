@@ -165,7 +165,7 @@ function Deploy-ClaudeCode {
         $procedureContent = Get-Content -Path $procedurePath -Raw
         $procedureContent = $procedureContent -replace '\{\{CONFIG_FILE\}\}', $configFileRef
         $assembled = $templateContent -replace '\{\{PROCEDURE\}\}', $procedureContent
-        Set-Content -Path (Join-Path $skillsTarget "$skillName.md") -Value $assembled -Encoding UTF8 -NoNewline
+        Set-Content -Path (Join-Path $skillsTarget "$skillName.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
         Write-Ok "Skill   : $skillName.md"
     }
 
@@ -175,7 +175,7 @@ function Deploy-ClaudeCode {
     if ((Test-Path $configFile) -and -not $Force) {
         Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
     } else {
-        Set-Content -Path $configFile -Value $configData -Encoding UTF8 -NoNewline
+        Set-Content -Path $configFile -Value $configData -Encoding utf8NoBOM -NoNewline
         Write-Ok "memory-kit.json -> vault = $VaultPath"
     }
 
@@ -189,7 +189,7 @@ function Deploy-ClaudeCode {
     $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
     $cleaned = [regex]::Replace($existing, $pattern, '').TrimEnd()
     $final = if ($cleaned) { $cleaned + "`n`n" + $blockContent } else { $blockContent }
-    Set-Content -Path $claudeMdTarget -Value $final -Encoding UTF8 -NoNewline
+    Set-Content -Path $claudeMdTarget -Value $final -Encoding utf8NoBOM -NoNewline
     Write-Ok "CLAUDE.md utilisateur : bloc MEMORY-KIT injecte"
 
     # Permissions : additionalDirectories dans settings.json (idempotent)
@@ -257,7 +257,7 @@ function Deploy-ClaudeCode {
 
         if ($settingsChanged) {
             $json = $settings | ConvertTo-Json -Depth 100
-            Set-Content -Path $settingsFile -Value $json -Encoding UTF8 -NoNewline
+            Set-Content -Path $settingsFile -Value $json -Encoding utf8NoBOM -NoNewline
         }
     }
 
@@ -316,7 +316,7 @@ function Deploy-GeminiCli {
         $procedureContent = Get-Content -Path $procedurePath -Raw
         $procedureContent = $procedureContent -replace '\{\{CONFIG_FILE\}\}', $configFileRef
         $assembled = $templateContent -replace '\{\{PROCEDURE\}\}', $procedureContent
-        Set-Content -Path (Join-Path $cmdDir "$commandName.toml") -Value $assembled -Encoding UTF8 -NoNewline
+        Set-Content -Path (Join-Path $cmdDir "$commandName.toml") -Value $assembled -Encoding utf8NoBOM -NoNewline
         Write-Ok "Command : $commandName.toml"
     }
 
@@ -326,7 +326,7 @@ function Deploy-GeminiCli {
     if ((Test-Path $configFile) -and -not $Force) {
         Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
     } else {
-        Set-Content -Path $configFile -Value $configData -Encoding UTF8 -NoNewline
+        Set-Content -Path $configFile -Value $configData -Encoding utf8NoBOM -NoNewline
         Write-Ok "memory-kit.json -> vault = $VaultPath"
     }
 
@@ -349,7 +349,7 @@ function Deploy-GeminiCli {
             $homePattern = '/' + ($HOME -replace '\\', '/') + '/*'
             $enablement['memory-kit'] = [ordered]@{ overrides = @($homePattern) }
             $json = $enablement | ConvertTo-Json -Depth 100
-            Set-Content -Path $enablementFile -Value $json -Encoding UTF8 -NoNewline
+            Set-Content -Path $enablementFile -Value $json -Encoding utf8NoBOM -NoNewline
             Write-Ok "extension-enablement.json : memory-kit active ($homePattern)"
         } else {
             Write-Skip "extension-enablement.json : memory-kit deja active"
@@ -405,7 +405,7 @@ function Deploy-Codex {
             $proc = Get-Content -Path $procPath -Raw
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
             $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
-            Set-Content -Path (Join-Path $promptsTarget "$name.md") -Value $assembled -Encoding UTF8 -NoNewline
+            Set-Content -Path (Join-Path $promptsTarget "$name.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
             Write-Ok "Prompt  : $name.md"
         }
     }
@@ -433,7 +433,7 @@ function Deploy-Codex {
             if (-not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
             }
-            Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding UTF8 -NoNewline
+            Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding utf8NoBOM -NoNewline
             Write-Ok "Skill   : $name/SKILL.md"
         }
     }
@@ -444,7 +444,7 @@ function Deploy-Codex {
     if ((Test-Path $configFile) -and -not $Force) {
         Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
     } else {
-        Set-Content -Path $configFile -Value $configData -Encoding UTF8 -NoNewline
+        Set-Content -Path $configFile -Value $configData -Encoding utf8NoBOM -NoNewline
         Write-Ok "memory-kit.json -> vault = $VaultPath"
     }
 
@@ -489,7 +489,7 @@ function Deploy-MistralVibe {
                 Remove-Item -Path $legacyFile -Force
                 Write-Info "instructions.md : fichier legacy supprime (ne contenait que le bloc MEMORY-KIT)"
             } else {
-                Set-Content -Path $legacyFile -Value $cleaned -Encoding UTF8 -NoNewline
+                Set-Content -Path $legacyFile -Value $cleaned -Encoding utf8NoBOM -NoNewline
                 Write-Info "instructions.md : bloc MEMORY-KIT retire (reste du contenu preserve)"
             }
         }
@@ -510,7 +510,7 @@ function Deploy-MistralVibe {
     $existing = if (Test-Path $agentsFile) { (Get-Content -Path $agentsFile -Raw) ?? '' } else { '' }
     $cleaned = [regex]::Replace($existing, $pattern, '').TrimEnd()
     $final = if ($cleaned) { $cleaned + "`n`n" + $blockContent } else { $blockContent }
-    Set-Content -Path $agentsFile -Value $final -Encoding UTF8 -NoNewline
+    Set-Content -Path $agentsFile -Value $final -Encoding utf8NoBOM -NoNewline
     Write-Ok "AGENTS.md : bloc MEMORY-KIT injecte"
 
     # --- Skills (format ~/.vibe/skills/{nom}/SKILL.md) ---
@@ -542,7 +542,7 @@ function Deploy-MistralVibe {
             if (-not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
             }
-            Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding UTF8 -NoNewline
+            Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding utf8NoBOM -NoNewline
             Write-Ok "Skill   : $name/SKILL.md"
         }
     }
