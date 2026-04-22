@@ -2,20 +2,29 @@
 
 <#
 .SYNOPSIS
-    Deploie le kit memoire dans chaque CLI IA detectee sur le poste.
+    Deploie ou met a jour le kit memoire dans chaque CLI IA detectee sur le poste.
 
 .DESCRIPTION
     Detecte les CLI IA installees (Claude Code, Gemini CLI, Codex, Mistral Vibe)
     et deploie l'adapter correspondant pour chacune. Ne plante pas si une CLI
-    est absente : elle est simplement skippee. Si aucune CLI n'est trouvee,
-    un message amical explique quoi installer.
+    est absente : elle est simplement skippee.
+
+    Premiere installation : le vault est cree a {racine du kit}/memory sauf si
+    -VaultPath est fourni.
+
+    Mise a jour : si une installation precedente est detectee (via les
+    memory-kit.json presents dans les dossiers de config des CLI), son vault
+    est reutilise automatiquement. Le script peut donc etre relance depuis
+    n'importe quel repertoire de travail sans avoir a reprecise le chemin.
+
+    Utiliser -VaultPath pour forcer un autre vault (migration).
 
 .PARAMETER VaultPath
-    Chemin absolu du vault memoire. Par defaut : {racine du kit}/memory.
+    Chemin absolu du vault memoire. Si omis : auto-detection depuis l'install
+    existante, puis fallback sur {racine du kit}/memory.
 
 .PARAMETER Force
-    Ecrase memory-kit.json meme s'il existe deja (Claude Code uniquement
-    pour l'instant).
+    Ecrase memory-kit.json meme s'il existe deja.
 
 .EXAMPLE
     .\deploy.ps1
@@ -52,6 +61,57 @@ function Test-CliInstalled {
     $hasBinary = $null -ne (Get-Command $Binary -ErrorAction SilentlyContinue)
     $hasConfig = $ConfigDir -and (Test-Path $ConfigDir)
     return $hasBinary -or $hasConfig
+}
+
+# ============================================================
+# Detection d'une installation SecondBrain existante
+# ============================================================
+
+function Get-ExistingVaultPath {
+    <#
+    Parcourt les emplacements ou un memory-kit.json a pu etre ecrit par une
+    installation precedente. Retourne une liste d'objets { Source, ConfigFile,
+    Vault } pour chaque fichier trouve et parsable.
+
+    Mistral Vibe n'a pas de memory-kit.json (son vault est injecte en clair
+    dans instructions.md), il n'est pas scanne ici.
+    #>
+    $sources = @(
+        @{
+            Source     = 'Claude Code'
+            ConfigFile = if ($env:CLAUDE_CONFIG_DIR) {
+                Join-Path $env:CLAUDE_CONFIG_DIR 'memory-kit.json'
+            } else {
+                Join-Path $HOME '.claude\memory-kit.json'
+            }
+        },
+        @{
+            Source     = 'Gemini CLI'
+            ConfigFile = Join-Path $HOME '.gemini\memory-kit.json'
+        },
+        @{
+            Source     = 'Codex'
+            ConfigFile = Join-Path $HOME '.codex\memory-kit.json'
+        }
+    )
+
+    $found = @()
+    foreach ($s in $sources) {
+        if (-not (Test-Path $s.ConfigFile)) { continue }
+        try {
+            $config = Get-Content -Path $s.ConfigFile -Raw | ConvertFrom-Json
+            if ($config.vault) {
+                $found += [PSCustomObject]@{
+                    Source     = $s.Source
+                    ConfigFile = $s.ConfigFile
+                    Vault      = $config.vault
+                }
+            }
+        } catch {
+            Write-Warn2 "$($s.ConfigFile) illisible ($_). Ignore."
+        }
+    }
+    return $found
 }
 
 # ============================================================
@@ -145,20 +205,59 @@ function Deploy-ClaudeCode {
         $settings = [ordered]@{}
     }
     if ($null -ne $settings) {
+        $settingsChanged = $false
+
         if (-not $settings.Contains('permissions')) {
             $settings['permissions'] = [ordered]@{}
         }
+
+        # additionalDirectories : ajout du vault (idempotent)
         if (-not $settings['permissions'].Contains('additionalDirectories')) {
             $settings['permissions']['additionalDirectories'] = @()
         }
         $dirs = @($settings['permissions']['additionalDirectories'])
         if ($dirs -notcontains $VaultPath) {
             $settings['permissions']['additionalDirectories'] = $dirs + $VaultPath
-            $json = $settings | ConvertTo-Json -Depth 100
-            Set-Content -Path $settingsFile -Value $json -Encoding UTF8 -NoNewline
+            $settingsChanged = $true
             Write-Ok "settings.json : additionalDirectories += $VaultPath"
         } else {
-            Write-Skip "settings.json : permission deja presente"
+            Write-Skip "settings.json : additionalDirectories deja present"
+        }
+
+        # allow : patterns pour les operations vault des skills mem-*
+        # Les procedures mem-rename-project, mem-merge-projects et mem-rollback-archive
+        # appellent Rename-Item / Remove-Item / Move-Item via pwsh. On autorise les deux
+        # chemins d'invocation : outil PowerShell direct, et Bash + pwsh -Command.
+        if (-not $settings['permissions'].Contains('allow')) {
+            $settings['permissions']['allow'] = @()
+        }
+        $memPatterns = @(
+            'PowerShell(Rename-Item:*)',
+            'PowerShell(Remove-Item:*)',
+            'PowerShell(Move-Item:*)',
+            'Bash(pwsh -Command Rename-Item:*)',
+            'Bash(pwsh -Command Remove-Item:*)',
+            'Bash(pwsh -Command Move-Item:*)'
+        )
+        $allow = @($settings['permissions']['allow'])
+        $added = @()
+        foreach ($pat in $memPatterns) {
+            if ($allow -notcontains $pat) {
+                $allow += $pat
+                $added += $pat
+            }
+        }
+        if ($added.Count -gt 0) {
+            $settings['permissions']['allow'] = $allow
+            $settingsChanged = $true
+            Write-Ok "settings.json : allow += $($added.Count) pattern(s) mem-* (Rename/Remove/Move-Item)"
+        } else {
+            Write-Skip "settings.json : patterns allow mem-* deja presents"
+        }
+
+        if ($settingsChanged) {
+            $json = $settings | ConvertTo-Json -Depth 100
+            Set-Content -Path $settingsFile -Value $json -Encoding UTF8 -NoNewline
         }
     }
 
@@ -409,8 +508,35 @@ function Deploy-MistralVibe {
 $kitRoot = $PSScriptRoot
 Write-Step "Racine du kit : $kitRoot"
 
-if (-not $VaultPath) {
-    $VaultPath = Join-Path $kitRoot 'memory'
+# Resolution du VaultPath avec priorites :
+#   1. -VaultPath explicite             (override utilisateur)
+#   2. Installation precedente detectee (mise a jour)
+#   3. Fallback : {kitRoot}/memory      (premiere install en local)
+
+if ($VaultPath) {
+    Write-Info "Vault force via -VaultPath : $VaultPath"
+} else {
+    $existing = Get-ExistingVaultPath
+    if ($existing.Count -eq 0) {
+        $VaultPath = Join-Path $kitRoot 'memory'
+        Write-Info "Aucune installation existante detectee. Premiere install : $VaultPath"
+    } else {
+        $distinctVaults = @($existing.Vault | Select-Object -Unique)
+        if ($distinctVaults.Count -eq 1) {
+            $VaultPath = $distinctVaults[0]
+            $sources = ($existing.Source -join ', ')
+            Write-Info "Installation existante detectee ($sources) : reprise du vault $VaultPath"
+        } else {
+            Write-Host ''
+            Write-Host 'Des vaults differents sont enregistres dans les CLIs :' -ForegroundColor Yellow
+            foreach ($e in $existing) {
+                Write-Host ("  - {0,-12} : {1}" -f $e.Source, $e.Vault)
+            }
+            Write-Host ''
+            Write-Error "Impossible de choisir automatiquement. Relance avec -VaultPath <chemin>."
+            exit 1
+        }
+    }
 }
 $VaultPath = [System.IO.Path]::GetFullPath($VaultPath)
 
