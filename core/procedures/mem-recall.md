@@ -4,7 +4,7 @@ Objectif : retrouver le contexte de travail depuis le vault après un `/clear` o
 
 ## Déclenchement
 
-### Automatique (sans que l'utilisateur tape `/recall`)
+### Automatique (sans que l'utilisateur tape `/mem-recall`)
 
 Déclencher la procédure complète dès que l'utilisateur exprime, en langage naturel :
 
@@ -15,7 +15,7 @@ Si le signal est ambigu (le projet visé n'est pas clair, par exemple), demander
 
 ### Explicite
 
-L'utilisateur invoque la commande `/recall` avec ou sans argument. L'argument éventuel — s'il est présent dans le message utilisateur — est le nom du projet à charger.
+L'utilisateur invoque la commande `/mem-recall` avec ou sans argument. L'argument éventuel — s'il est présent dans le message utilisateur — est le nom du projet à charger.
 
 ## Résolution du chemin du vault
 

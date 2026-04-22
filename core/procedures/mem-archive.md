@@ -15,7 +15,7 @@ Objectif : archiver la session de travail en cours afin de permettre à l'utilis
 ### Mode archive complet (fin de session)
 
 Déclenché par un signal explicite :
-- L'utilisateur tape `/archive` ou `/clear`.
+- L'utilisateur tape `/mem-archive` ou `/clear`.
 - L'utilisateur dit en langage naturel « on s'arrête », « je pars », « on termine », « archive ».
 
 Exécuter alors la procédure complète ci-dessous.
@@ -157,5 +157,5 @@ Afficher à l'utilisateur :
 ```
 Archive créée : {VAULT}/archives/{fichier}.md
 Contexte mis à jour : {VAULT}/projets/{nom}/contexte.md
-Le /clear est safe — utilise /recall {projet} pour reprendre.
+Le /clear est safe — utilise /mem-recall {projet} pour reprendre.
 ```
