@@ -41,11 +41,11 @@ SecondBrain installe une mémoire locale structurée que l'agent lit et écrit a
 | CLI | Maturité | Surface d'installation |
 |---|---|---|
 | **Claude Code** | Référence, éprouvée en production | Skills + slash commands + bloc `CLAUDE.md` + permissions |
-| **Gemini CLI** | Fonctionnel, tests terrain en cours | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
-| **Codex** | Fonctionnel, tests terrain en cours | Prompts + skills |
-| **Mistral Vibe** | Fonctionnel | Skills dans `~/.vibe/skills/` + bloc injecté dans `~/.vibe/AGENTS.md` |
+| **Gemini CLI** | Fonctionnel, validé en conditions réelles | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
+| **Codex** | Fonctionnel, validé en conditions réelles | Prompts + skills |
+| **Mistral Vibe** | Fonctionnel, validé en conditions réelles | Skills dans `~/.vibe/skills/` + bloc injecté dans `~/.vibe/AGENTS.md` |
 
-Le script d'installation détecte automatiquement les CLI présentes sur le poste et ne déploie que les adapters correspondants. Les retours d'expérience et contributions sur les trois adapters non-Claude sont les bienvenus.
+Le script d'installation détecte automatiquement les CLI présentes sur le poste et ne déploie que les adapters correspondants.
 
 ---
 
@@ -218,7 +218,7 @@ Le kit étant installé au niveau utilisateur, il n'est pas nécessaire de le re
 
 | Phase | État | Portée |
 |---|---|---|
-| **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe. Claude Code éprouvé ; les trois autres adapters fonctionnels mais tests terrain en cours. |
+| **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe. Les quatre adapters sont fonctionnels et validés en conditions réelles. |
 | **Phase 2** | À venir | Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale. |
 | **Phase 3** | À venir | Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims délégant au MCP ; une seule implémentation pour toutes les CLI compatibles MCP. |
 
