@@ -43,7 +43,7 @@ SecondBrain installe une mémoire locale structurée que l'agent lit et écrit a
 | **Claude Code** | Référence, éprouvée en production | Skills + slash commands + bloc `CLAUDE.md` + permissions |
 | **Gemini CLI** | Fonctionnel, tests terrain en cours | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
 | **Codex** | Fonctionnel, tests terrain en cours | Prompts + skills |
-| **Mistral Vibe** | Fonctionnel (pas de slash commands : tout passe par les instructions) | Bloc injecté dans `instructions.md` |
+| **Mistral Vibe** | Fonctionnel | Skills dans `~/.vibe/skills/` + bloc injecté dans `~/.vibe/AGENTS.md` |
 
 Le script d'installation détecte automatiquement les CLI présentes sur le poste et ne déploie que les adapters correspondants. Les retours d'expérience et contributions sur les trois adapters non-Claude sont les bienvenus.
 
@@ -59,7 +59,7 @@ Le cycle de mémoire se décompose en trois phases :
 
 ### Fiabilité du déclenchement par langage naturel
 
-Le déclenchement automatique repose sur des instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `instructions.md`). Sa fiabilité dépend du modèle sous-jacent : très élevée sur Claude Code, bonne sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`, etc.) produisent un comportement identique sur toutes les plateformes qui les exposent.
+Le déclenchement automatique repose sur des instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`). Sa fiabilité dépend du modèle sous-jacent : très élevée sur Claude Code, bonne sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`, etc.) produisent un comportement identique sur toutes les plateformes qui les exposent.
 
 ---
 
@@ -92,7 +92,7 @@ Le script détecte les CLI présentes, déploie l'adapter correspondant à chacu
 | Claude Code | `~/.claude/commands/mem-*.md`, `~/.claude/skills/mem-*.md`, `memory-kit.json`, bloc dans `CLAUDE.md`, vault ajouté à `permissions.additionalDirectories` dans `settings.json` |
 | Gemini CLI | Extension dans `~/.gemini/extensions/memory-kit/`, `memory-kit.json`, activation dans `extension-enablement.json` |
 | Codex | `~/.codex/prompts/mem-*.md`, `~/.codex/skills/mem-*/SKILL.md`, `memory-kit.json` |
-| Mistral Vibe | Bloc injecté dans `~/.vibe/instructions.md` |
+| Mistral Vibe | `~/.vibe/AGENTS.md` (bloc injecté), `~/.vibe/skills/mem-*/SKILL.md` |
 
 ### Choix du vault
 
@@ -118,7 +118,7 @@ Aucune session trouvée. Mémoire initialisée — memory/_index.md est prêt.
 Décris ce sur quoi tu travailles et on commence.
 ```
 
-Sur Mistral Vibe, qui n'expose pas de slash commands user-level, déclencher avec une phrase : *« charge mon contexte mémoire »*.
+Sur Mistral Vibe, `/mem-recall` fonctionne également (skills exposés via `user-invocable: true`), ou déclencher avec une phrase : *« reprends [projet] »*.
 
 ### Ouvrir le vault dans Obsidian (optionnel)
 
@@ -146,7 +146,7 @@ SecondBrain/
 │   ├── claude-code/            Skills + slash commands + bloc CLAUDE.md
 │   ├── gemini-cli/             Extension memory-kit + GEMINI.md + TOML
 │   ├── codex/                  Prompts + skills
-│   └── mistral-vibe/           Bloc injecté dans ~/.vibe/instructions.md
+│   └── mistral-vibe/           Bloc AGENTS.md + skills (format Anthropic)
 ├── memory/                     Vault Obsidian local (non versionné)
 │   ├── _index.md
 │   ├── archives/               Une archive par session complète (immuable)
@@ -247,7 +247,8 @@ Remove-Item "$HOME\.codex\skills\mem-*" -Recurse -Force
 Remove-Item "$HOME\.codex\memory-kit.json" -Force
 
 # Mistral Vibe
-# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\instructions.md
+Remove-Item "$HOME\.vibe\skills\mem-*" -Recurse -Force
+# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\AGENTS.md
 ```
 
 Le vault `memory/` reste intact. Les archives et les projets sont préservés.

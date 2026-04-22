@@ -14,7 +14,8 @@ Langue de travail : **français** (code, commentaires, messages, procédures). A
 core/procedures/              ← spec procédurale canonique, agnostique LLM
 adapters/                     ← traductions vers chaque plateforme
   mistral-vibe/
-    instructions-block.md     ← bloc injecté dans ~/.vibe/instructions.md
+    instructions-block.md     ← bloc injecté dans ~/.vibe/AGENTS.md
+    skills/*/SKILL.md.template ← skills user-invocables (auto-découverts)
 memory/                       ← vault Obsidian local (non versionné avec le kit)
 deploy.ps1                    ← assemble adapters + core et installe dans ~/.vibe/
 ```
@@ -28,15 +29,12 @@ Si une procédure doit diverger entre plateformes, c'est le signe qu'il manque u
 ## Workflow de développement
 
 1. Éditer la procédure dans `core/procedures/mem-{nom}.md` — c'est la source de vérité.
-2. Éditer `adapters/mistral-vibe/instructions-block.md` si le bloc d'instructions injecté dans `~/.vibe/instructions.md` doit changer (formulation des triggers naturels, description des skills).
-3. Lancer `.\deploy.ps1` pour pousser vers `~/.vibe/`.
-4. Tester dans une session Mistral Vibe en formulant un trigger naturel (« on reprend le projet X », « on s'arrête », etc.) — Vibe n'expose pas de slash commands, tout passe par le langage naturel + le tool use.
+2. Éditer le frontmatter (`description`, `user-invocable`) dans `adapters/mistral-vibe/skills/mem-{nom}/SKILL.md.template` si le champ de trigger automatique doit changer.
+3. Éditer `adapters/mistral-vibe/instructions-block.md` si le bloc injecté dans `~/.vibe/AGENTS.md` doit changer (règle d'or, cheat sheet bash, liste des skills, anti-drift).
+4. Lancer `.\deploy.ps1` pour pousser vers `~/.vibe/`.
+5. Tester dans une nouvelle session Vibe — soit par trigger naturel (« reprends », « on s'arrête »), soit par invocation explicite `/mem-{nom}`.
 
 Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-projects`, `mem-search`, `mem-rename-project`, `mem-merge-projects`, `mem-digest`, `mem-rollback-archive` (gestion du vault).
-
-## Ajouter un nouvel adapter
-
-Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, puis étendre `deploy.ps1` pour détecter l'installation de la plateforme et y déployer. **Ne jamais modifier `core/`** pour accommoder une plateforme — `core/` reste neutre.
 
 ## Le vault `memory/`
 
@@ -52,14 +50,13 @@ Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, pu
 
 ## Conventions de déploiement
 
-- Le script détecte automatiquement `$HOME/.vibe` — **jamais de chemin en dur** dans les fichiers à distribuer.
-- Contrairement aux autres adapters, Mistral Vibe n'a pas de fichier `memory-kit.json` dédié : le chemin du vault est injecté directement dans le bloc d'instructions.
-- Le bloc injecté dans `~/.vibe/instructions.md` est délimité par `<!-- MEMORY-KIT:START -->` et `<!-- MEMORY-KIT:END -->` — idempotent, préserve le reste du contenu utilisateur.
+- `deploy.ps1` détecte automatiquement `$HOME/.vibe` — **jamais de chemin en dur** dans les fichiers à distribuer.
+- Contrairement aux autres adapters, Mistral Vibe n'a pas de fichier `memory-kit.json` runtime. Le chemin du vault est substitué directement dans le bloc `instructions-block.md` au moment du déploiement (remplacement de `{{VAULT_PATH}}` par le chemin absolu).
+- Le bloc injecté dans `~/.vibe/AGENTS.md` est délimité par `<!-- MEMORY-KIT:START -->` et `<!-- MEMORY-KIT:END -->` — idempotent, préserve le reste du contenu utilisateur.
+- Les skills sont assemblés dans `~/.vibe/skills/mem-{nom}/SKILL.md` (template + `{{PROCEDURE}}` substituée).
 
 ## Spécificités Mistral Vibe
 
-Mistral Vibe n'expose pas de slash commands user-level. Tout passe par :
-
-- **Les instructions globales** dans `~/.vibe/instructions.md` (bloc MEMORY-KIT injecté par `deploy.ps1`).
-- **Le tool use** : les opérations sur le vault passent par `read_file`, `write_file`, `search_replace`, `bash` selon les besoins de la procédure.
-- **Le déclenchement par langage naturel** : « on reprend le projet X » → `mem-recall`, « on s'arrête pour aujourd'hui » → `mem-archive` en mode complet, etc. Les mappings exacts sont documentés dans `adapters/mistral-vibe/instructions-block.md`.
+- Vibe charge `~/.vibe/AGENTS.md` comme user-level instructions à chaque session (confirmé par `vibe/core/system_prompt.py`). C'est le vrai point d'injection des règles permanentes — **pas** `~/.vibe/instructions.md` (fichier sans rôle côté Vibe malgré son nom).
+- Vibe auto-découvre les skills dans `~/.vibe/skills/{nom}/SKILL.md` — même format qu'Anthropic et Codex (frontmatter YAML + corps de procédure). Le champ `user-invocable: true` expose le skill au déclenchement utilisateur (langage naturel + commande).
+- Pour toute opération sur le vault, **privilégier l'outil `bash` avec chemin absolu** plutôt que `read_file`/`write_file` — les tools de fichiers de Vibe peuvent être sandboxés sur le cwd et refuser un chemin absolu externe. `bash` contourne cette limite.
