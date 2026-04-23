@@ -28,6 +28,7 @@ Deux modes distincts. **Ne jamais les confondre.**
 À déclencher sur intention exprimée en langage naturel :
 
 - **`/mem-doc {chemin}`** — « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire ». Ingère un document local (PDF, Markdown, texte, image, docx...) comme archive single-shot. 1 fichier par invocation. Résolution auto du projet cible. Options : `--projet {nom}`, `--titre "{texte}"`.
+- **`/mem-archeo [chemin-dépôt]`** — « fais une rétro Git de ce projet », « reconstitue l'historique », « remonte les bumps de version », « archéo sur ce repo ». Reconstitue l'historique d'un dépôt Git existant en N archives datées (1 par tag/release/merge/fenêtre de commits). Détection auto du niveau, confirmation interactive avant écriture, idempotent. Options : `--niveau {tags|releases|merges|commits}`, `--projet {nom}`, `--depuis/--jusqu-a YYYY-MM-DD`, `--fenetre {jour|semaine|mois}`, `--dry-run`.
 - **`/mem-list-projects`** — « liste mes projets », « quels projets j'ai en mémoire ? ». Affiche un tableau des projets avec phase + dernière session + nb de sessions.
 - **`/mem-search {requête}`** — « cherche dans la mémoire X », « trouve les archives qui parlent de Y ». Recherche plein-texte sur le vault.
 - **`/mem-rename-project {ancien} {nouveau}`** — « renomme le projet X en Y ». Renomme le slug partout dans le vault (dossier, frontmatters, tags, index). Préserve les noms de fichiers et le contenu narratif des archives.

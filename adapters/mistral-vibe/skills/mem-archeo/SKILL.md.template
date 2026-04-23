@@ -1,0 +1,7 @@
+---
+name: mem-archeo
+description: Reconstituer l'historique d'un dépôt Git existant en plusieurs archives datées dans le vault mémoire (1 archive par tag, release, merge sur mainline ou fenêtre de commits). Utiliser ce skill quand l'utilisateur demande une rétro-analyse Git, de remonter les bumps de version, d'archiver l'historique d'un dépôt, ou de reconstituer le contexte d'un projet existant depuis ses commits. Détection automatique du niveau de granularité, enrichissement avec les fichiers IA racine au moment de chaque jalon, extraction des tickets Jira et PRs référencés. Idempotent : skip les archives déjà créées. Frontmatter source=archeo-git pour discrimination vs archives vécues.
+user-invocable: true
+---
+
+{{PROCEDURE}}

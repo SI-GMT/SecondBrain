@@ -29,6 +29,7 @@ Ce skill fonctionne dans deux modes distincts. **Ne jamais les confondre.**
 À invoquer quand l'utilisateur exprime l'intention correspondante :
 
 - `mem-doc` — « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire », « absorbe ce document », « indexe cette spec ». Ingère un document local (1 fichier par invocation). Résolution auto du projet cible (priorité : `--projet` → match chemin → match CWD → `inbox`).
+- `mem-archeo` — « fais une rétro Git de ce projet », « reconstitue l'historique », « archéo sur ce repo », « remonte les bumps de version ». Reconstitue l'historique d'un dépôt Git existant en N archives datées (1 par tag/release/merge/fenêtre de commits). Détection auto du niveau, confirmation interactive, idempotent. Frontmatter `source: archeo-git`.
 - `mem-list-projects` — « liste mes projets », « quels projets j'ai en mémoire ? », « montre-moi tous les projets ».
 - `mem-search` — « cherche dans la mémoire X », « trouve les archives qui parlent de Y », « où avait-on parlé de Z ? ».
 - `mem-rename-project` — « renomme le projet X en Y », « change le slug de X ».

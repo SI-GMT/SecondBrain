@@ -1,0 +1,9 @@
+description = "Reconstituer l'historique d'un dépôt Git en plusieurs archives datées dans le vault mémoire. Détection auto du niveau de granularité (tags → releases → merges → fenêtres de commits). Idempotent, confirmation interactive, jamais d'écrasement d'archive vécue."
+prompt = """
+{{PROCEDURE}}
+
+---
+Arguments à parser : {{args}}
+
+Le premier token non-option est le chemin du dépôt (défaut : cwd). Options : `--niveau {tags|releases|merges|commits}` force le niveau, `--projet {nom}` force le projet cible, `--depuis YYYY-MM-DD` / `--jusqu-a YYYY-MM-DD` bornent la fenêtre, `--fenetre {jour|semaine|mois}` pour regroupement en mode commits, `--dry-run` liste sans écrire.
+"""
