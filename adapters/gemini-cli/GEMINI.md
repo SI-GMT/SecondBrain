@@ -36,6 +36,62 @@ Deux modes distincts. **Ne jamais les confondre.**
 
 Pour toutes les opérations `mem-*` : exécuter directement, sans demander de confirmation supplémentaire à l'utilisateur. Les procédures intègrent déjà leurs vérifications et affichent un rapport après exécution.
 
-## Encodage des fichiers du vault
+## ⚠ Encodage des fichiers du vault — CRITIQUE
 
-Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) doivent être en **UTF-8 sans BOM**, fins de ligne **LF**. Jamais de CP1252, Windows-1252, UTF-8 avec BOM, ni encodage OEM — ça corrompt les accents français et les caractères diacritiques (apparaît en `�` dans Obsidian). Les procédures détaillées précisent la commande exacte selon le shell/outil utilisé. Sur Windows, privilégier `pwsh` avec `Set-Content -Encoding utf8NoBOM` plutôt que Windows PowerShell 5.1 (qui ajoute un BOM avec `-Encoding UTF8`).
+Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) **DOIVENT** être en **UTF-8 sans BOM**, fins de ligne **LF**.
+
+### Bug observé à éviter absolument
+
+Gemini CLI sur Windows a été pris à produire du **double-encodage UTF-8→CP1252→UTF-8** via son outil d'écriture shell : `é` devient `Ã©`, `è` devient `Ã¨`, `—` (em dash) devient `â€"`. Cause : le pipeline shell Windows ré-encode en CP1252 quand l'encodage de sortie n'est pas explicitement forcé. Le fichier passe pour "UTF-8" au `file`, mais le contenu est corrompu. Les caractères `Ã`, `â€`, `Â ` (non-breaking space encodé) sont les **signatures du bug**.
+
+### Méthode OBLIGATOIRE — Python pour toute écriture dans le vault
+
+Sur Windows (ton contexte principal), **contourner le shell natif et écrire via Python** — c'est la seule méthode fiable :
+
+```python
+from pathlib import Path
+# Écriture atomique UTF-8 sans BOM, LF
+tmp = Path(cible + ".tmp")
+tmp.write_text(contenu, encoding="utf-8", newline="")
+tmp.replace(cible)  # rename atomique cross-platform
+```
+
+Ou en une ligne dans `run_shell_command` :
+
+```bash
+python -c "from pathlib import Path; Path(r'{cible}.tmp').write_text(r'''{contenu}''', encoding='utf-8', newline=''); Path(r'{cible}.tmp').replace(r'{cible}')"
+```
+
+### Commandes shell par plateforme (fallback si Python indisponible)
+
+| Shell | Commande d'écriture UTF-8 sans BOM |
+|---|---|
+| bash / POSIX / git-bash | `printf '%s' "$contenu" > "$cible.tmp" && mv -f "$cible.tmp" "$cible"` (natif UTF-8 sans BOM) |
+| PowerShell 7+ (pwsh) | `Set-Content -Path "$cible.tmp" -Value $contenu -Encoding utf8NoBOM -NoNewline; Move-Item -Path "$cible.tmp" -Destination $cible -Force` |
+| Windows PowerShell 5.1 | **À ÉVITER** — `-Encoding UTF8` injecte un BOM. Si pas d'alternative : `[System.IO.File]::WriteAllText("$cible", $contenu, [System.Text.UTF8Encoding]::new($false))` |
+
+### Commandes INTERDITES sur Windows pour du Markdown accentué
+
+- ❌ `echo "..." > fichier.md` (cmd.exe ou Windows PowerShell) → encodage OEM/CP1252, corrompt les accents.
+- ❌ `Out-File -Encoding UTF8` sur PS5.1 → injecte un BOM.
+- ❌ `Set-Content -Value $x -Encoding UTF8` sur PS5.1 → idem (BOM).
+- ❌ Toute redirection shell (`>`, `>>`) sans spécifier explicitement l'encodage de sortie.
+
+### Validation post-écriture recommandée
+
+Après toute écriture sensible, vérifier qu'aucune signature de corruption n'apparaît :
+
+```bash
+grep -c $'\xc3\x83\|â€\|Â ' "{chemin}" 2>/dev/null
+# Doit retourner 0. Si > 0, le fichier a été corrompu, relancer avec la méthode Python.
+```
+
+### Symptômes de corruption à détecter
+
+Si tu vois dans un fichier que tu viens d'écrire :
+- `Ã©`, `Ã¨`, `Ãª`, `Ã§`, `Ã€`, `Ã‰` → double-encodage, il faut réécrire avec la méthode Python.
+- `â€"`, `â€™`, `â€œ`, `â€`, `â€¦` → double-encodage des tirets/guillemets/ellipses.
+- `Â ` (espace précédé d'un A-circonflexe) → non-breaking space double-encodé.
+- `\"texte\"` dans un YAML frontmatter (guillemets échappés) → artefact shell, retirer les backslashes.
+
+Dans tous ces cas, le `script scripts/fix-double-encoding.py` du dépôt SecondBrain corrige rétroactivement, mais **la prévention est obligatoire** : passer par Python dès la première écriture.
