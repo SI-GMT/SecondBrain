@@ -1,0 +1,7 @@
+---
+name: mem-doc
+description: Ingérer un document local (PDF, Markdown, texte, image, docx...) dans le vault mémoire comme archive single-shot. Utiliser ce skill quand l'utilisateur demande d'archiver, d'ingérer ou d'indexer un fichier précis du disque (« ingère ce document », « archive ce PDF », « enregistre ce fichier dans ma mémoire », « absorbe ce fichier »). Le skill gère la copie du source dans archives/_sources/, la synthèse structurée, le frontmatter source=doc avec hash SHA-256 pour détection de re-ingestion, et la résolution automatique du projet cible.
+user-invocable: true
+---
+
+{{PROCEDURE}}
