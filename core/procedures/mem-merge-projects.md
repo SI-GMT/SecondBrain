@@ -35,6 +35,42 @@ Selon l'outil d'écriture :
 - **Python** : `open(path, 'w', encoding='utf-8', newline='\n')`.
 - **Outils natifs LLM** (Write, file_write…) : vérifier la doc ; en cas de doute, écrire via shell avec une commande explicite en UTF-8.
 
+## Écritures atomiques et protection contre les accès concurrents
+
+Le vault peut subir des accès concurrents — deux sessions LLM parallèles, ou une session qui écrit pendant qu'Obsidian édite manuellement. Toutes les écritures de cette procédure doivent appliquer les patterns suivants.
+
+### Pattern 1 — Rename atomique (pour toutes les écritures)
+
+Chaque fichier écrit ou réécrit suit cette séquence :
+
+1. Écrire le nouveau contenu dans `{fichier}.tmp` (même répertoire que la cible).
+2. Rename atomique `{fichier}.tmp` → `{fichier}`. POSIX : `rename()` natif. Windows : `Move-Item -Force` ou `MoveFileEx` avec `REPLACE_EXISTING`.
+3. Si le rename échoue, supprimer le `.tmp` et remonter l'erreur.
+
+Commandes concrètes :
+
+| Shell | Séquence |
+|---|---|
+| bash / POSIX | `printf '%s' "$contenu" > "$cible.tmp" && mv -f "$cible.tmp" "$cible"` |
+| PowerShell 7+ | `Set-Content -Path "$cible.tmp" -Value $contenu -Encoding utf8NoBOM -NoNewline; Move-Item -Path "$cible.tmp" -Destination $cible -Force` |
+| Python | `Path(f"{cible}.tmp").write_text(contenu, encoding='utf-8', newline=''); Path(f"{cible}.tmp").replace(cible)` |
+
+Pour une **suppression de fichier ou dossier** (étape finale de la fusion), utiliser directement `rm` / `Remove-Item` / `Path.unlink()` — opérations déjà atomiques.
+
+### Pattern 2 — Hash check read-before-write (pour les fichiers partagés)
+
+Les fichiers partagés modifiables par plusieurs procédures (`_index.md`, `historique.md` de la cible, frontmatters d'archives) exigent un hash check avant toute réécriture :
+
+1. Au début de l'opération : lire le fichier cible, calculer son SHA-256, mémoriser (`hash_initial`).
+2. Juste avant l'écriture : relire le fichier cible, recalculer le SHA-256 (`hash_avant`).
+3. Si `hash_avant != hash_initial` → le fichier a changé entre-temps. Ne pas écraser. Re-lire, merger les modifs souhaitées avec le contenu actuel, reprendre à l'étape 2 (max 3 tentatives).
+4. Si `hash_avant == hash_initial` → procéder au rename atomique (pattern 1).
+5. Après 3 tentatives échouées → stopper, avertir l'utilisateur : « Fichier `{cible}` modifié par un acteur externe pendant l'opération. Vérifie manuellement, relance la commande ensuite. »
+
+### Limite connue
+
+Ces patterns réduisent fortement la fenêtre de race mais ne l'éliminent pas complètement. Pour une protection stricte, le MCP memory-kit (Phase 3) utilisera un verrou applicatif via `asyncio.Lock`.
+
 ## Procédure
 
 ### 1. Valider les arguments
