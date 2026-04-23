@@ -49,6 +49,7 @@ Les skills `mem-*` sont installés dans `~/.vibe/skills/` et sont **auto-découv
 | `mem-archive` | « on s'arrête », « je pars », « on termine », `/clear` (mode complet) — **mid-session** : mise à jour silencieuse de `contexte.md` dès qu'une décision ou fait important émerge |
 | `mem-doc` | « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire », « absorbe ce document » |
 | `mem-archeo` | « fais une rétro Git de ce projet », « reconstitue l'historique », « remonte les bumps de version », « archéo sur ce repo » |
+| `mem-archeo-atlassian` | « archive la documentation Confluence », « rétro sur cet espace Atlassian », « ingère cette page et ses enfants », « archive cette doc et les tickets liés » |
 | `mem-list-projects` | « liste mes projets », « quels projets j'ai en mémoire ? » |
 | `mem-search` | « cherche [X] dans la mémoire », « trouve les archives qui parlent de Y » |
 | `mem-digest` | « résume-moi les N dernières sessions de [projet] », « fil rouge de [projet] » |
