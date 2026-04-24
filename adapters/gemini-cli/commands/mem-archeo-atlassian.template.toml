@@ -1,9 +1,9 @@
 description = "Rétro-archiver une arborescence de pages Confluence (page racine + descendance ou space) dans le vault mémoire, avec enrichissement par les tickets Jira référencés depuis les pages. 1 archive par page. Frontmatter source=archeo-atlassian. Prérequis : MCP Atlassian côté client."
-prompt = """
+prompt = '''
 {{PROCEDURE}}
 
 ---
 Arguments à parser : {{args}}
 
 Le premier token non-option est l'URL Confluence (page ou space root). Options : `--projet {nom}`, `--profondeur N`, `--skip-children`, `--depuis YYYY-MM-DD`, `--skip-jira`, `--dry-run`.
-"""
+'''

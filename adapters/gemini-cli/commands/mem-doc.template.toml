@@ -1,9 +1,9 @@
 description = "Ingérer un document local (PDF, Markdown, texte, image, docx...) dans le vault mémoire comme archive single-shot. Résolution auto du projet cible (priorité descendante : --projet → chemin → CWD → inbox)."
-prompt = """
+prompt = '''
 {{PROCEDURE}}
 
 ---
 Arguments à parser : {{args}}
 
 Le premier token non-option est le chemin du fichier. Options : `--projet {nom}` force le projet cible, `--titre "{texte}"` fournit un titre court.
-"""
+'''

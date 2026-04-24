@@ -43,6 +43,10 @@ Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, pu
 
 Phase 3 prévue : extraire la logique dans un serveur MCP `memory-kit`. Les adapters deviendront alors des thin wrappers qui délèguent au MCP ; une seule implémentation, tous les LLM compatibles.
 
+### Gemini CLI : TOML literal strings (`'''`) pour `prompt`
+
+Les templates `adapters/gemini-cli/commands/*.template.toml` doivent utiliser `prompt = '''...'''` (literal multi-line string), **jamais** `"""..."""` (basic multi-line string). Le Markdown des procédures `core/` contient des backslashes (`\/:*?"<>|`, regex, exemples de code Python/PowerShell) qui ne sont pas des séquences d'échappement TOML valides et cassent le parser Gemini (`FileCommandLoader: Failed to parse TOML`). Les literal strings ne processent rien — texte brut.
+
 ## Le vault `memory/`
 
 `memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :

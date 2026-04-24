@@ -1,7 +1,7 @@
 description = "Rechercher du texte dans le vault mémoire."
-prompt = """
+prompt = '''
 {{PROCEDURE}}
 
 ---
 Requête fournie par l'utilisateur : {{args}}
-"""
+'''

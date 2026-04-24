@@ -1,7 +1,7 @@
 description = "Charger le contexte projet depuis le vault mémoire."
-prompt = """
+prompt = '''
 {{PROCEDURE}}
 
 ---
 Argument optionnel fourni par l'utilisateur (nom de projet) : {{args}}
-"""
+'''

@@ -1,7 +1,7 @@
 description = "Renommer un projet dans le vault mémoire de manière complète, y compris dossier projet, contexte.md, historique.md, _index.md et fichiers d'archives."
-prompt = """
+prompt = '''
 {{PROCEDURE}}
 
 ---
 Arguments fournis par l'utilisateur ({ancien} {nouveau}) : {{args}}
-"""
+'''
