@@ -1,0 +1,11 @@
+---
+description: Ingerer une fiche personne (collegue, client, ami, famille) dans 60-personnes/. Shortcut explicite. Toujours sensitive=true par defaut (interdit la promotion vers CollectiveBrain).
+---
+
+{{PROCEDURE}}
+
+## User input
+
+```text
+$ARGUMENTS
+```

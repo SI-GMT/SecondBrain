@@ -1,0 +1,7 @@
+description = "Ingerer un objectif (intention future, etat desire, but) dans 50-objectifs/. Shortcut explicite. Detecte horizon (court/moyen/long) depuis l'echeance."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Contenu de l'objectif. Options : --scope perso|pro, --horizon court|moyen|long, --echeance YYYY-MM-DD, --projet {slug}, --no-confirm, --dry-run.
+'''

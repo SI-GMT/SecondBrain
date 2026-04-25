@@ -51,6 +51,92 @@ function Write-Skip([string]$msg) { Write-Host "  [--] $msg" -ForegroundColor Da
 function Write-Info([string]$msg) { Write-Host "  [i]  $msg" -ForegroundColor DarkCyan }
 
 # ============================================================
+# Ecriture / mise a jour de memory-kit.json
+# ============================================================
+# Le fichier porte le chemin du vault et la valeur par defaut du scope (perso|pro).
+# Comportement :
+#   - Fichier absent => creation avec vault + default_scope (defaut: pro)
+#   - Fichier present + -Force => recreation complete
+#   - Fichier present sans -Force => preservation, mais patch silencieux si
+#     default_scope est absent (cas migration v0.4 -> v0.5).
+
+function Write-MemoryKitJson {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Vault,
+        [string]$DefaultScope = 'pro',
+        [switch]$Force
+    )
+    $exists = Test-Path $Path
+    if ($exists -and -not $Force) {
+        # Patch silencieux : si default_scope manque, l'ajouter sans toucher au reste.
+        try {
+            $existing = Get-Content -Path $Path -Raw | ConvertFrom-Json -AsHashtable
+        } catch {
+            Write-Warn2 "memory-kit.json existant illisible ($Path) : $_"
+            return
+        }
+        if (-not $existing.ContainsKey('default_scope')) {
+            $existing['default_scope'] = $DefaultScope
+            $patched = [ordered]@{ vault = $existing['vault']; default_scope = $existing['default_scope'] } | ConvertTo-Json
+            Set-Content -Path $Path -Value $patched -Encoding utf8NoBOM -NoNewline
+            Write-Ok "memory-kit.json patche : default_scope=$DefaultScope ajoute"
+        } else {
+            Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
+        }
+        return
+    }
+    # Creation ou ecrasement complet.
+    $configData = [ordered]@{ vault = $Vault; default_scope = $DefaultScope } | ConvertTo-Json
+    Set-Content -Path $Path -Value $configData -Encoding utf8NoBOM -NoNewline
+    Write-Ok "memory-kit.json -> vault = $Vault, default_scope = $DefaultScope"
+}
+
+# ============================================================
+# Resolution des directives {{INCLUDE _bloc}}
+# ============================================================
+# Une procedure core peut inclure des blocs reutilisables (encoding, concurrence,
+# router, frontmatter-universel...) via {{INCLUDE _nom}}. Resolution recursive
+# avec profondeur max 5 pour eviter les cycles.
+
+function Resolve-IncludeDirectives {
+    param(
+        [Parameter(Mandatory=$true)][string]$Content,
+        [Parameter(Mandatory=$true)][string]$BlocsRoot,
+        [int]$Depth = 0
+    )
+    if ($Depth -gt 5) {
+        throw "Profondeur maximale d'inclusion depassee (5). Cycle d'inclusion suspecte."
+    }
+
+    $pattern = '\{\{INCLUDE\s+(_\w+)\}\}'
+    $allMatches = [regex]::Matches($Content, $pattern)
+
+    if ($allMatches.Count -eq 0) {
+        return $Content
+    }
+
+    # Traiter du dernier au premier pour preserver les indices apres remplacement.
+    $result = $Content
+    $sortedMatches = @($allMatches) | Sort-Object -Property Index -Descending
+    foreach ($match in $sortedMatches) {
+        $blocName = $match.Groups[1].Value
+        $blocPath = Join-Path $BlocsRoot "$blocName.md"
+        if (-not (Test-Path $blocPath)) {
+            throw "Bloc d'inclusion introuvable : {{INCLUDE $blocName}} -> $blocPath manquant."
+        }
+        $blocContent = Get-Content -Path $blocPath -Raw
+        # Resolution recursive (un bloc peut en inclure d'autres).
+        $blocContent = Resolve-IncludeDirectives -Content $blocContent -BlocsRoot $BlocsRoot -Depth ($Depth + 1)
+        # Remplacement litteral (pas regex) : evite les soucis d'echappement
+        # avec les caracteres speciaux du contenu inclus.
+        $result = $result.Substring(0, $match.Index) + $blocContent + $result.Substring($match.Index + $match.Length)
+    }
+
+    return $result
+}
+
+# ============================================================
 # Detection des CLI IA
 # ============================================================
 
@@ -115,6 +201,45 @@ function Get-ExistingVaultPath {
 }
 
 # ============================================================
+# Cleanup migration v0.4 -> v0.5
+# ============================================================
+# Supprime les skills/commandes/templates obsoletes apres renommages v0.5 :
+#   mem-list-projects -> mem-list
+#   mem-rename-project -> mem-rename
+#   mem-merge-projects -> mem-merge
+# Idempotent : si les fichiers ont deja ete supprimes, ne fait rien.
+
+function Remove-DeprecatedV04Files {
+    param([Parameter(Mandatory=$true)][hashtable]$ConfigDirs)
+    $obsolete = @('mem-list-projects', 'mem-rename-project', 'mem-merge-projects')
+    $patterns = @{
+        Claude = @('skills\{name}.md', 'commands\{name}.md')
+        Gemini = @('extensions\memory-kit\commands\{name}.toml')
+        Codex  = @('prompts\{name}.md', 'skills\{name}')
+        Vibe   = @('skills\{name}')
+    }
+    $count = 0
+    foreach ($cli in $patterns.Keys) {
+        $base = $ConfigDirs[$cli]
+        if (-not $base -or -not (Test-Path $base)) { continue }
+        foreach ($pattern in $patterns[$cli]) {
+            foreach ($name in $obsolete) {
+                $relPath = $pattern -replace '\{name\}', $name
+                $full = Join-Path $base $relPath
+                if (Test-Path $full) {
+                    Remove-Item -Path $full -Recurse -Force
+                    Write-Ok "Cleanup v0.4 : $cli/$relPath supprime"
+                    $count++
+                }
+            }
+        }
+    }
+    if ($count -eq 0) {
+        Write-Skip "Cleanup v0.4 : rien a supprimer (deja a jour)"
+    }
+}
+
+# ============================================================
 # Adapter : Claude Code
 # ============================================================
 
@@ -163,6 +288,7 @@ function Deploy-ClaudeCode {
             return
         }
         $procedureContent = Get-Content -Path $procedurePath -Raw
+        $procedureContent = Resolve-IncludeDirectives -Content $procedureContent -BlocsRoot $coreSource
         $procedureContent = $procedureContent -replace '\{\{CONFIG_FILE\}\}', $configFileRef
         $assembled = $templateContent -replace '\{\{PROCEDURE\}\}', $procedureContent
         Set-Content -Path (Join-Path $skillsTarget "$skillName.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
@@ -170,14 +296,7 @@ function Deploy-ClaudeCode {
     }
 
     # memory-kit.json
-    $configFile = Join-Path $ConfigDir 'memory-kit.json'
-    $configData = [ordered]@{ vault = $VaultPath } | ConvertTo-Json
-    if ((Test-Path $configFile) -and -not $Force) {
-        Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
-    } else {
-        Set-Content -Path $configFile -Value $configData -Encoding utf8NoBOM -NoNewline
-        Write-Ok "memory-kit.json -> vault = $VaultPath"
-    }
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Force:$Force
 
     # Bloc MEMORY-KIT dans CLAUDE.md utilisateur (idempotent)
     $claudeMdTarget = Join-Path $ConfigDir 'CLAUDE.md'
@@ -314,6 +433,7 @@ function Deploy-GeminiCli {
             return
         }
         $procedureContent = Get-Content -Path $procedurePath -Raw
+        $procedureContent = Resolve-IncludeDirectives -Content $procedureContent -BlocsRoot $coreSource
         $procedureContent = $procedureContent -replace '\{\{CONFIG_FILE\}\}', $configFileRef
         $assembled = $templateContent -replace '\{\{PROCEDURE\}\}', $procedureContent
         Set-Content -Path (Join-Path $cmdDir "$commandName.toml") -Value $assembled -Encoding utf8NoBOM -NoNewline
@@ -321,14 +441,7 @@ function Deploy-GeminiCli {
     }
 
     # memory-kit.json au niveau utilisateur
-    $configFile = Join-Path $ConfigDir 'memory-kit.json'
-    $configData = [ordered]@{ vault = $VaultPath } | ConvertTo-Json
-    if ((Test-Path $configFile) -and -not $Force) {
-        Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
-    } else {
-        Set-Content -Path $configFile -Value $configData -Encoding utf8NoBOM -NoNewline
-        Write-Ok "memory-kit.json -> vault = $VaultPath"
-    }
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Force:$Force
 
     # Activer l'extension dans extension-enablement.json (idempotent)
     $enablementFile = Join-Path $extensionsDir 'extension-enablement.json'
@@ -403,6 +516,7 @@ function Deploy-Codex {
                 return
             }
             $proc = Get-Content -Path $procPath -Raw
+            $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
             $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
             Set-Content -Path (Join-Path $promptsTarget "$name.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
@@ -427,6 +541,7 @@ function Deploy-Codex {
                 return
             }
             $proc = Get-Content -Path $procPath -Raw
+            $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
             $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
             $destDir = Join-Path $skillsTarget $name
@@ -439,14 +554,7 @@ function Deploy-Codex {
     }
 
     # memory-kit.json au niveau utilisateur
-    $configFile = Join-Path $ConfigDir 'memory-kit.json'
-    $configData = [ordered]@{ vault = $VaultPath } | ConvertTo-Json
-    if ((Test-Path $configFile) -and -not $Force) {
-        Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
-    } else {
-        Set-Content -Path $configFile -Value $configData -Encoding utf8NoBOM -NoNewline
-        Write-Ok "memory-kit.json -> vault = $VaultPath"
-    }
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Force:$Force
 
     return $true
 }
@@ -536,6 +644,7 @@ function Deploy-MistralVibe {
                 return
             }
             $proc = Get-Content -Path $procPath -Raw
+            $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
             $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
             $destDir = Join-Path $skillsTarget $name
@@ -665,7 +774,24 @@ if ($detected.Count -eq 0) {
 }
 
 # ============================================================
-# 4. Deploiement par plateforme detectee
+# 4. Cleanup migration v0.4 -> v0.5 (idempotent)
+# ============================================================
+
+Write-Host ''
+Write-Step 'Cleanup migration v0.4 -> v0.5 (skills renommes)...'
+$configMap = @{}
+foreach ($p in $detected) {
+    switch ($p.Name) {
+        'claude-code'   { $configMap['Claude'] = $p.ConfigDir }
+        'gemini-cli'    { $configMap['Gemini'] = $p.ConfigDir }
+        'codex'         { $configMap['Codex']  = $p.ConfigDir }
+        'mistral-vibe'  { $configMap['Vibe']   = $p.ConfigDir }
+    }
+}
+Remove-DeprecatedV04Files -ConfigDirs $configMap
+
+# ============================================================
+# 5. Deploiement par plateforme detectee
 # ============================================================
 
 $deployed = @()

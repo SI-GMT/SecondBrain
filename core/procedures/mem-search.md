@@ -1,10 +1,21 @@
-# Procédure : Search
+# Procédure : Search (v0.5 brain-centric)
 
-Objectif : recherche plein-texte dans le vault mémoire. Retourner les occurrences avec contexte, groupées par fichier et triées par pertinence (archives récentes d'abord).
+Objectif : recherche plein-texte dans le vault mémoire avec filtres multidimensionnels (zone, scope, kind, modality, projet, domaine, type, source). Retourner les occurrences avec contexte, groupées par fichier et triées par pertinence.
 
 ## Déclenchement
 
-L'utilisateur tape `/mem-search {requête}` ou exprime l'intention en langage naturel : « cherche dans la mémoire X », « trouve les archives qui parlent de Y », « où est-ce qu'on avait parlé de Z ? ».
+L'utilisateur tape `/mem-search {requête}` ou exprime l'intention en langage naturel : « cherche dans la mémoire X », « trouve les notes qui parlent de Y », « où est-ce qu'on avait parlé de Z ? ».
+
+Options reconnues :
+- `--zone {liste}` : limite aux zones données (ex: `--zone principes`, `--zone episodes,knowledge`).
+- `--scope perso|pro|all` : filtre par scope. Défaut : `all`.
+- `--kind projet|domaine` : filtre les épisodes par sous-logique.
+- `--modality left|right` : filtre par modalité hémisphérique.
+- `--projet {slug}` : filtre par projet rattaché.
+- `--domaine {slug}` : filtre par domaine rattaché.
+- `--type {valeur}` : filtre par type de note (ex: `--type principe`).
+- `--source {valeur}` : filtre par source (`vecu|doc|archeo-git|archeo-atlassian|manuel`).
+- `--limit N` : nombre max de matches (défaut 50).
 
 ## Résolution du chemin du vault
 
@@ -17,56 +28,78 @@ Puis s'arrêter.
 
 ## Procédure
 
-### 1. Récupérer la requête
+### 1. Récupérer la requête et les filtres
 
-La requête est l'argument passé à la commande ou l'expression identifiée dans le langage naturel.
+La requête est l'argument principal (premier token non-option). Si vide : répondre « Précise ce que tu cherches : `/mem-search {mot-clé ou phrase}`. » et s'arrêter.
 
-- Si vide : répondre « Précise ce que tu cherches : `/mem-search {mot-clé ou phrase}`. » et s'arrêter.
 - Recherche insensible à la casse par défaut.
-- Support des guillemets pour phrase exacte (ex. `/mem-search "merge freeze"`).
+- Support des guillemets pour phrase exacte.
+- Les options `--xxx` sont parsées et utilisées comme filtres en R3.
 
-### 2. Périmètre de recherche
+### 2. Périmètre de recherche par défaut
 
-Scanner **récursivement** ces emplacements :
+Scanner **récursivement** les 9 zones racines :
 
-- `{VAULT}/_index.md`
-- `{VAULT}/archives/*.md`
-- `{VAULT}/projets/**/*.md`
+```
+{VAULT}/00-inbox/
+{VAULT}/10-episodes/projets/
+{VAULT}/10-episodes/domaines/
+{VAULT}/20-knowledge/
+{VAULT}/30-procedures/
+{VAULT}/40-principes/
+{VAULT}/50-objectifs/
+{VAULT}/60-personnes/
+{VAULT}/70-cognition/
+{VAULT}/99-meta/
+```
 
-**Exclure** :
+Si `--zone X` est fourni, restreindre aux zones listées.
 
-- Le dossier `.obsidian/` et ses descendants (configuration Obsidian, non pertinent).
-- Les fichiers `*.canvas`, `*.excalidraw.md`, `*.base` (contenu non textuel géré par Obsidian).
-- Le dossier `.trash/` s'il existe.
+**Exclure systématiquement** :
+
+- `.obsidian/` et descendants.
+- Fichiers `*.canvas`, `*.excalidraw.md`, `*.base` (contenu non textuel).
+- `.trash/` si présent.
 
 ### 3. Exécuter la recherche
 
-Utiliser un outil de recherche adapté (Grep côté Claude Code / équivalent côté autre plateforme) :
+Utiliser un outil de recherche adapté (Grep, ripgrep ou équivalent) :
 
 - Mode : `content` avec 2 lignes de contexte avant/après chaque match.
-- Limite : 50 matches au total pour ne pas inonder la sortie. Si la limite est atteinte, le signaler dans le rapport.
+- Limite : `--limit` (défaut 50). Si atteinte, le signaler.
 
-### 4. Trier et grouper les résultats
+### 4. Filtrer par frontmatter
+
+Pour chaque fichier matchant, lire son frontmatter et appliquer les filtres :
+
+- `--scope` : ne garder que les fichiers avec `scope: {valeur}` (ou `all` = tous).
+- `--kind` : ne garder que les fichiers avec `kind: {valeur}`.
+- `--modality` : ne garder que les fichiers avec `modality: {valeur}`.
+- `--projet` : ne garder que les fichiers avec `projet: {slug}` ou tag `projet/{slug}`.
+- `--domaine` : ne garder que les fichiers avec `domaine: {slug}` ou tag `domaine/{slug}`.
+- `--type` : ne garder que les fichiers avec `type: {valeur}`.
+- `--source` : ne garder que les fichiers avec `source: {valeur}`.
+
+### 5. Trier et grouper
 
 - Grouper les matches par fichier.
-- Pour chaque fichier, afficher le nom + nombre de matches.
-- Trier les fichiers : archives en premier (les plus récentes d'abord, basé sur l'horodatage du nom de fichier), puis `projets/**/contexte.md`, puis `projets/**/historique.md`, puis `_index.md`.
+- Trier les fichiers : zones `episodes` en premier (archives récentes en haut), puis autres zones par ordre alphabétique. Dans une même zone, archives horodatées triées par date décroissante.
 
-### 5. Afficher le rapport
+### 6. Afficher le rapport
 
 Format :
 
 ```
-## Recherche : "{requête}"
+## Recherche : "{requête}" ({N filtres actifs})
 
 {N} occurrence(s) dans {M} fichier(s).
 
-### {VAULT}/archives/2026-04-21-21h03-secondbrain-v0-1-0-publie.md ({k} match)
-> ligne 42 : ... {ligne avec match surligné} ...
-> ligne 58 : ... {ligne avec match surligné} ...
+### [{zone}] {chemin relatif au vault} ({k} matches)
+> ligne 42 : ... {ligne avec match} ...
+> ligne 58 : ... {ligne avec match} ...
 
-### {VAULT}/projets/secondbrain/contexte.md ({k} match)
-> ligne 15 : ... {ligne avec match surligné} ...
+### [{zone}] {chemin} ({k} matches)
+> ...
 
 ...
 ```
@@ -76,9 +109,9 @@ Si aucun match :
 ```
 ## Recherche : "{requête}"
 
-Aucune occurrence trouvée dans le vault.
+Aucune occurrence trouvée dans le vault (filtres actifs : {liste}).
 ```
 
-### 6. Suggérer la suite
+### 7. Suggérer la suite
 
-Si les résultats portent majoritairement sur un projet (nom apparaît dans plusieurs archives du même projet), suggérer : « Tu veux que je charge le contexte de `{projet}` ? » — qui déclenchera `/mem-recall {projet}`.
+Si les résultats portent majoritairement sur un projet/domaine (slug récurrent dans les résultats), suggérer : « Tu veux que je charge le contexte de `{slug}` ? » — qui déclenchera `/mem-recall {slug}`.

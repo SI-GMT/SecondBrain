@@ -1,0 +1,7 @@
+description = "Lister projets et domaines du vault avec leur etat synthetique. Renomme depuis mem-list-projects en v0.5 (gere maintenant projets ET domaines). Peut aussi lister le contenu d'une zone via --zone X."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Aucun argument requis. Options : --kind projet|domaine|all, --scope perso|pro|all, --zone X, --detail.
+'''

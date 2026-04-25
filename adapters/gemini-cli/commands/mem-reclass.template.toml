@@ -1,0 +1,7 @@
+description = "Changer le scope ou la zone d'un contenu existant. Met a jour frontmatter + tags + deplace le fichier + reecrit les references croisees. Confirme par decision D3.4 du cadrage v0.5."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Chemin du fichier obligatoire + au moins une option de changement. Options : --zone X, --scope perso|pro, --type X, --projet/--domaine {slug}, --dry-run, --no-confirm.
+'''

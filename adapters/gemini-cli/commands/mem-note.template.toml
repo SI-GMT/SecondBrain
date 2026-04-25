@@ -1,0 +1,7 @@
+description = "Ingerer rapidement une note de connaissance dans 20-knowledge/. Shortcut explicite quand l'utilisateur sait que ce qu'il capte est un fait, un concept, une fiche, une synthese."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Contenu de la note. Options : --scope perso|pro, --famille metier|tech|vie|methodes, --type concept|fiche|glossaire|synthese|reference, --no-confirm, --dry-run.
+'''

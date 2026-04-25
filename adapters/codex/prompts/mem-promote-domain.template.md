@@ -1,0 +1,11 @@
+---
+description: Promouvoir un ensemble d'items coherents de l'inbox en un nouveau domaine permanent dans 10-episodes/domaines/{slug}/. Verifie la regle anti-derive (>=3 items au meme fil).
+---
+
+{{PROCEDURE}}
+
+## User input
+
+```text
+$ARGUMENTS
+```

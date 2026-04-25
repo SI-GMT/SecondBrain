@@ -1,337 +1,116 @@
-# Procédure : Archeo Atlassian
+# Procédure : Archeo Atlassian (v0.5 brain-centric)
 
-Objectif : **rétro-archiver une arborescence de pages Confluence** (une page racine + toute sa descendance, ou un space complet) dans le vault mémoire, avec **enrichissement automatique par les tickets Jira référencés** depuis les pages. Une archive par page Confluence ; chaque archive inclut la synthèse structurée de la page et la fiche résumée des tickets Jira qu'elle mentionne.
+Objectif : **rétro-archiver une arborescence Confluence** (page racine + descendance, ou space complet) avec enrichissement par les tickets Jira référencés. Délègue au router pour segmentation en atomes multi-zones.
 
-Complémentaire de `/mem-archeo` (rétro Git) : ensemble, ils couvrent respectivement le côté « code » et le côté « documentation/cadrage » d'un projet. Particulièrement utile pour les projets SI-GMT dont les SFD/STD/chiffrages vivent dans Confluence et dont le pilotage passe par Jira.
+**Prérequis : MCP Atlassian côté client.** Claude-only de facto (Atlassian n'a pas livré de connecteur MCP digne de ce nom pour Gemini/Codex/Vibe à ce jour). Si invoqué depuis un client sans MCP Atlassian, afficher un message clair et arrêter.
 
 ## Déclenchement
 
-L'utilisateur tape `/mem-archeo-atlassian {url}` ou exprime l'intention en langage naturel : « archive la documentation Confluence de ce projet », « fais une rétro sur cet espace Atlassian », « ingère cette page et ses enfants », « remonte tout l'arbre de cette racine Confluence ».
+L'utilisateur tape `/mem-archeo-atlassian {url-confluence}` ou exprime l'intention en langage naturel : « archive cette page Confluence et ses enfants », « rétro Atlassian sur cet espace », « ingère cette doc Confluence ».
 
-Arguments possibles :
-- `{url}` (**obligatoire**) : URL Confluence d'une page (ex: `https://{org}.atlassian.net/wiki/spaces/KEY/pages/12345/Titre`) ou d'un space root (ex: `https://{org}.atlassian.net/wiki/spaces/KEY`).
-- `--projet {nom}` : force le projet cible. Sinon, résolution automatique.
-- `--profondeur N` : limite de récursion dans la descendance (défaut : illimitée).
-- `--skip-children` : n'archive que la page cible, pas ses enfants (ignoré si URL est un space root).
-- `--depuis YYYY-MM-DD` : ne considère que les pages modifiées après cette date.
-- `--skip-jira` : désactive l'enrichissement Jira (par défaut activé).
-- `--dry-run` : liste les pages qui seraient archivées, sans écrire.
-
-## Prérequis — MCP Atlassian côté client
-
-Cette procédure exige que le client LLM dispose du **MCP Atlassian** (outils `mcp_*_Atlassian_*` disponibles, typiquement depuis `claude.ai/mcp` ou une config MCP locale équivalente). Les outils attendus :
-
-- Confluence : `getConfluencePage`, `getConfluencePageDescendants`, `getPagesInConfluenceSpace`, éventuellement `searchConfluenceUsingCql`.
-- Jira : `getJiraIssue`.
-
-**Avant d'exécuter la procédure**, vérifier qu'au moins `getConfluencePage` est accessible. Si absent :
-
-> Le skill `/mem-archeo-atlassian` nécessite le MCP Atlassian côté client (outils `getConfluencePage`, `getJiraIssue`, etc.). Il n'est pas disponible dans cette session. Installe le MCP Atlassian via claude.ai/mcp ou équivalent, puis relance.
-
-Puis s'arrêter.
+Arguments :
+- `{url-confluence}` (**obligatoire**) : URL d'une page ou d'un space Confluence.
+- `--projet {slug}` ou `--domaine {slug}` : force le rattachement.
+- `--profondeur N` : limite la descendance (défaut illimité).
+- `--skip-children` : ingère uniquement la page racine.
+- `--depuis YYYY-MM-DD` : ne traite que les pages mises à jour après cette date.
+- `--skip-jira` : désactive l'enrichissement par tickets Jira.
+- `--dry-run` : liste les pages traitées sans écrire.
+- `--no-confirm` : passe au router en mode fluide.
 
 ## Résolution du chemin du vault
 
-Lire {{CONFIG_FILE}} et en extraire le champ `vault`. Dans la suite, `{VAULT}` désigne cette valeur. Si absent : message d'erreur standard puis arrêt.
+Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
 
-## Encodage des fichiers écrits
+## Vérification du MCP Atlassian
 
-**Tous les fichiers écrits ou modifiés par cette procédure doivent l'être en UTF-8 sans BOM, fins de ligne LF.** Jamais de CP1252, Windows-1252, UTF-8 avec BOM, ni encodage OEM.
+Avant tout traitement, vérifier la disponibilité du MCP Atlassian côté client. Si indisponible, afficher :
 
-Selon l'outil d'écriture :
-- **Shell POSIX** : natif UTF-8 sans BOM.
-- **PowerShell 7+ (pwsh)** : `Set-Content -Encoding utf8NoBOM`.
-- **Windows PowerShell 5.1** : `[System.IO.File]::WriteAllText(...)` avec `UTF8Encoding($false)`.
-- **cmd.exe** : à éviter pour du Markdown accentué.
-- **Python** (méthode la plus fiable sur Windows) : `Path(path).write_text(contenu, encoding='utf-8', newline='')`.
+> Skill `/mem-archeo-atlassian` indisponible : MCP Atlassian non détecté.
+> Ce skill nécessite le connecteur MCP Atlassian, actuellement uniquement disponible côté Claude (Desktop / Code). Voir la documentation Atlassian pour l'installation.
 
-**Attention particulière aux pages Confluence** : le contenu renvoyé par `getConfluencePage` peut contenir des caractères spéciaux (guillemets typographiques, tirets cadratins, espaces insécables). Ne pas re-encoder manuellement — passer le contenu tel quel à la fonction d'écriture UTF-8.
-
-## Écritures atomiques et protection contre les accès concurrents
-
-Mêmes patterns que les autres procédures `mem-*` :
-
-### Pattern 1 — Rename atomique (toutes les écritures)
-
-1. Écrire dans `{fichier}.tmp`.
-2. Rename atomique → `{fichier}`.
-3. En cas d'échec, supprimer le `.tmp`.
-
-### Pattern 2 — Hash check read-before-write (fichiers partagés)
-
-Pour `_index.md` et `historique.md` : capture SHA-256 au début, re-hash avant écriture, merger + retry (max 3) si divergence. Batch les ajouts en fin de procédure (1 seul update par fichier, pas N).
-
-Les archives horodatées sont nouvelles, exemptées du hash check (pattern 1 seul).
+Puis arrêter.
 
 ## Procédure
 
-### 1. Valider l'URL et extraire les identifiants
+### 1. Identifier le scope (page seule, page+descendance, space)
 
-- Vérifier que `{url}` est une URL Confluence valide. Formats reconnus :
-  - Page : `.../wiki/spaces/{SPACE_KEY}/pages/{PAGE_ID}[/Titre]` → extraire `PAGE_ID` et `SPACE_KEY`.
-  - Space root : `.../wiki/spaces/{SPACE_KEY}[/overview|/pages]` → extraire `SPACE_KEY` seulement.
-  - Format court : `.../wiki/pages/viewpage.action?pageId={PAGE_ID}` → extraire `PAGE_ID`.
-- Déterminer le **mode de parcours** :
-  - URL page + pas de `--skip-children` → mode **descendance** (page + ses enfants récursivement).
-  - URL page + `--skip-children` → mode **page unique**.
-  - URL space → mode **space complet** (toutes les pages du space).
+Parser l'URL pour extraire :
+- `space_key`
+- `page_id` (si URL pointe sur une page) ou `null` (si URL pointe sur un space root).
 
-### 2. Résoudre le projet cible
+Mode :
+- URL = page + pas `--skip-children` → page + descendance.
+- URL = page + `--skip-children` → page seule.
+- URL = space root → space complet.
 
-Par priorité descendante :
+### 2. Énumérer les pages à traiter
 
-1. **`--projet {nom}` explicite** → utiliser directement.
-2. **Match du space key** : vérifier s'il match un slug existant dans `{VAULT}/_index.md` section « Projets » (insensible à la casse). Ex : space `IRIS-SYNC` → projet `iris-sync`.
-3. **Titre de la page racine** : si mode page, récupérer `title` via `getConfluencePage(pageId)`, le sanitiser en slug (lowercase, espaces → `-`, caractères spéciaux retirés), vérifier match dans les projets existants.
-4. **Fallback `inbox`** : si rien ne match, utiliser `inbox` et avertir explicitement l'utilisateur.
+Via le MCP Atlassian, lister les pages :
+- Page seule : 1 page.
+- Page + descendance : page racine + récursion via `child_of` jusqu'à `--profondeur` ou exhaustion.
+- Space : `pages_by_space` complet.
 
-Si le projet résolu n'existe pas encore, le créer (structure `projets/{nom}/contexte.md` + `historique.md`) à l'étape 8.
+Filtrer par `--depuis` si fourni (`updated_at >= depuis`).
 
-### 3. Lister les pages à archiver
+### 3. Résoudre le projet/domaine cible
 
-Selon le mode :
+Identique à `mem-archeo` étape 2.
 
-**Mode page unique** :
-- Appeler `getConfluencePage(pageId)` avec `include_body: true`.
-- Liste finale : `[page_racine]`.
+### 4. Pour chaque page : préparer le contenu
 
-**Mode descendance** :
-- Appeler `getConfluencePageDescendants(pageId)` pour lister tous les descendants.
-- Si `--profondeur N` est fourni, filtrer les résultats à cette profondeur max.
-- Liste finale : `[page_racine] + [tous les descendants]`.
+#### a. Vérifier idempotence
 
-**Mode space complet** :
-- Appeler `getPagesInConfluenceSpace(spaceKey)`.
-- Liste finale : toutes les pages du space.
+Chercher dans le vault un atome existant avec :
+- `source: archeo-atlassian`
+- `confluence_page_id` égal.
+- `confluence_updated` égal.
 
-Si `--depuis YYYY-MM-DD` est fourni, filtrer la liste pour ne garder que les pages dont `lastUpdated >= {date}`.
+Si trouvé → skip.
+Si trouvé mais `confluence_updated` différent → créer une nouvelle archive avec `previous_atom: [[ancien]]` (immuabilité).
 
-### 4. Détecter les pages déjà archivées (idempotence)
+#### b. Récupérer le contenu de la page
 
-Avant d'écrire chaque archive, lire les archives existantes dans `{VAULT}/archives/` avec frontmatter `source: archeo-atlassian` ET `confluence_page_id: {PAGE_ID}`. Pour chaque page à archiver :
+Via MCP Atlassian, récupérer :
+- Titre, body (Markdown ou storage format converti en MD), auteur, date de création/màj.
+- Labels, espace.
+- Liens entrants / sortants.
 
-- **Si aucune archive existante** → la page sera archivée (nouvelle archive).
-- **Si une archive existe mais `confluence_updated` (frontmatter existant) < `lastUpdated` (valeur courante Confluence)** → la page a été modifiée depuis l'archivage. Une **nouvelle archive** sera créée (immuabilité : l'ancienne reste, la nouvelle reflète l'état actuel). Le frontmatter de la nouvelle archive référence l'ancienne via `previous_archeo: "{nom-de-l-ancien-fichier-archive}"`.
-- **Si une archive existe ET `confluence_updated` == `lastUpdated`** → **skip** cette page, elle est déjà archivée à jour.
+#### c. Enrichissement Jira (si pas `--skip-jira`)
 
-**Jamais d'écrasement d'archive vécue** (`source: vecu`) par une archive reconstituée. Si une vécue couvre le même sujet par coïncidence, les deux coexistent (types différents).
+Extraire les clés Jira (regex `[A-Z]+-\d+`) du contenu de la page. Pour chaque clé :
+- Via MCP Atlassian, récupérer : titre du ticket, statut, assigné, sprint, type.
+- Insérer une mention enrichie dans le contenu de l'atome.
 
-### 5. Confirmation interactive (sauf `--dry-run`)
+#### d. Construire le contenu pour le router
 
-Afficher à l'utilisateur :
+Préparer un Markdown structuré, similaire à `mem-archeo` :
 
 ```
-URL analysée : {url}
-Mode : {page unique | descendance | space complet}
-Projet cible : {nom} ({"déjà présent" | "nouveau"})
-Pages détectées : {M}
-Pages à archiver : {N} (skip : {M-N} déjà à jour)
-Enrichissement Jira : {activé | désactivé}
+# Archive page Confluence — {titre}
 
-Aperçu (max 10 premières pages) :
-  - {page_id} — "{titre}" — dernière modif {YYYY-MM-DD} — {état : nouvelle | mise à jour}
-  - ...
+[Contenu de la page, source: confluence]
 
-{N} archives seront créées dans {VAULT}/archives/. Confirmer ? (o/n)
+## Principe : ... [si dégagé du contenu]
+## Concept : ... [si dégagé du contenu]
 ```
 
-Si `--dry-run` : lister sans écrire, puis terminer.
+### 5. Invoquer le router pour cette page
 
-Si refus utilisateur : arrêter sans modification.
+Appeler le router avec :
+- `Contenu` : Markdown structuré.
+- `Hint zone` : `episodes` (par défaut, mais le router peut router certaines pages doctrinales en `20-knowledge` selon nature).
+- `Hint source` : `archeo-atlassian`.
+- `Métadonnées` : projet/domaine, **`confluence_page_id`**, **`confluence_updated`**, `confluence_url`, `space_key`, `jira_keys: [...]`.
 
-### 6. Pour chaque page à archiver, extraire et enrichir
+{{INCLUDE _router}}
 
-**6.1. Récupérer le corps de la page**
+### 6. Boucle sur toutes les pages
 
-Si le corps n'a pas déjà été fetché à l'étape 3, appeler `getConfluencePage(pageId)` avec `include_body: true`. Extraire :
+Si `--dry-run` : afficher la liste des pages + atomes prévus. Demander confirmation.
 
-- `title` : titre de la page.
-- `body` : corps de la page (typiquement au format `storage` — XHTML avec macros Confluence, ou `view` — HTML rendu).
-- `version` : numéro de version.
-- `lastUpdated` : date de dernière modification.
-- `createdBy`, `createdAt` : auteur et date de création.
-- `parent_id` : ID de la page parente (si non-racine).
-- `space` : clé du space.
+Sinon : itérer. Mode safe par défaut sauf `--no-confirm`.
 
-**6.2. Convertir le body en Markdown**
+### 7. Rapport final
 
-Le body Confluence est au format storage (XHTML custom) ou view (HTML). La conversion optimale en Markdown :
-
-- **Si `pandoc` est disponible localement** : `pandoc -f html -t gfm` sur le body.
-- **Sinon, conversion best-effort** : remplacer les balises HTML les plus courantes (`<p>`, `<h1>`-`<h6>`, `<ul>/<li>`, `<strong>`, `<em>`, `<code>`, `<pre>`, `<a>`, `<table>`) par leurs équivalents Markdown. Préserver le texte brut dans les cas non reconnus.
-
-Enregistrer le résultat en variable `{body_md}`.
-
-**6.3. Détecter les clés Jira référencées**
-
-Appliquer la regex `\b([A-Z][A-Z0-9_]+-\d+)\b` sur `{body_md}` et le titre. Collecter les clés uniques (dédupliquer). Exemple : pattern `WEBUI-123`, `IRIS-42`, `GMT_SYNC-7`.
-
-**6.4. Enrichissement Jira** (sauf `--skip-jira`)
-
-Pour chaque clé Jira détectée :
-
-- Appeler `getJiraIssue(key)`.
-- Extraire : `summary` (titre), `status`, `assignee`, `description` (premier paragraphe uniquement, max 300 caractères), `issuetype`, `priority`, `updated`, lien vers le ticket.
-- Tolérer les erreurs (ticket inexistant, accès refusé, rate limit) — noter l'erreur dans l'archive et continuer.
-
-**6.5. Métadonnées de contexte**
-
-- URL complète de la page.
-- Chemin hiérarchique (breadcrumbs) si dispo : `{space} > {parent-of-parent} > {parent} > {current}`.
-- Liste des descendants directs (si la page en a) : titres + IDs.
-
-### 7. Écrire le fichier archive pour chaque page
-
-Chemin : `{VAULT}/archives/YYYY-MM-DD-HHhMM-{nom}-atlassian-{slug-titre-page}.md`
-
-Où `{slug-titre-page}` est le titre Confluence sanitisé (lowercase, espaces → `-`, caractères spéciaux retirés, max 40 chars).
-
-Si une archive avec le même nom existe déjà (collision nom/horodatage très improbable), ajouter un suffixe `-{4-premiers-caractères-du-page-id}`.
-
-Utiliser la date de dernière modification Confluence comme `date` et `heure` du frontmatter, pas la date courante. Ça permet que l'archive reflète le moment du jalon documenté, pas le moment de l'archivage.
-
-Écriture via **rename atomique** (pattern 1). Pas de hash check (fichier nouveau).
-
-Format :
-
-```markdown
----
-date: YYYY-MM-DD
-heure: "HH:MM"
-projet: {nom}
-source: archeo-atlassian
-confluence_page_id: {PAGE_ID}
-confluence_page_title: "{titre}"
-confluence_space: "{SPACE_KEY}"
-confluence_url: "{url-complete}"
-confluence_author: "{createdBy}"
-confluence_created: "YYYY-MM-DD"
-confluence_updated: "YYYY-MM-DD"
-confluence_version: {n}
-confluence_parent_id: "{PARENT_ID_or_null}"
-confluence_descendants: [{liste-ids-descendants-directs}]
-jira_tickets_referenced: [{liste-clés-ou-vide}]
-previous_archeo: "{nom-ancien-fichier-ou-null}"
-tags: [projet/{nom}, type/archive, source/archeo-atlassian]
----
-
-# Archeo Atlassian YYYY-MM-DD — {Projet} — {Titre page Confluence}
-
-## Résumé
-
-[2-3 phrases reconstituant ce que la page couvre, son objet, et comment elle s'inscrit dans le projet. À déduire du titre + premier paragraphe du body + fil hiérarchique.]
-
-## Métadonnées Confluence
-
-- **Page** : [{titre}]({url-complete})
-- **Space** : `{SPACE_KEY}`
-- **ID** : `{PAGE_ID}` (version {n})
-- **Auteur (création)** : {createdBy}, le YYYY-MM-DD
-- **Dernière modification** : YYYY-MM-DD
-- **Hiérarchie** : `{space} > {parent-of-parent} > {parent} > {current}`
-- **Descendants directs** : {liste compacte avec IDs, ou "aucun"}
-
-## Synthèse structurée
-
-### Objet
-[Ce que la page spécifie / documente / décide. Déduit du contenu.]
-
-### Décisions et contraintes extraites
-- [Décision 1]
-- [Décision 2]
-
-### Actions / TODOs mentionnés
-- [ ] [Action 1]
-- [ ] [Action 2]
-
-### Glossaire (termes métier définis dans la page)
-- **{terme}** : {définition}
-
-### Questions ouvertes / zones d'incertitude
-- [Question 1]
-
-### Liens externes mentionnés (hors Jira)
-- {URL} — {contexte}
-
-## Tickets Jira référencés
-
-{Si aucun : "Aucun ticket Jira référencé dans cette page."}
-
-{Pour chaque ticket :}
-### {JIRA-KEY} — {summary}
-
-- **Statut** : {status} ({issuetype}, priorité {priority})
-- **Assignee** : {assignee_or_"non-assigné"}
-- **Mis à jour** : YYYY-MM-DD
-- **Lien** : [{key}]({url})
-
-> {premier paragraphe de la description, max 300 caractères}
-
-## Contenu brut de la page Confluence
-
-> [!note]- Corps Markdown de la page (déplier)
-> {body_md converti en Markdown, tel que récupéré. Si très volumineux (> 10k caractères), tronquer avec mention "[contenu tronqué — voir URL Confluence pour le reste]".}
-
-{Si previous_archeo est défini :}
-## Note de révision
-
-Cette archive supersede [{nom-ancien-fichier}](ancien.md) (page modifiée sur Confluence depuis l'archivage précédent).
-```
-
-### 8. Mettre à jour l'historique projet (batch)
-
-Collecter toutes les lignes à ajouter à `{VAULT}/projets/{nom}/historique.md` :
-
-```
-- [YYYY-MM-DD — Atlassian : {Titre page}](../../archives/YYYY-MM-DD-HHhMM-{nom}-atlassian-{slug}.md)
-```
-
-**Un seul read-before-write** pour toutes les lignes (pas N écritures). Hash check + rename atomique.
-
-Si `historique.md` n'existe pas (projet nouveau), créer le squelette standard avant d'ajouter les lignes.
-
-### 9. Mettre à jour l'index global (batch)
-
-Collecter toutes les lignes à ajouter à la section **Archives** de `{VAULT}/_index.md` :
-
-```
-- [YYYY-MM-DD — {Projet} — Atlassian : {Titre page}](archives/YYYY-MM-DD-HHhMM-{nom}-atlassian-{slug}.md)
-```
-
-Si c'est la première archive du projet, ajouter aussi dans la section **Projets** :
-
-```
-- [{Projet}](projets/{nom}/historique.md)
-```
-
-**Un seul read-before-write** + rename atomique. Merger en conservant l'ordre chronologique ascendant existant.
-
-### 10. Enrichir le contexte projet (projet nouveau uniquement)
-
-Si le projet a été **créé à cette archéologie** (aucun `contexte.md` préexistant), pré-remplir `{VAULT}/projets/{nom}/contexte.md` avec une synthèse dérivée des pages archivées :
-
-- Phase : « reconstituée via archéo Atlassian le YYYY-MM-DD — pas de session vécue encore ».
-- Décisions cumulées : agréger les décisions extraites des différentes pages.
-- Assets actifs (URLs) : liste des URLs Confluence des pages archivées + tickets Jira les plus référencés.
-
-Si le projet existait déjà : **ne pas écraser** `contexte.md`. Afficher : « Contexte actuel conservé. Les archives Atlassian enrichissent l'historique, pas le snapshot mutable. Utilise `/mem-recall {nom}` + édition manuelle pour intégrer des éléments. »
-
-### 11. Confirmer
-
-Afficher à l'utilisateur :
-
-```
-Archéologie Atlassian terminée pour le projet {nom}.
-
-URL racine : {url}
-Pages archivées : {N} (sur {M} détectées)
-Tickets Jira enrichis : {K} unique(s)
-Plage couverte : {date-plus-ancienne} → {date-plus-recente} (par `confluence_updated`)
-
-Nouvelles archives dans {VAULT}/archives/ (préfixe `{YYYY-MM-DD-HHhMM-{nom}-atlassian-*}`).
-Historique : {VAULT}/projets/{nom}/historique.md
-
-Prochaine étape suggérée : ouvrir l'historique dans Obsidian, ou /mem-recall {nom} pour charger le contexte reconstitué.
-```
-
-Si des erreurs sont survenues (tickets Jira inaccessibles, pages en erreur) : en lister un résumé à la fin.
+Synthèse : N pages traitées, N archives créées, N atomes dérivés, N skips (idempotence), N révisions, N tickets Jira enrichis.

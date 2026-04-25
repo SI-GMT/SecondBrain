@@ -1,0 +1,7 @@
+description = "Ingerer un principe (heuristique, ligne rouge, valeur, regle d'action) dans 40-principes/. Shortcut explicite. Le router infere le niveau de contrainte depuis le ton."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Contenu du principe. Options : --scope perso|pro, --force ligne-rouge|heuristique|preference, --domaine X, --projet {slug}, --no-confirm, --dry-run.
+'''
