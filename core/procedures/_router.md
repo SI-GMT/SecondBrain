@@ -147,12 +147,36 @@ Pour chaque atome accepté du plan :
 
 ### R8. Liens bidirectionnels (atomes dérivés)
 
-Quand un atome A en zone `episodes` génère un atome B en autre zone (ex: une archive de session dégage un nouveau principe), créer un **lien bidirectionnel** :
+Quand un atome A en zone `episodes` génère un atome B en **autre zone** (principe, objectif, connaissance, procédure, fiche personne, production cognitive — peu importe la zone cible), créer un **lien bidirectionnel** :
 
 - Dans A (`10-episodes/...`) : ajouter dans le frontmatter `derived_atoms: ["[[chemin-relatif-vers-B]]"]`.
-- Dans B (zone cible) : renseigner `contexte_origine: "[[chemin-relatif-vers-A]]"`.
+- Dans B (zone cible, **toutes zones confondues**) : renseigner `contexte_origine: "[[chemin-relatif-vers-A]]"`.
 
-Obsidian Graph rendra visible la filiation. Cette bidirectionnalité est indispensable pour que `mem-recall {projet}` puisse charger non seulement les archives mais aussi les principes/objectifs/connaissances dérivés du projet.
+**Règle universelle** (clarifiée v0.5.0.1 suite au retour terrain Gemini archeo mcp-iris-connector) : `contexte_origine` est obligatoire sur **tout atome dérivé**, pas seulement sur les principes. Cela inclut :
+
+- Concepts en `20-knowledge/` extraits d'une archive ou d'une page Confluence.
+- Procédures en `30-procedures/` extraites d'une archive de session.
+- Principes en `40-principes/` extraits d'une archive ou d'une décision.
+- Objectifs en `50-objectifs/` formulés au sein d'une session vécue.
+- Fiches personnes en `60-personnes/` mentionnées pour la première fois dans une archive.
+- Productions cognitives en `70-cognition/` rattachées à une session.
+
+Sans cette symétrie, les atomes dérivés deviennent orphelins : `mem-recall` ne peut plus remonter de l'archive aux atomes ni inversement, et la vue Obsidian Graph perd la filiation.
+
+**Schéma de la bidirectionnalité** :
+
+```
+Archive (10-episodes)              Atome dérivé (20-* à 70-*)
+┌────────────────────┐             ┌─────────────────────────┐
+│ frontmatter:       │             │ frontmatter:            │
+│   derived_atoms: [ │ ─────────→  │   contexte_origine:     │
+│     [[B1]],        │             │     "[[A]]"             │
+│     [[B2]],        │ ←─────────  │                         │
+│     ...            │             │                         │
+└────────────────────┘             └─────────────────────────┘
+```
+
+Obsidian Graph rendra visible la filiation dans les deux sens. Cette bidirectionnalité est indispensable pour que `mem-recall {projet}` puisse charger non seulement les archives mais aussi les principes/objectifs/connaissances/personnes dérivés du projet.
 
 ### R9. Rapport utilisateur
 
