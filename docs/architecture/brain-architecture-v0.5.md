@@ -1,7 +1,8 @@
 ---
 titre: Brain Architecture v0.5 — refonte brain-centric du vault SecondBrain
-statut: cadrage complet — validation utilisateur en attente
-version: 0.2 (sections 1-11 rédigées)
+statut: validé
+version: 1.0
+valide_le: 2026-04-25
 auteur: bdubois + Claude (Opus 4.7)
 date: 2026-04-24
 ---
