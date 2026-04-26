@@ -47,13 +47,13 @@ function Write-Skip([string]$msg) { Write-Host "  [--] $msg" -ForegroundColor Da
 
 $zones = [ordered]@{
     '00-inbox'       = @()
-    '10-episodes'    = @('projets', 'domaines')
-    '20-knowledge'   = @('metier', 'tech', 'vie', 'methodes')
-    '30-procedures'  = @('pro', 'perso')
-    '40-principes'   = @('pro', 'perso')
-    '50-objectifs'   = @('perso/vie', 'perso/sante', 'perso/famille', 'perso/finances', 'pro/carriere', 'pro/projets')
-    '60-personnes'   = @('pro/collegues', 'pro/clients', 'pro/partenaires', 'perso/famille', 'perso/amis', 'perso/connaissances')
-    '70-cognition'   = @('schemas', 'metaphores', 'moodboards', 'sketches')
+    '10-episodes'    = @('projects', 'domains')
+    '20-knowledge'   = @('business', 'tech', 'life', 'methods')
+    '30-procedures'  = @('work', 'personal')
+    '40-principles'  = @('work', 'personal')
+    '50-goals'       = @('personal/life', 'personal/health', 'personal/family', 'personal/finance', 'work/career', 'work/projects')
+    '60-people'      = @('work/colleagues', 'work/clients', 'work/partners', 'personal/family', 'personal/friends', 'personal/acquaintances')
+    '70-cognition'   = @('schemas', 'metaphors', 'moodboards', 'sketches')
     '99-meta'        = @()
 }
 
@@ -109,8 +109,8 @@ if (-not (Test-Path $gitignorePath)) {
     Write-Ok ".gitignore cree (vault non versionne par defaut)"
 }
 
-# 99-meta/_index.md squelette
-$indexPath = Join-Path $Target '99-meta\_index.md'
+# index.md squelette (a la racine du vault)
+$indexPath = Join-Path $Target 'index.md'
 if (-not (Test-Path $indexPath)) {
     $indexContent = @"
 ---
@@ -122,35 +122,35 @@ tags: [zone/meta, type/index]
 
 # Vault SecondBrain v0.5 — Index
 
-Point d'entree du second cerveau. Mis a jour automatiquement par les skills
-\``mem-*\`` lors des operations d'ecriture.
+Entry point of the second brain. Automatically updated by the \``mem-*\`` skills
+on write operations.
 
 ## Zones
 
-- [00-inbox](../00-inbox/) — captation brute non qualifiee
-- [10-episodes](../10-episodes/) — memoire episodique (projets + domaines)
-- [20-knowledge](../20-knowledge/) — memoire semantique
-- [30-procedures](../30-procedures/) — savoir-faire / how-to
-- [40-principes](../40-principes/) — heuristiques et lignes rouges
-- [50-objectifs](../50-objectifs/) — prospective et intentions
-- [60-personnes](../60-personnes/) — carnet relationnel
-- [70-cognition](../70-cognition/) — productions non verbales (cerveau droit)
-- [99-meta](.) — meta-memoire du vault (cette zone)
+- [00-inbox](00-inbox/) — raw unqualified capture
+- [10-episodes](10-episodes/) — episodic memory (projects + domains)
+- [20-knowledge](20-knowledge/) — semantic memory
+- [30-procedures](30-procedures/) — know-how / how-to
+- [40-principles](40-principles/) — heuristics and red lines
+- [50-goals](50-goals/) — prospective intentions
+- [60-people](60-people/) — relational notebook
+- [70-cognition](70-cognition/) — non-verbal productions (right brain)
+- [99-meta](99-meta/) — vault meta-memory
 
-## Projets
+## Projects
 
-(aucun pour l'instant)
+(none yet)
 
-## Domaines
+## Domains
 
-(aucun pour l'instant)
+(none yet)
 
 ## Archives
 
-(aucune pour l'instant)
+(none yet)
 "@
     Set-Content -Path $indexPath -Value $indexContent -Encoding utf8NoBOM -NoNewline
-    Write-Ok "99-meta/_index.md cree"
+    Write-Ok "index.md cree"
 }
 
 Write-Host ''

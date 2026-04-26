@@ -49,10 +49,10 @@ Si un comportement manque côté Codex, corriger d'abord `core/`, puis adapter l
 
 `memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :
 
-- `_index.md` — catalogue des projets et archives
+- `index.md` — catalogue des projets et archives
 - `archives/` — fichiers horodatés, une archive par session complète
-- `projets/{nom}/contexte.md` — snapshot mutable du projet
-- `projets/{nom}/historique.md` — fil chronologique avec liens vers les archives
+- `projets/{nom}/context.md` — snapshot mutable du projet
+- `projets/{nom}/history.md` — fil chronologique avec liens vers les archives
 - `.obsidian/` — config Obsidian (créée automatiquement à l'ouverture du vault par Obsidian)
 
 **Fichiers Obsidian spéciaux** dans `memory/` : `.excalidraw.md`, `.canvas`, `.base` ; ne pas éditer avec des opérations texte brutes, passer par Obsidian.

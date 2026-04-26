@@ -47,10 +47,10 @@ Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-
 
 `memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :
 
-- `_index.md` — catalogue des projets et archives
+- `index.md` — catalogue des projets et archives
 - `archives/` — fichiers horodatés, **immuables** (un par session complète)
-- `projets/{nom}/contexte.md` — snapshot mutable du projet
-- `projets/{nom}/historique.md` — fil chronologique avec liens vers les archives
+- `projets/{nom}/context.md` — snapshot mutable du projet
+- `projets/{nom}/history.md` — fil chronologique avec liens vers les archives
 
 **Note importante** : Pour les opérations sur le vault (souvent situé hors du workspace), utiliser `run_shell_command` avec des commandes PowerShell (`cat`, `ls`, `mkdir`, etc.).
 

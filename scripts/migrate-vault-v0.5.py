@@ -3,10 +3,10 @@
 migrate-vault-v0.5.py — migration d'un vault SecondBrain v0.4 vers la structure brain-centric v0.5.
 
 Transforme :
-  archives/                       → 10-episodes/projets/{slug}/archives/  (par projet)
-  projets/{slug}/contexte.md     → 10-episodes/projets/{slug}/contexte.md
-  projets/{slug}/historique.md   → 10-episodes/projets/{slug}/historique.md
-  _index.md                       → 99-meta/_index.md
+  archives/                       → 10-episodes/projects/{slug}/archives/  (par projet)
+  projets/{slug}/context.md     → 10-episodes/projects/{slug}/context.md
+  projets/{slug}/history.md   → 10-episodes/projects/{slug}/history.md
+  _index.md                       → index.md  (renommé + reste à la racine)
 
 Crée les 9 zones racines vides si absentes.
 Enrichit les frontmatters avec : zone, kind, scope, collectif, modality, type, tags v0.5.
@@ -36,27 +36,27 @@ ZONES_V05 = [
     '10-episodes',
     '20-knowledge',
     '30-procedures',
-    '40-principes',
-    '50-objectifs',
-    '60-personnes',
+    '40-principles',
+    '50-goals',
+    '60-people',
     '70-cognition',
     '99-meta',
 ]
 
 ZONES_SUBDIRS = {
-    '10-episodes': ['projets', 'domaines'],
-    '20-knowledge': ['metier', 'tech', 'vie', 'methodes'],
-    '30-procedures': ['pro', 'perso'],
-    '40-principes': ['pro', 'perso'],
-    '50-objectifs': [
-        'perso/vie', 'perso/sante', 'perso/famille', 'perso/finances',
-        'pro/carriere', 'pro/projets'
+    '10-episodes': ['projects', 'domains'],
+    '20-knowledge': ['business', 'tech', 'life', 'methods'],
+    '30-procedures': ['work', 'personal'],
+    '40-principles': ['work', 'personal'],
+    '50-goals': [
+        'personal/life', 'personal/health', 'personal/family', 'personal/finance',
+        'work/career', 'work/projects'
     ],
-    '60-personnes': [
-        'pro/collegues', 'pro/clients', 'pro/partenaires',
-        'perso/famille', 'perso/amis', 'perso/connaissances'
+    '60-people': [
+        'work/colleagues', 'work/clients', 'work/partners',
+        'personal/family', 'personal/friends', 'personal/acquaintances'
     ],
-    '70-cognition': ['schemas', 'metaphores', 'moodboards', 'sketches'],
+    '70-cognition': ['schemas', 'metaphors', 'moodboards', 'sketches'],
 }
 
 # ============================================================
@@ -154,7 +154,7 @@ def create_v05_structure(vault, dry_run):
                 ok(f"  Sous-dossier {zone}/{sub} {'cree' if not dry_run else '(sera cree)'}")
 
 def migrate_projects(vault, default_scope, dry_run):
-    """Déplace projets/{slug}/ -> 10-episodes/projets/{slug}/ avec enrichissement frontmatter."""
+    """Déplace projets/{slug}/ -> 10-episodes/projects/{slug}/ avec enrichissement frontmatter."""
     step("\n> Migration des projets")
     src_dir = vault / 'projets'
     if not src_dir.exists():
@@ -166,8 +166,8 @@ def migrate_projects(vault, default_scope, dry_run):
         if not proj_dir.is_dir():
             continue
         slug = proj_dir.name
-        dst = vault / '10-episodes' / 'projets' / slug
-        ok(f"Projet {slug} -> 10-episodes/projets/{slug}/")
+        dst = vault / '10-episodes' / 'projects' / slug
+        ok(f"Projet {slug} -> 10-episodes/projects/{slug}/")
         migrated_slugs.append(slug)
 
         if dry_run:
@@ -176,43 +176,43 @@ def migrate_projects(vault, default_scope, dry_run):
         dst.mkdir(parents=True, exist_ok=True)
         (dst / 'archives').mkdir(exist_ok=True)
 
-        # Migrer contexte.md
-        ctx_src = proj_dir / 'contexte.md'
+        # Migrer context.md
+        ctx_src = proj_dir / 'context.md'
         if ctx_src.exists():
             content = ctx_src.read_text(encoding='utf-8')
             fm, body = parse_frontmatter(content)
             fm.setdefault('zone', 'episodes')
-            fm.setdefault('kind', 'projet')
+            fm.setdefault('kind', 'project')
             fm.setdefault('slug', slug)
             fm.setdefault('scope', default_scope)
-            fm.setdefault('collectif', False)
+            fm.setdefault('collective', False)
             tags = fm.get('tags', [])
             if isinstance(tags, str):
                 tags = [tags]
-            for t in [f'zone/episodes', f'kind/projet', f'projet/{slug}', f'scope/{default_scope}']:
+            for t in [f'zone/episodes', f'kind/project', f'project/{slug}', f'scope/{default_scope}']:
                 if t not in tags:
                     tags.append(t)
             fm['tags'] = tags
-            write_utf8_lf(dst / 'contexte.md', render_frontmatter(fm) + '\n' + body)
+            write_utf8_lf(dst / 'context.md', render_frontmatter(fm) + '\n' + body)
 
-        # Migrer historique.md (réécrire les liens relatifs vers archives/ qui ont changé)
-        hist_src = proj_dir / 'historique.md'
+        # Migrer history.md (réécrire les liens relatifs vers archives/ qui ont changé)
+        hist_src = proj_dir / 'history.md'
         if hist_src.exists():
             content = hist_src.read_text(encoding='utf-8')
             fm, body = parse_frontmatter(content)
             fm.setdefault('zone', 'episodes')
-            fm.setdefault('kind', 'projet')
+            fm.setdefault('kind', 'project')
             fm.setdefault('slug', slug)
             tags = fm.get('tags', [])
             if isinstance(tags, str):
                 tags = [tags]
-            for t in [f'zone/episodes', f'kind/projet', f'projet/{slug}']:
+            for t in [f'zone/episodes', f'kind/project', f'project/{slug}']:
                 if t not in tags:
                     tags.append(t)
             fm['tags'] = tags
             # Réécrire les liens : ../../archives/... -> archives/... (les archives sont maintenant dans le dossier projet)
             body = re.sub(r'\.\./\.\./archives/', 'archives/', body)
-            write_utf8_lf(dst / 'historique.md', render_frontmatter(fm) + '\n' + body)
+            write_utf8_lf(dst / 'history.md', render_frontmatter(fm) + '\n' + body)
 
         # features/ : migrer aussi si présent
         features_src = proj_dir / 'features'
@@ -224,7 +224,7 @@ def migrate_projects(vault, default_scope, dry_run):
     return migrated_slugs
 
 def migrate_archives(vault, migrated_slugs, default_scope, dry_run):
-    """Déplace archives/*.md -> 10-episodes/projets/{slug}/archives/ ou 00-inbox/ selon detection."""
+    """Déplace archives/*.md -> 10-episodes/projects/{slug}/archives/ ou 00-inbox/ selon detection."""
     step("\n> Migration des archives")
     src_dir = vault / 'archives'
     if not src_dir.exists():
@@ -248,8 +248,8 @@ def migrate_archives(vault, migrated_slugs, default_scope, dry_run):
             slug = extract_slug_from_filename(arch.name, migrated_slugs)
 
         if slug and slug in migrated_slugs:
-            dst = vault / '10-episodes' / 'projets' / slug / 'archives' / arch.name
-            kind = 'projet'
+            dst = vault / '10-episodes' / 'projects' / slug / 'archives' / arch.name
+            kind = 'project'
         else:
             dst = vault / '00-inbox' / arch.name
             slug = None
@@ -260,22 +260,22 @@ def migrate_archives(vault, migrated_slugs, default_scope, dry_run):
         fm.setdefault('zone', 'episodes' if slug else 'inbox')
         if slug:
             fm.setdefault('kind', kind)
-            fm.setdefault('projet', slug)
+            fm.setdefault('project', slug)
             fm.setdefault('scope', default_scope)
-        fm.setdefault('collectif', False)
+        fm.setdefault('collective', False)
         fm.setdefault('modality', 'left')
-        fm.setdefault('source', fm.get('source', 'vecu'))
+        fm.setdefault('source', fm.get('source', 'lived'))
         fm.setdefault('type', 'archive')
         tags = fm.get('tags', [])
         if isinstance(tags, str):
             tags = [tags]
         if slug:
-            for t in [f'zone/episodes', f'kind/{kind}', f'projet/{slug}', f'scope/{default_scope}',
+            for t in [f'zone/episodes', f'kind/{kind}', f'project/{slug}', f'scope/{default_scope}',
                       f'modality/left', f'source/{fm["source"]}', 'type/archive']:
                 if t not in tags:
                     tags.append(t)
         else:
-            tags = ['zone/inbox', 'migration-v0.5-ambigu']
+            tags = ['zone/inbox', 'migration-v0.5-ambiguous']
         fm['tags'] = tags
 
         ok(f"{arch.name} -> {dst.relative_to(vault)}")
@@ -303,18 +303,18 @@ def extract_slug_from_filename(filename, migrated_slugs):
     return best
 
 def migrate_index(vault, migrated_slugs, dry_run):
-    """Déplace _index.md -> 99-meta/_index.md avec refonte structurelle."""
+    """Régénère l'index à la racine du vault (v0.5 : index.md à la racine, plus dans 99-meta/)."""
     step("\n> Migration de l'index")
-    src = vault / '_index.md'
-    dst = vault / '99-meta' / '_index.md'
+    src_legacy = vault / '_index.md'  # ancien nom v0.4
+    dst = vault / 'index.md'
 
-    if not src.exists():
+    if not src_legacy.exists() and not dst.exists():
         warn("Aucun _index.md a migrer — generation d'un index v0.5 vide")
         if not dry_run:
             generate_empty_index(vault, migrated_slugs)
         return
 
-    ok(f"_index.md -> 99-meta/_index.md (avec refonte)")
+    ok(f"index a la racine (regeneration complete)")
     if dry_run:
         return
 
@@ -322,9 +322,9 @@ def migrate_index(vault, migrated_slugs, dry_run):
     generate_empty_index(vault, migrated_slugs)
 
 def generate_empty_index(vault, migrated_slugs):
-    """Génère un _index.md v0.5 propre."""
+    """Génère un index.md v0.5 propre."""
     today = datetime.now().strftime('%Y-%m-%d')
-    archives_root = vault / '10-episodes' / 'projets'
+    archives_root = vault / '10-episodes' / 'projects'
     all_archives = []
     for proj in sorted(archives_root.iterdir()) if archives_root.exists() else []:
         if not proj.is_dir():
@@ -348,31 +348,31 @@ def generate_empty_index(vault, migrated_slugs):
         '',
     ]
     for z in ZONES_V05:
-        lines.append(f'- [{z}](../{z}/)')
+        lines.append(f'- [{z}]({z}/)')
     lines.append('')
-    lines.append('## Projets')
+    lines.append('## Projects')
     lines.append('')
     if migrated_slugs:
         for slug in sorted(migrated_slugs):
-            lines.append(f'- [{slug}](../10-episodes/projets/{slug}/historique.md)')
+            lines.append(f'- [{slug}](10-episodes/projects/{slug}/history.md)')
     else:
-        lines.append('(aucun pour l\'instant)')
+        lines.append('(none yet)')
     lines.append('')
-    lines.append('## Domaines')
+    lines.append('## Domains')
     lines.append('')
-    lines.append('(aucun pour l\'instant — utiliser /mem-promote-domain pour en créer)')
+    lines.append('(none yet — use /mem-promote-domain to create one)')
     lines.append('')
     lines.append('## Archives')
     lines.append('')
     for slug, a in all_archives:
         rel = a.relative_to(vault)
-        lines.append(f'- [{a.stem}](../{rel.as_posix()})')
+        lines.append(f'- [{a.stem}]({rel.as_posix()})')
     lines.append('')
 
-    write_utf8_lf(vault / '99-meta' / '_index.md', '\n'.join(lines))
+    write_utf8_lf(vault / 'index.md', '\n'.join(lines))
 
 def cleanup_old_dirs(vault, dry_run):
-    """Supprime les dossiers v0.4 après migration : archives/, projets/, _index.md.
+    """Supprime les artefacts v0.4 après migration : archives/, projets/, _index.md (legacy).
     Le backup garantit qu'on peut récupérer en cas de pépin.
     """
     step("\n> Nettoyage des dossiers v0.4 (backup garanti)")
@@ -382,11 +382,11 @@ def cleanup_old_dirs(vault, dry_run):
             ok(f"Suppression de {old}/ ({len(list(path.rglob('*.md')))} fichiers)")
             if not dry_run:
                 shutil.rmtree(path)
-    old_index = vault / '_index.md'
-    if old_index.exists():
-        ok(f"Suppression de _index.md (migré vers 99-meta/_index.md)")
+    legacy_index = vault / '_index.md'
+    if legacy_index.exists():
+        ok(f"Suppression de _index.md legacy (régénéré en index.md à la racine)")
         if not dry_run:
-            old_index.unlink()
+            legacy_index.unlink()
 
 def copy_doctrine(vault, doctrine_src, dry_run):
     """Copie le doc de cadrage v0.5 dans 99-meta/doctrine.md."""
@@ -419,7 +419,7 @@ def main():
     parser = argparse.ArgumentParser(description='Migration vault SecondBrain v0.4 -> v0.5')
     parser.add_argument('--vault', required=True, help='Chemin absolu du vault à migrer')
     parser.add_argument('--apply', action='store_true', help='Applique la migration (sinon dry-run)')
-    parser.add_argument('--default-scope', default='pro', choices=['perso', 'pro'],
+    parser.add_argument('--default-scope', default='work', choices=['personal', 'work'],
                         help='Scope par défaut pour les contenus migrés (défaut: pro)')
     parser.add_argument('--doctrine', default=None,
                         help='Chemin vers brain-architecture-v0.5.md à copier dans 99-meta/doctrine.md')
@@ -459,8 +459,8 @@ def main():
         log("\nPour appliquer reellement : ajoute --apply", Color.WARN)
     else:
         log("\nProchaines etapes :", Color.INFO)
-        log("  1. Verifier 99-meta/_index.md", Color.INFO)
-        log("  2. Verifier au moins une archive dans 10-episodes/projets/{slug}/archives/", Color.INFO)
+        log("  1. Verifier index.md", Color.INFO)
+        log("  2. Verifier au moins une archive dans 10-episodes/projects/{slug}/archives/", Color.INFO)
         log("  3. Tester : /mem-recall {slug} dans une nouvelle session", Color.INFO)
 
 if __name__ == '__main__':

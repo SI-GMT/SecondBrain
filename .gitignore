@@ -3,15 +3,15 @@ Thumbs.db
 
 # Le vault memoire est local a chaque poste : on ne versionne que le squelette
 memory/*
-!memory/_index.md
+!memory/index.md
 !memory/archives/
-!memory/projets/
+!memory/projects/
 
-# Dans archives/ et projets/, on ne garde que le .gitkeep
+# Dans archives/ et projects/, on ne garde que le .gitkeep
 memory/archives/*
 !memory/archives/.gitkeep
-memory/projets/*
-!memory/projets/.gitkeep
+memory/projects/*
+!memory/projects/.gitkeep
 
 # Config Obsidian locale au poste
 memory/.obsidian/
