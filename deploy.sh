@@ -220,7 +220,7 @@ resolve_language() {
     # Detection systeme
     local raw="${LC_ALL:-${LANG:-en}}"
     local code="${raw:0:2}"
-    code="${code,,}"
+    code="$(printf '%s' "$code" | tr '[:upper:]' '[:lower:]')"
     local detected="en"
     for s in "${supported[@]}"; do
         [[ "$s" == "$code" ]] && detected="$s" && break
@@ -234,7 +234,7 @@ resolve_language() {
         local input
         read -r input
         if [[ -n "$input" ]]; then
-            input="${input,,}"
+            input="$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')"
             for s in "${supported[@]}"; do
                 if [[ "$s" == "$input" ]]; then
                     echo "$input"
