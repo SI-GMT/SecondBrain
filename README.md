@@ -283,7 +283,7 @@ Scripts Python livrés dans `scripts/` pour les opérations de maintenance ponct
 | `migrate-vault-v05-to-v052.py` | Migrer un vault **v0.5 encore en français** (zones `40-principes`, valeurs `kind: projet`, etc.) vers le schéma **v0.5.2 anglais** (`40-principles`, `kind: project`, …). Préserve la prose française des archives narratives. |
 | `rebuild-vault-index.py` | Régénérer `{vault}/index.md` depuis un scan du filesystem en consommant `core/i18n/strings.yaml`. Utile après une migration ou une réorganisation manuelle. Détecte la langue de l'utilisateur depuis `~/.{cli}/memory-kit.json`. |
 | `enforce-linking.py` | Appliquer rétroactivement l'invariant **zero orphan atom** sur un vault existant : ajoute la ligne d'intro localisée avec liens croisés dans chaque `context.md` ↔ `history.md`. Idempotent. À utiliser une fois après upgrade vers v0.5.4. |
-| `scaffold-vault-v0.5.ps1` | Bootstrap d'un nouveau vault v0.5 vide (9 zones + sous-dossiers + `index.md` squelette). Idempotent. |
+| `scaffold-vault.py` | Bootstrap d'un nouveau vault v0.5 vide (9 zones + sous-dossiers + `.gitignore` + `index.md` squelette i18n via `rebuild-vault-index.py`). Idempotent. Appelé automatiquement par `deploy.{sh,ps1}` lors d'une première installation (vault sans `10-episodes/`). |
 | `fix-double-encoding.py` | Correction rétroactive du double-encodage UTF-8→CP1252→UTF-8 sur les fichiers du vault (signature `Ã©`, `â€"`, `Â `). À utiliser uniquement si l'agent a écrit via un shell mal configuré. |
 
 Exemple de migration FR→EN d'un vault existant :

@@ -310,16 +310,18 @@ except Exception:
 # ============================================================
 # Cleanup migration v0.4 -> v0.5
 # ============================================================
-# Supprime les skills/commandes/templates obsoletes apres renommages v0.5 :
-#   mem-list-projects -> mem-list
-#   mem-rename-project -> mem-rename
-#   mem-merge-projects -> mem-merge
+# Supprime les skills/commandes/templates obsoletes apres renommages :
+#   recall             -> mem-recall            (pre-v0.4)
+#   archive            -> mem-archive           (pre-v0.4)
+#   mem-list-projects  -> mem-list              (v0.5)
+#   mem-rename-project -> mem-rename            (v0.5)
+#   mem-merge-projects -> mem-merge             (v0.5)
 # Idempotent : si les fichiers ont deja ete supprimes, ne fait rien.
 #
 # Args : aucun (utilise DETECTED_IDX et PLATFORM_* en globaux).
 
 remove_deprecated_v04_files() {
-    local obsolete=("mem-list-projects" "mem-rename-project" "mem-merge-projects")
+    local obsolete=("recall" "archive" "mem-list-projects" "mem-rename-project" "mem-merge-projects")
     local count=0
 
     for i in "${DETECTED_IDX[@]}"; do
@@ -995,7 +997,30 @@ for i in "${DETECTED_IDX[@]}"; do
 done
 
 # ============================================================
-# 6. Resume final
+# 6. Scaffold du vault si vide (premiere installation)
+# ============================================================
+# Si le vault ne contient pas la zone canonique 10-episodes/, on considere
+# que c'est une premiere install et on appelle scripts/scaffold-vault.py
+# pour creer la structure des 9 zones + index.md (i18n via memory-kit.json).
+
+echo ""
+if [[ ! -d "$VAULT_PATH/10-episodes" ]]; then
+    _cyan "Vault vierge detecte : scaffolding de la structure v0.5..."
+    if command -v python3 &>/dev/null; then
+        if python3 "$KIT_ROOT/scripts/scaffold-vault.py" --vault "$VAULT_PATH" --language "$LANGUAGE"; then
+            :
+        else
+            _yellow "scaffold-vault.py a echoue (vault partiellement initialise)"
+        fi
+    else
+        _yellow "python3 introuvable : scaffold ignore. Cree manuellement les zones via scripts/scaffold-vault.py."
+    fi
+else
+    _gray "Vault deja peuple (10-episodes/ present), scaffold ignore"
+fi
+
+# ============================================================
+# 7. Resume final
 # ============================================================
 
 echo ""

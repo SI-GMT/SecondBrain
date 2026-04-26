@@ -262,15 +262,17 @@ function Get-ExistingVaultPath {
 # ============================================================
 # Cleanup migration v0.4 -> v0.5
 # ============================================================
-# Supprime les skills/commandes/templates obsoletes apres renommages v0.5 :
-#   mem-list-projects -> mem-list
-#   mem-rename-project -> mem-rename
-#   mem-merge-projects -> mem-merge
+# Supprime les skills/commandes/templates obsoletes apres renommages :
+#   recall             -> mem-recall            (pre-v0.4)
+#   archive            -> mem-archive           (pre-v0.4)
+#   mem-list-projects  -> mem-list              (v0.5)
+#   mem-rename-project -> mem-rename            (v0.5)
+#   mem-merge-projects -> mem-merge             (v0.5)
 # Idempotent : si les fichiers ont deja ete supprimes, ne fait rien.
 
 function Remove-DeprecatedV04Files {
     param([Parameter(Mandatory=$true)][hashtable]$ConfigDirs)
-    $obsolete = @('mem-list-projects', 'mem-rename-project', 'mem-merge-projects')
+    $obsolete = @('recall', 'archive', 'mem-list-projects', 'mem-rename-project', 'mem-merge-projects')
     $patterns = @{
         Claude = @('skills\{name}.md', 'commands\{name}.md')
         Gemini = @('extensions\memory-kit\commands\{name}.toml')
@@ -887,7 +889,33 @@ foreach ($p in $detected) {
 }
 
 # ============================================================
-# 5. Resume final
+# 6. Scaffold du vault si vide (premiere installation)
+# ============================================================
+# Si le vault ne contient pas la zone canonique 10-episodes/, on considere
+# que c'est une premiere install et on appelle scripts/scaffold-vault.py
+# pour creer la structure des 9 zones + index.md (i18n via memory-kit.json).
+
+Write-Host ''
+$episodesDir = Join-Path $VaultPath '10-episodes'
+if (-not (Test-Path $episodesDir)) {
+    Write-Step "Vault vierge detecte : scaffolding de la structure v0.5..."
+    $python = Get-Command python3 -ErrorAction SilentlyContinue
+    if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
+    if ($python) {
+        $scaffoldScript = Join-Path $kitRoot 'scripts\scaffold-vault.py'
+        & $python.Source $scaffoldScript --vault $VaultPath --language $script:Language
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 "scaffold-vault.py a echoue (vault partiellement initialise)"
+        }
+    } else {
+        Write-Warn2 "python introuvable : scaffold ignore. Cree manuellement les zones via scripts\scaffold-vault.py."
+    }
+} else {
+    Write-Skip "Vault deja peuple (10-episodes/ present), scaffold ignore"
+}
+
+# ============================================================
+# 7. Resume final
 # ============================================================
 
 Write-Host ''
