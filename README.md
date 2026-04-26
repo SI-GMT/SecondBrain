@@ -11,7 +11,7 @@
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
-> **v0.5.3** — Refonte brain-centric (9 zones mémorielles), schéma 100 % anglais (folders, frontmatter, tags), instructions LLM en anglais (efficacité maximale), conversation dans la langue native de l'utilisateur (EN/FR/ES/DE/RU bundle, sélection à l'install). Tooling : migration FR→EN d'un vault existant + régénération de l'index depuis le filesystem.
+> **v0.5.4** — Refonte brain-centric (9 zones mémorielles), schéma 100 % anglais (folders, frontmatter, tags), instructions LLM en anglais (efficacité maximale), conversation dans la langue native de l'utilisateur (EN/FR/ES/DE/RU bundle, sélection à l'install). Invariant **zero orphan atom** : tout fichier persisté carries au moins un lien (croisés `context.md` ↔ `history.md`, frontmatter `project:` + `context_origin` pour les atomes transverses). Tooling : migration FR→EN, régénération de l'index, enforcement linking rétroactif.
 
 ---
 
@@ -282,6 +282,7 @@ Scripts Python livrés dans `scripts/` pour les opérations de maintenance ponct
 | `migrate-vault-v0.5.py` | Migrer un vault **v0.4** (project-centric, `archives/` + `projets/` à plat) vers la structure brain-centric **v0.5** (9 zones). Backup automatique avant `--apply`. |
 | `migrate-vault-v05-to-v052.py` | Migrer un vault **v0.5 encore en français** (zones `40-principes`, valeurs `kind: projet`, etc.) vers le schéma **v0.5.2 anglais** (`40-principles`, `kind: project`, …). Préserve la prose française des archives narratives. |
 | `rebuild-vault-index.py` | Régénérer `{vault}/index.md` depuis un scan du filesystem en consommant `core/i18n/strings.yaml`. Utile après une migration ou une réorganisation manuelle. Détecte la langue de l'utilisateur depuis `~/.{cli}/memory-kit.json`. |
+| `enforce-linking.py` | Appliquer rétroactivement l'invariant **zero orphan atom** sur un vault existant : ajoute la ligne d'intro localisée avec liens croisés dans chaque `context.md` ↔ `history.md`. Idempotent. À utiliser une fois après upgrade vers v0.5.4. |
 | `scaffold-vault-v0.5.ps1` | Bootstrap d'un nouveau vault v0.5 vide (9 zones + sous-dossiers + `index.md` squelette). Idempotent. |
 | `fix-double-encoding.py` | Correction rétroactive du double-encodage UTF-8→CP1252→UTF-8 sur les fichiers du vault (signature `Ã©`, `â€"`, `Â `). À utiliser uniquement si l'agent a écrit via un shell mal configuré. |
 
@@ -299,6 +300,9 @@ python scripts/migrate-vault-v05-to-v052.py --vault ~/vault --apply
 
 # 4. Régénérer l'index avec le bon i18n
 python scripts/rebuild-vault-index.py --vault ~/vault
+
+# 5. Appliquer l'invariant zero-orphan-atom (liens croisés context ↔ history)
+python scripts/enforce-linking.py --vault ~/vault
 ```
 
 ---

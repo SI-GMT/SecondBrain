@@ -50,6 +50,7 @@ en:
       "99-meta": "vault meta-memory"
   context:
     title: "Project context"
+    intro_with_links: "> Mutable snapshot of the project. See also: [history](history.md) · [archives/](archives/)"
     section_summary: "Summary"
     section_state: "Current state"
     section_next_steps: "Next steps"
@@ -61,6 +62,7 @@ en:
   history:
     title: "Project history"
     intro: "Chronological session log. One line per archive."
+    intro_with_links: "> Chronological session log. See also: [context](context.md)"
   errors:
     no_project_found: "No project found"
     no_domain_found: "No domain found"
@@ -99,6 +101,7 @@ fr:
       "99-meta": "méta-mémoire du vault"
   context:
     title: "Contexte du projet"
+    intro_with_links: "> Snapshot mutable du projet. Voir aussi : [historique](history.md) · [archives/](archives/)"
     section_summary: "Résumé"
     section_state: "État courant"
     section_next_steps: "Prochaines étapes"
@@ -110,6 +113,7 @@ fr:
   history:
     title: "Historique du projet"
     intro: "Journal chronologique des sessions. Une ligne par archive."
+    intro_with_links: "> Fil chronologique des sessions du projet. Voir aussi : [contexte](context.md)"
   errors:
     no_project_found: "Aucun projet trouvé"
     no_domain_found: "Aucun domaine trouvé"
@@ -148,6 +152,7 @@ es:
       "99-meta": "meta-memoria del vault"
   context:
     title: "Contexto del proyecto"
+    intro_with_links: "> Snapshot mutable del proyecto. Ver también: [history](history.md) · [archives/](archives/)"
     section_summary: "Resumen"
     section_state: "Estado actual"
     section_next_steps: "Próximos pasos"
@@ -159,6 +164,7 @@ es:
   history:
     title: "Historia del proyecto"
     intro: "Registro cronológico de sesiones. Una línea por archivo."
+    intro_with_links: "> Registro cronológico de sesiones. Ver también: [context](context.md)"
   errors:
     no_project_found: "Ningún proyecto encontrado"
     no_domain_found: "Ningún dominio encontrado"
@@ -197,6 +203,7 @@ de:
       "99-meta": "Vault-Meta-Gedächtnis"
   context:
     title: "Projektkontext"
+    intro_with_links: "> Veränderlicher Snapshot des Projekts. Siehe auch: [history](history.md) · [archives/](archives/)"
     section_summary: "Zusammenfassung"
     section_state: "Aktueller Stand"
     section_next_steps: "Nächste Schritte"
@@ -208,6 +215,7 @@ de:
   history:
     title: "Projekthistorie"
     intro: "Chronologisches Sitzungsprotokoll. Eine Zeile pro Archiv."
+    intro_with_links: "> Chronologisches Sitzungsprotokoll. Siehe auch: [context](context.md)"
   errors:
     no_project_found: "Kein Projekt gefunden"
     no_domain_found: "Keine Domäne gefunden"
@@ -246,6 +254,7 @@ ru:
       "99-meta": "мета-память хранилища"
   context:
     title: "Контекст проекта"
+    intro_with_links: "> Изменяемый снимок проекта. См. также: [history](history.md) · [archives/](archives/)"
     section_summary: "Резюме"
     section_state: "Текущее состояние"
     section_next_steps: "Следующие шаги"
@@ -257,6 +266,7 @@ ru:
   history:
     title: "История проекта"
     intro: "Хронологический журнал сессий. Одна строка на архив."
+    intro_with_links: "> Хронологический журнал сессий. См. также: [context](context.md)"
   errors:
     no_project_found: "Проект не найден"
     no_domain_found: "Домен не найден"

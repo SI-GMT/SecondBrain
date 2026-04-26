@@ -135,6 +135,8 @@ For each accepted atom in the plan:
 
 {{INCLUDE _concurrence}}
 
+{{INCLUDE _linking}}
+
 Steps per atom:
 
 1. **Build the final Markdown content**: frontmatter (R4) + note body (raw atom text with minimal formatting).

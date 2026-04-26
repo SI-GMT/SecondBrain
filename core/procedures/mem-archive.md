@@ -91,7 +91,9 @@ After the router writes, **always** rewrite the entire `{VAULT}/10-episodes/{kin
 
 {{INCLUDE _concurrence}}
 
-`context.md` format:
+{{INCLUDE _linking}}
+
+`context.md` format (the intro line right after the frontmatter is mandatory — it carries the cross-link to `history.md` and `archives/`, sourced from `core/i18n/strings.yaml` `{language}.context.intro_with_links`):
 
 ```markdown
 ---
@@ -104,6 +106,8 @@ phase: {current phase}
 last-session: YYYY-MM-DD
 tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 ---
+
+{{i18n: context.intro_with_links}}
 
 # {Slug} — Active context
 
@@ -124,7 +128,7 @@ tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 
 ### 5. Update the history
 
-The router has already added the archive line to `history.md` (see R7.5 of the router block). No additional action here.
+The router has already added the archive line to `history.md` (see R7.5 of the router block). On the first write of a project's `history.md`, also insert the localized intro line (`{language}.history.intro_with_links`) right after the frontmatter — this enforces the zero-orphan-atom invariant by linking `history.md` back to `context.md`.
 
 ### 6. Update the global index
 

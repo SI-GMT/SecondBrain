@@ -74,10 +74,12 @@ If `--dry-run`: stop here.
 
 {{INCLUDE _concurrence}}
 
+{{INCLUDE _linking}}
+
 Steps:
 
 1. **Create the structure**: `mkdir -p 10-episodes/domains/{target-slug}/archives/`.
-2. **Create `context.md`** skeleton:
+2. **Create `context.md`** skeleton (the intro line right after the frontmatter is mandatory — sourced from `core/i18n/strings.yaml` `{language}.context.intro_with_links`):
    ```yaml
    ---
    zone: episodes
@@ -87,6 +89,8 @@ Steps:
    collective: false
    tags: [zone/episodes, kind/domain, domain/{target-slug}, scope/*]
    ---
+
+   {{i18n: context.intro_with_links}}
 
    # {target-slug} — Active context
 
@@ -99,7 +103,7 @@ Steps:
    ## Next steps
    (to be defined)
    ```
-3. **Create `history.md`** skeleton: title + N initial entries for the promoted items.
+3. **Create `history.md`** skeleton: frontmatter + the localized intro line (`{language}.history.intro_with_links`) right after, then title + N initial entries for the promoted items.
 4. **For each item to promote**:
    - Read its current frontmatter.
    - Update: `zone: episodes`, `kind: domain`, `domain: {target-slug}`, add tags `zone/episodes`, `kind/domain`, `domain/{target-slug}`.
