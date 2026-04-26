@@ -1,7 +1,5 @@
-Rétro-archiver une arborescence Confluence (avec enrichissement Jira) via le skill `mem-archeo-atlassian`.
+Retro-archive a Confluence page tree (root page + descendants, or a full space) into the memory vault, with automatic enrichment from the Jira tickets referenced in the pages.
 
-Le premier argument est l'URL Confluence (page ou space root). Options reconnues : `--projet {nom}`, `--profondeur N`, `--skip-children`, `--depuis YYYY-MM-DD`, `--skip-jira`, `--dry-run`.
-
-Prérequis : MCP Atlassian disponible côté client.
+Required: Confluence URL (page or space). Options: --depth N, --skip-children, --since YYYY-MM-DD, --skip-jira, --project {slug}, --dry-run, --no-confirm.
 
 $ARGUMENTS

@@ -1,10 +1,10 @@
 ---
-description: Annuler la dernière archive d'un projet ou du vault global en supprimant le fichier dans archives/ puis en retirant ses références de historique.md et _index.md.
+description: Cancel the last archive of a project (or of the global vault if no project specified). Deletes the archive file, removes the corresponding line from history.md and from index.md. DOES NOT RESTORE context.md — warn the user and suggest /mem-recall to regenerate a context from the remaining archives. TRIGGER via /mem-rollback-archive [project] or natural language — 'cancel the last archive', 'forget the last session', 'rollback the archive of X'.
 ---
 
 {{PROCEDURE}}
 
-## User input (slug de projet, optionnel)
+## User input
 
 ```text
 $ARGUMENTS

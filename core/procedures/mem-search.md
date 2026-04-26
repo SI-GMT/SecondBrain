@@ -1,117 +1,117 @@
-# Procédure : Search (v0.5 brain-centric)
+# Procedure: Search (v0.5 brain-centric)
 
-Objectif : recherche plein-texte dans le vault mémoire avec filtres multidimensionnels (zone, scope, kind, modality, projet, domaine, type, source). Retourner les occurrences avec contexte, groupées par fichier et triées par pertinence.
+Goal: full-text search in the memory vault with multidimensional filters (zone, scope, kind, modality, project, domain, type, source). Return occurrences with context, grouped by file and sorted by relevance.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-search {requête}` ou exprime l'intention en langage naturel : « cherche dans la mémoire X », « trouve les notes qui parlent de Y », « où est-ce qu'on avait parlé de Z ? ».
+The user types `/mem-search {query}` or expresses the intent in natural language: "search in memory X", "find notes that talk about Y", "where did we talk about Z?".
 
-Options reconnues :
-- `--zone {liste}` : limite aux zones données (ex: `--zone principes`, `--zone episodes,knowledge`).
-- `--scope perso|pro|all` : filtre par scope. Défaut : `all`.
-- `--kind projet|domaine` : filtre les épisodes par sous-logique.
-- `--modality left|right` : filtre par modalité hémisphérique.
-- `--projet {slug}` : filtre par projet rattaché.
-- `--domaine {slug}` : filtre par domaine rattaché.
-- `--type {valeur}` : filtre par type de note (ex: `--type principe`).
-- `--source {valeur}` : filtre par source (`vecu|doc|archeo-git|archeo-atlassian|manuel`).
-- `--limit N` : nombre max de matches (défaut 50).
+Recognized options:
+- `--zone {list}`: limits to the given zones (e.g., `--zone principles`, `--zone episodes,knowledge`).
+- `--scope personal|work|all`: filters by scope. Default: `all`.
+- `--kind project|domain`: filters episodes by sub-logic.
+- `--modality left|right`: filters by hemispheric modality.
+- `--project {slug}`: filters by attached project.
+- `--domain {slug}`: filters by attached domain.
+- `--type {value}`: filters by note type (e.g., `--type principle`).
+- `--source {value}`: filters by source (`lived|doc|archeo-git|archeo-atlassian|manual`).
+- `--limit N`: max number of matches (default 50).
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire le champ `vault`. Dans la suite, `{VAULT}` désigne cette valeur.
+Read {{CONFIG_FILE}} and extract the `vault` field. In what follows, `{VAULT}` denotes this value.
 
-Si le fichier est absent ou illisible, répondre :
-> Kit mémoire non configuré. Fichier attendu : {{CONFIG_FILE}}. Exécute `deploy.ps1` depuis la racine du kit.
+If the file is absent or unreadable, reply:
+> Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
 
-Puis s'arrêter.
+Then stop.
 
-## Procédure
+## Procedure
 
-### 1. Récupérer la requête et les filtres
+### 1. Retrieve the query and filters
 
-La requête est l'argument principal (premier token non-option). Si vide : répondre « Précise ce que tu cherches : `/mem-search {mot-clé ou phrase}`. » et s'arrêter.
+The query is the main argument (first non-option token). If empty: reply "Specify what you're looking for: `/mem-search {keyword or phrase}`." and stop.
 
-- Recherche insensible à la casse par défaut.
-- Support des guillemets pour phrase exacte.
-- Les options `--xxx` sont parsées et utilisées comme filtres en R3.
+- Case-insensitive search by default.
+- Quote support for exact phrase.
+- The `--xxx` options are parsed and used as filters in R3.
 
-### 2. Périmètre de recherche par défaut
+### 2. Default search scope
 
-Scanner **récursivement** les 9 zones racines :
+Recursively scan the 9 root zones:
 
 ```
 {VAULT}/00-inbox/
-{VAULT}/10-episodes/projets/
-{VAULT}/10-episodes/domaines/
+{VAULT}/10-episodes/projects/
+{VAULT}/10-episodes/domains/
 {VAULT}/20-knowledge/
 {VAULT}/30-procedures/
-{VAULT}/40-principes/
-{VAULT}/50-objectifs/
-{VAULT}/60-personnes/
+{VAULT}/40-principles/
+{VAULT}/50-goals/
+{VAULT}/60-people/
 {VAULT}/70-cognition/
 {VAULT}/99-meta/
 ```
 
-Si `--zone X` est fourni, restreindre aux zones listées.
+If `--zone X` is provided, restrict to the listed zones.
 
-**Exclure systématiquement** :
+**Always exclude**:
 
-- `.obsidian/` et descendants.
-- Fichiers `*.canvas`, `*.excalidraw.md`, `*.base` (contenu non textuel).
-- `.trash/` si présent.
+- `.obsidian/` and descendants.
+- Files `*.canvas`, `*.excalidraw.md`, `*.base` (non-textual content).
+- `.trash/` if present.
 
-### 3. Exécuter la recherche
+### 3. Run the search
 
-Utiliser un outil de recherche adapté (Grep, ripgrep ou équivalent) :
+Use a suitable search tool (Grep, ripgrep or equivalent):
 
-- Mode : `content` avec 2 lignes de contexte avant/après chaque match.
-- Limite : `--limit` (défaut 50). Si atteinte, le signaler.
+- Mode: `content` with 2 lines of context before/after each match.
+- Limit: `--limit` (default 50). If reached, signal it.
 
-### 4. Filtrer par frontmatter
+### 4. Filter by frontmatter
 
-Pour chaque fichier matchant, lire son frontmatter et appliquer les filtres :
+For each matching file, read its frontmatter and apply the filters:
 
-- `--scope` : ne garder que les fichiers avec `scope: {valeur}` (ou `all` = tous).
-- `--kind` : ne garder que les fichiers avec `kind: {valeur}`.
-- `--modality` : ne garder que les fichiers avec `modality: {valeur}`.
-- `--projet` : ne garder que les fichiers avec `projet: {slug}` ou tag `projet/{slug}`.
-- `--domaine` : ne garder que les fichiers avec `domaine: {slug}` ou tag `domaine/{slug}`.
-- `--type` : ne garder que les fichiers avec `type: {valeur}`.
-- `--source` : ne garder que les fichiers avec `source: {valeur}`.
+- `--scope`: keep only files with `scope: {value}` (or `all` = all).
+- `--kind`: keep only files with `kind: {value}`.
+- `--modality`: keep only files with `modality: {value}`.
+- `--project`: keep only files with `project: {slug}` or tag `project/{slug}`.
+- `--domain`: keep only files with `domain: {slug}` or tag `domain/{slug}`.
+- `--type`: keep only files with `type: {value}`.
+- `--source`: keep only files with `source: {value}`.
 
-### 5. Trier et grouper
+### 5. Sort and group
 
-- Grouper les matches par fichier.
-- Trier les fichiers : zones `episodes` en premier (archives récentes en haut), puis autres zones par ordre alphabétique. Dans une même zone, archives horodatées triées par date décroissante.
+- Group matches by file.
+- Sort files: `episodes` zones first (recent archives at top), then other zones in alphabetical order. Within the same zone, timestamped archives sorted by date descending.
 
-### 6. Afficher le rapport
+### 6. Display the report
 
-Format :
+Format:
 
 ```
-## Recherche : "{requête}" ({N filtres actifs})
+## Search: "{query}" ({N active filters})
 
-{N} occurrence(s) dans {M} fichier(s).
+{N} occurrence(s) in {M} file(s).
 
-### [{zone}] {chemin relatif au vault} ({k} matches)
-> ligne 42 : ... {ligne avec match} ...
-> ligne 58 : ... {ligne avec match} ...
+### [{zone}] {path relative to vault} ({k} matches)
+> line 42: ... {line with match} ...
+> line 58: ... {line with match} ...
 
-### [{zone}] {chemin} ({k} matches)
+### [{zone}] {path} ({k} matches)
 > ...
 
 ...
 ```
 
-Si aucun match :
+If no match:
 
 ```
-## Recherche : "{requête}"
+## Search: "{query}"
 
-Aucune occurrence trouvée dans le vault (filtres actifs : {liste}).
+No occurrence found in the vault (active filters: {list}).
 ```
 
-### 7. Suggérer la suite
+### 7. Suggest what's next
 
-Si les résultats portent majoritairement sur un projet/domaine (slug récurrent dans les résultats), suggérer : « Tu veux que je charge le contexte de `{slug}` ? » — qui déclenchera `/mem-recall {slug}`.
+If the results mostly concern a project/domain (recurring slug in the results), suggest: "Do you want me to load the context of `{slug}`?" — which will trigger `/mem-recall {slug}`.

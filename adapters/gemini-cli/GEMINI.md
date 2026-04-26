@@ -1,100 +1,131 @@
-# Kit Mémoire — Second cerveau persistant (Gemini CLI)
+# Memory Kit — Persistent second brain (Gemini CLI)
 
-Ce poste dispose d'un vault mémoire qui persiste le contexte entre les sessions Gemini. Le chemin absolu du vault est dans `~/.gemini/memory-kit.json` sous la clé `vault`.
+This machine has a memory vault that persists context across Gemini sessions. The absolute vault path is in `~/.gemini/memory-kit.json` under the `vault` key. The user's preferred conversational language is in the same file under the `language` key (ISO 639-1: `en`, `fr`, `es`, `de`, `ru`, …).
 
-Plusieurs commandes `mem-*` sont disponibles. Elles doivent aussi être **déclenchées automatiquement** en fonction du langage naturel de l'utilisateur.
+## Conversational language
 
-## `/mem-recall` — chargement du contexte
+**Always communicate with the user in their preferred language** (read `language` from `~/.gemini/memory-kit.json`; fallback to `en` if absent). All written content stored in the vault uses the structural English schema (folder names, frontmatter values, tags), but your conversational replies, questions, and confirmations to the user must be in their language.
 
-Invoquer cette logique **sans attendre que l'utilisateur tape `/mem-recall`** dès qu'il exprime, en langage naturel :
+## Skills are auto-triggered
 
-- Une intention de reprise : « reprends », « on continue », « où on en était », « on reprend le projet X », « on s'y remet ».
-- Un besoin de consulter la mémoire : « tu te rappelles… », « qu'est-ce qu'on a décidé pour… », « on avait fait quoi déjà ? », « rappelle-moi ».
+Several `mem-*` commands are available. Trigger them automatically when the user's natural language expresses their intent.
 
-Si le projet visé est ambigu, demander confirmation avant d'exécuter.
+## `/mem-recall` — context loading
 
-## `/mem-archive` — sauvegarde
+Invoke this logic **without waiting for `/mem-recall`** as soon as the user expresses, in natural language:
 
-Deux modes distincts. **Ne jamais les confondre.**
+- A resumption intent: "let's resume", "let's continue", "where were we", "back on project X", "let's get back to it" (and equivalents in their language).
+- A need to query memory: "do you remember…", "what did we decide about…", "what did we do again?", "remind me".
 
-**Mode incrémental silencieux** (pendant la session) — dès qu'un fait, une décision ou une prochaine étape importante émerge et n'est pas déjà dans le `contexte.md` du projet en cours, mettre à jour UNIQUEMENT `contexte.md`. Pas de nouveau fichier archive. Pas d'annonce à l'utilisateur. C'est le rôle de `contexte.md` : snapshot mutable, vivant.
+If the target project is ambiguous, ask for confirmation before executing.
 
-**Mode archive complet** (fin de session) — déclenché par signal explicite : l'utilisateur dit « on s'arrête », « je pars », « on termine », tape `/clear` ou `/mem-archive`. Exécuter alors toute la procédure : fichier archive horodaté dans `archives/` + réécriture de `contexte.md` + mise à jour de `historique.md` + mise à jour de `_index.md`.
+## `/mem-archive` — save
 
-**Règle absolue** : ne jamais créer de nouveau fichier dans `archives/` en mode silencieux. Un archive complet = une session complète, pas une décision isolée.
+Two distinct modes. **Never confuse them.**
 
-## Autres commandes `mem-*` — gestion du vault
+**Silent incremental mode** (during the session) — as soon as a fact, decision, or important next step emerges that is not already in the current project's `context.md`, update ONLY `context.md`. No new archive file. No announcement to the user. That is the role of `context.md`: a mutable, living snapshot.
 
-À déclencher sur intention exprimée en langage naturel :
+**Full archive mode** (end of session) — triggered by an explicit signal: the user says "we're stopping", "I'm leaving", "we're done", types `/clear` or `/mem-archive`. Then execute the full procedure: timestamped archive file in `archives/` + rewrite `context.md` + update `history.md` + update `index.md`.
 
-- **`/mem-doc {chemin}`** — « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire ». Ingère un document local (PDF, Markdown, texte, image, docx...) comme archive single-shot. 1 fichier par invocation. Résolution auto du projet cible. Options : `--projet {nom}`, `--titre "{texte}"`.
-- **`/mem-archeo [chemin-dépôt]`** — « fais une rétro Git de ce projet », « reconstitue l'historique », « remonte les bumps de version », « archéo sur ce repo ». Reconstitue l'historique d'un dépôt Git existant en N archives datées (1 par tag/release/merge/fenêtre de commits). Détection auto du niveau, confirmation interactive avant écriture, idempotent. Options : `--niveau {tags|releases|merges|commits}`, `--projet {nom}`, `--depuis/--jusqu-a YYYY-MM-DD`, `--fenetre {jour|semaine|mois}`, `--dry-run`.
-- **`/mem-archeo-atlassian {url}`** — « archive la documentation Confluence de ce projet », « rétro sur cet espace Atlassian », « ingère cette page et ses enfants ». Rétro-archive une arborescence Confluence (page racine + descendance, ou space complet) avec enrichissement automatique par les tickets Jira référencés. 1 archive par page, idempotent via `confluence_page_id + confluence_updated`. Options : `--projet {nom}`, `--profondeur N`, `--skip-children`, `--depuis YYYY-MM-DD`, `--skip-jira`, `--dry-run`. Prérequis : MCP Atlassian côté client.
-- **`/mem-list-projects`** — « liste mes projets », « quels projets j'ai en mémoire ? ». Affiche un tableau des projets avec phase + dernière session + nb de sessions.
-- **`/mem-search {requête}`** — « cherche dans la mémoire X », « trouve les archives qui parlent de Y ». Recherche plein-texte sur le vault.
-- **`/mem-rename-project {ancien} {nouveau}`** — « renomme le projet X en Y ». Renomme le slug partout dans le vault (dossier, frontmatters, tags, index). Préserve les noms de fichiers et le contenu narratif des archives.
-- **`/mem-merge-projects {source} {cible}`** — « fusionne le projet X dans Y ». Concatène les deux, retaggue les archives, supprime le dossier source. Le `contexte.md` de la cible est à fusionner manuellement.
-- **`/mem-digest {projet} [N]`** — « résume-moi les N dernières sessions de X », « fais un digest de X ». Synthèse des arcs majeurs et décisions structurantes. Lecture seule.
-- **`/mem-rollback-archive [projet]`** — « annule la dernière archive », « rollback l'archive de X ». Supprime la dernière archive + ses références ; n'auto-restaure pas `contexte.md`.
+**Absolute rule**: never create a new file in `archives/` in silent mode. A full archive = a full session, not an isolated decision.
 
-Pour toutes les opérations `mem-*` : exécuter directement, sans demander de confirmation supplémentaire à l'utilisateur. Les procédures intègrent déjà leurs vérifications et affichent un rapport après exécution.
+## Other `/mem-*` commands — vault management
 
-## ⚠ Encodage des fichiers du vault — CRITIQUE
+Trigger when the user expresses the corresponding intent (in any language):
 
-Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) **DOIVENT** être en **UTF-8 sans BOM**, fins de ligne **LF**.
+- **`/mem-doc {path}`** — "ingest this document", "archive this file", "save this PDF to memory". Ingests one local document (PDF, Markdown, text, image, docx…) per invocation. Auto-resolves the target project. Options: `--project {slug}`, `--title "{text}"`.
+- **`/mem-archeo [repo-path]`** — "do a Git retro of this project", "reconstruct the history", "go back through the version bumps". Reconstructs the history of an existing Git repo as N dated archives. Auto level detection, interactive confirmation, idempotent. Options: `--level tags|releases|merges|commits`, `--project {slug}`, `--since/--until YYYY-MM-DD`, `--window day|week|month`, `--dry-run`.
+- **`/mem-archeo-atlassian {url}`** — "archive the Confluence documentation", "retro on this Atlassian space". Retro-archives a Confluence tree (root page + descendants, or full space) with automatic enrichment from referenced Jira tickets. 1 archive per page, idempotent via `confluence_page_id + confluence_updated`. Options: `--project {slug}`, `--depth N`, `--skip-children`, `--since YYYY-MM-DD`, `--skip-jira`, `--dry-run`. Requires the Atlassian MCP on the client.
+- **`/mem-list`** — "list my projects", "what projects do I have in memory?", "show me all the domains". Displays projects + domains with phase, last session, session count.
+- **`/mem-search {query}`** — "search memory for X", "find the archives that mention Y". Full-text search of the vault.
+- **`/mem-rename {old} {new}`** — "rename project X to Y" (also operates on domains). Renames the slug everywhere in the vault (folder, frontmatters, tags, index). Preserves archive filenames and narrative content.
+- **`/mem-merge {source} {target}`** — "merge project X into Y" (also operates on domains). Concatenates the two, retags archives, removes the source folder. The target's `context.md` must be merged manually.
+- **`/mem-digest {project} [N]`** — "summarize the last N sessions of X", "do a digest of X". Through-line synthesis of major arcs and structural decisions. Read-only.
+- **`/mem-rollback-archive [project]`** — "cancel the last archive", "rollback the archive of X". Removes the last archive + its references; does NOT auto-restore `context.md`.
+- **`/mem-note` / `/mem-principle` / `/mem-goal` / `/mem-person`** — explicit ingestion shortcuts when the user knows what they're capturing (knowledge note, principle, goal, person card).
+- **`/mem`** — universal ingestion router when the user says "save this", "note this" without specifying a target zone.
+- **`/mem-reclass`** — "move this to personal", "change the scope of this file".
+- **`/mem-promote-domain`** — "create a new domain from these inbox items".
 
-### Bug observé à éviter absolument
+For all `mem-*` operations: execute directly, without asking for additional confirmation. The procedures already include their own checks and display a clear report after execution.
 
-Gemini CLI sur Windows a été pris à produire du **double-encodage UTF-8→CP1252→UTF-8** via son outil d'écriture shell : `é` devient `Ã©`, `è` devient `Ã¨`, `—` (em dash) devient `â€"`. Cause : le pipeline shell Windows ré-encode en CP1252 quand l'encodage de sortie n'est pas explicitement forcé. Le fichier passe pour "UTF-8" au `file`, mais le contenu est corrompu. Les caractères `Ã`, `â€`, `Â ` (non-breaking space encodé) sont les **signatures du bug**.
+## Vault structure (v0.5)
 
-### Méthode OBLIGATOIRE — Python pour toute écriture dans le vault
+```
+{{VAULT_PATH}}/
+├── index.md                          ← master catalog (root)
+├── 00-inbox/                         ← raw unqualified capture
+├── 10-episodes/
+│   ├── projects/{slug}/
+│   │   ├── context.md                ← mutable snapshot (fast lane)
+│   │   ├── history.md                ← chronological log
+│   │   └── archives/YYYY-MM-DD-HHhMM-{slug}-{subject}.md
+│   └── domains/{slug}/...            ← long-running domains (no end date)
+├── 20-knowledge/                     ← semantic memory
+├── 30-procedures/                    ← know-how
+├── 40-principles/                    ← heuristics & red lines
+├── 50-goals/                         ← prospective intentions
+├── 60-people/                        ← relational notebook
+├── 70-cognition/                     ← non-verbal productions
+└── 99-meta/                          ← vault meta-memory (doctrine, taxonomy)
+```
 
-Sur Windows (ton contexte principal), **contourner le shell natif et écrire via Python** — c'est la seule méthode fiable :
+## Vault file encoding — CRITICAL
+
+All files written or modified in the vault (archives, `context.md`, `history.md`, `index.md`) **MUST** be in **UTF-8 without BOM**, **LF** line endings.
+
+### Bug to avoid at all costs
+
+Gemini CLI on Windows has been observed producing **double-encoded UTF-8→CP1252→UTF-8** via its shell write tool: `é` becomes `Ã©`, `è` becomes `Ã¨`, `—` (em dash) becomes `â€"`. Cause: the Windows shell pipeline re-encodes to CP1252 when output encoding is not explicitly forced. The file looks "UTF-8" to `file`, but the content is corrupted. The characters `Ã`, `â€`, `Â ` (non-breaking space encoded) are the **bug signatures**.
+
+### MANDATORY method — Python for all vault writes
+
+On Windows (your main context), **bypass the native shell and write via Python** — this is the only reliable method:
 
 ```python
 from pathlib import Path
-# Écriture atomique UTF-8 sans BOM, LF
-tmp = Path(cible + ".tmp")
-tmp.write_text(contenu, encoding="utf-8", newline="")
-tmp.replace(cible)  # rename atomique cross-platform
+# Atomic UTF-8 without BOM, LF
+tmp = Path(target + ".tmp")
+tmp.write_text(content, encoding="utf-8", newline="")
+tmp.replace(target)  # cross-platform atomic rename
 ```
 
-Ou en une ligne dans `run_shell_command` :
+Or as a one-liner in `run_shell_command`:
 
 ```bash
-python -c "from pathlib import Path; Path(r'{cible}.tmp').write_text(r'''{contenu}''', encoding='utf-8', newline=''); Path(r'{cible}.tmp').replace(r'{cible}')"
+python -c "from pathlib import Path; Path(r'{target}.tmp').write_text(r'''{content}''', encoding='utf-8', newline=''); Path(r'{target}.tmp').replace(r'{target}')"
 ```
 
-### Commandes shell par plateforme (fallback si Python indisponible)
+### Per-platform shell commands (fallback if Python unavailable)
 
-| Shell | Commande d'écriture UTF-8 sans BOM |
+| Shell | UTF-8 without BOM write |
 |---|---|
-| bash / POSIX / git-bash | `printf '%s' "$contenu" > "$cible.tmp" && mv -f "$cible.tmp" "$cible"` (natif UTF-8 sans BOM) |
-| PowerShell 7+ (pwsh) | `Set-Content -Path "$cible.tmp" -Value $contenu -Encoding utf8NoBOM -NoNewline; Move-Item -Path "$cible.tmp" -Destination $cible -Force` |
-| Windows PowerShell 5.1 | **À ÉVITER** — `-Encoding UTF8` injecte un BOM. Si pas d'alternative : `[System.IO.File]::WriteAllText("$cible", $contenu, [System.Text.UTF8Encoding]::new($false))` |
+| bash / POSIX / git-bash | `printf '%s' "$content" > "$target.tmp" && mv -f "$target.tmp" "$target"` (native UTF-8 without BOM) |
+| PowerShell 7+ (pwsh) | `Set-Content -Path "$target.tmp" -Value $content -Encoding utf8NoBOM -NoNewline; Move-Item -Path "$target.tmp" -Destination $target -Force` |
+| Windows PowerShell 5.1 | **AVOID** — `-Encoding UTF8` injects a BOM. If no alternative: `[System.IO.File]::WriteAllText("$target", $content, [System.Text.UTF8Encoding]::new($false))` |
 
-### Commandes INTERDITES sur Windows pour du Markdown accentué
+### FORBIDDEN commands on Windows for accented Markdown
 
-- ❌ `echo "..." > fichier.md` (cmd.exe ou Windows PowerShell) → encodage OEM/CP1252, corrompt les accents.
-- ❌ `Out-File -Encoding UTF8` sur PS5.1 → injecte un BOM.
-- ❌ `Set-Content -Value $x -Encoding UTF8` sur PS5.1 → idem (BOM).
-- ❌ Toute redirection shell (`>`, `>>`) sans spécifier explicitement l'encodage de sortie.
+- ❌ `echo "..." > file.md` (cmd.exe or Windows PowerShell) → OEM/CP1252 encoding, corrupts diacritics.
+- ❌ `Out-File -Encoding UTF8` on PS5.1 → injects a BOM.
+- ❌ `Set-Content -Value $x -Encoding UTF8` on PS5.1 → ditto (BOM).
+- ❌ Any shell redirection (`>`, `>>`) without explicitly specifying output encoding.
 
-### Validation post-écriture recommandée
+### Post-write validation (recommended)
 
-Après toute écriture sensible, vérifier qu'aucune signature de corruption n'apparaît :
+After any sensitive write, check that no corruption signature appears:
 
 ```bash
-grep -c $'\xc3\x83\|â€\|Â ' "{chemin}" 2>/dev/null
-# Doit retourner 0. Si > 0, le fichier a été corrompu, relancer avec la méthode Python.
+grep -c $'\xc3\x83\|â€\|Â ' "{path}" 2>/dev/null
+# Must return 0. If > 0, the file was corrupted, rewrite via the Python method.
 ```
 
-### Symptômes de corruption à détecter
+### Corruption symptoms to detect
 
-Si tu vois dans un fichier que tu viens d'écrire :
-- `Ã©`, `Ã¨`, `Ãª`, `Ã§`, `Ã€`, `Ã‰` → double-encodage, il faut réécrire avec la méthode Python.
-- `â€"`, `â€™`, `â€œ`, `â€`, `â€¦` → double-encodage des tirets/guillemets/ellipses.
-- `Â ` (espace précédé d'un A-circonflexe) → non-breaking space double-encodé.
-- `\"texte\"` dans un YAML frontmatter (guillemets échappés) → artefact shell, retirer les backslashes.
+If you see in a file you just wrote:
+- `Ã©`, `Ã¨`, `Ãª`, `Ã§`, `Ã€`, `Ã‰` → double-encoding, rewrite via Python.
+- `â€"`, `â€™`, `â€œ`, `â€`, `â€¦` → double-encoded dashes/quotes/ellipses.
+- `Â ` (space preceded by A-circumflex) → double-encoded non-breaking space.
+- `\"text\"` in YAML frontmatter (escaped quotes) → shell artifact, remove the backslashes.
 
-Dans tous ces cas, le `script scripts/fix-double-encoding.py` du dépôt SecondBrain corrige rétroactivement, mais **la prévention est obligatoire** : passer par Python dès la première écriture.
+In all these cases, the SecondBrain repo's `scripts/fix-double-encoding.py` retroactively fixes, but **prevention is mandatory**: go via Python from the first write.

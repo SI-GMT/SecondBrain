@@ -1,46 +1,56 @@
 <!-- MEMORY-KIT:START -->
-## Kit Mémoire — Second cerveau persistant
+## Memory Kit — Persistent second brain
 
-Ce poste dispose d'un vault mémoire qui persiste le contexte entre les sessions Claude Code. Le chemin absolu du vault est dans `~/.claude/memory-kit.json` (ou `$CLAUDE_CONFIG_DIR/memory-kit.json`) sous la clé `vault`.
+This machine has a memory vault that persists context across Claude Code sessions. The absolute path of the vault is in `~/.claude/memory-kit.json` (or `$CLAUDE_CONFIG_DIR/memory-kit.json`) under the `vault` key. The user's preferred conversational language is in the same file under the `language` key (ISO 639-1 code: `en`, `fr`, `es`, `de`, `ru`, …).
 
-Plusieurs skills `mem-*` sont installés. Ils doivent être utilisés de manière proactive — sans attendre une commande explicite — quand le langage naturel de l'utilisateur déclenche leur intention.
+### Conversational language
 
-### `mem-recall` — chargement automatique du contexte
+**Always communicate with the user in their preferred language** (read from `language` in `memory-kit.json`; fallback to `en` if absent). All written content stored in the vault uses the structural English schema (folder names, frontmatter values, tags), but your conversational replies, questions, and confirmations to the user must be in their language. The internal procedures you execute are written in English for precision — do not echo them verbatim, translate the user-facing surface.
 
-Invoquer ce skill **sans attendre que l'utilisateur tape `/mem-recall`** dès qu'il exprime, en langage naturel :
+### Skills are auto-triggered
 
-- Une intention de reprise : « reprends », « on continue », « où on en était », « on reprend le projet X », « on s'y remet ».
-- Un besoin de consulter la mémoire : « tu te rappelles… », « qu'est-ce qu'on a décidé pour… », « on avait fait quoi déjà ? », « rappelle-moi ».
+Several `mem-*` skills are installed. Use them proactively — without waiting for an explicit slash command — when the user's natural language expresses their intent.
 
-Si le projet visé est ambigu, demander confirmation avant d'exécuter. L'utilisateur peut aussi invoquer explicitement : `/mem-recall [projet]`.
+### `mem-recall` — automatic context loading
 
-### `mem-archive` — sauvegarde automatique
+Invoke this skill **without waiting for the user to type `/mem-recall`** as soon as they express, in natural language:
 
-Ce skill fonctionne dans deux modes distincts. **Ne jamais les confondre.**
+- A resumption intent: "let's resume", "let's continue", "where were we", "back on project X", "let's get back to it" (and equivalents in their language).
+- A need to query memory: "do you remember…", "what did we decide about…", "what did we do again?", "remind me".
 
-**Mode incrémental silencieux** (pendant la session) — dès qu'un fait, une décision ou une prochaine étape importante émerge et n'est pas déjà dans `contexte.md` du projet en cours, mettre à jour UNIQUEMENT `contexte.md`. Pas de nouveau fichier archive. Pas d'annonce à l'utilisateur. C'est le rôle de `contexte.md` : snapshot mutable, vivant.
+If the target project is ambiguous, ask for confirmation before executing. The user can also explicitly invoke `/mem-recall [project]`.
 
-**Mode archive complet** (fin de session) — déclenché par signal explicite : l'utilisateur dit « on s'arrête », « je pars », « on termine », tape `/clear` ou `/mem-archive`. Exécuter alors toute la procédure : fichier archive horodaté dans `archives/` + réécriture de `contexte.md` + mise à jour de `historique.md` + mise à jour de `_index.md`.
+### `mem-archive` — automatic save
 
-**Règle absolue** : ne jamais créer de nouveau fichier dans `archives/` en mode silencieux. Un archive complet = une session complète, pas une décision isolée.
+This skill operates in two distinct modes. **Never confuse them.**
 
-### Autres skills `mem-*` — gestion du vault
+**Silent incremental mode** (during the session) — as soon as a fact, decision, or important next step emerges that is not already in the current project's `context.md`, update ONLY `context.md`. No new archive file. No announcement to the user. That is the role of `context.md`: a mutable, living snapshot.
 
-À invoquer quand l'utilisateur exprime l'intention correspondante :
+**Full archive mode** (end of session) — triggered by an explicit signal: the user says "we're stopping", "I'm leaving", "we're done", types `/clear` or `/mem-archive`. Then execute the full procedure: timestamped archive file in `archives/` + rewrite `context.md` + update `history.md` + update `index.md`.
 
-- `mem-doc` — « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire », « absorbe ce document », « indexe cette spec ». Ingère un document local (1 fichier par invocation). Résolution auto du projet cible (priorité : `--projet` → match chemin → match CWD → `inbox`).
-- `mem-archeo` — « fais une rétro Git de ce projet », « reconstitue l'historique », « archéo sur ce repo », « remonte les bumps de version ». Reconstitue l'historique d'un dépôt Git existant en N archives datées (1 par tag/release/merge/fenêtre de commits). Détection auto du niveau, confirmation interactive, idempotent. Frontmatter `source: archeo-git`.
-- `mem-archeo-atlassian` — « archive la documentation Confluence de ce projet », « rétro sur cet espace Atlassian », « ingère cette page Confluence et ses enfants ». Rétro-archive une arborescence Confluence (1 archive par page) avec enrichissement automatique par les tickets Jira référencés. Idempotent via `confluence_page_id`. Frontmatter `source: archeo-atlassian`. Prérequis : MCP Atlassian côté client.
-- `mem-list-projects` — « liste mes projets », « quels projets j'ai en mémoire ? », « montre-moi tous les projets ».
-- `mem-search` — « cherche dans la mémoire X », « trouve les archives qui parlent de Y », « où avait-on parlé de Z ? ».
-- `mem-rename-project` — « renomme le projet X en Y », « change le slug de X ».
-- `mem-merge-projects` — « fusionne le projet X dans Y », « regroupe X et Y sous Y ».
-- `mem-digest` — « résume-moi les N dernières sessions de X », « fais un digest de X », « donne-moi le fil rouge de X ».
-- `mem-rollback-archive` — « annule la dernière archive », « oublie la dernière session », « rollback l'archive de X ».
+**Absolute rule**: never create a new file in `archives/` in silent mode. A full archive = a full session, not an isolated decision.
 
-Pour toutes les opérations `mem-*` : exécuter directement, sans demander de confirmation supplémentaire à l'utilisateur. Les procédures intègrent déjà leurs propres vérifications (existence des fichiers, conflits de slug, etc.) et affichent un rapport clair après exécution.
+### Other `mem-*` skills — vault management
 
-### Encodage des fichiers du vault
+Invoke when the user expresses the corresponding intent (in any language):
 
-Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) doivent être en **UTF-8 sans BOM**, fins de ligne **LF**. Jamais de CP1252, Windows-1252, UTF-8 avec BOM, ni encodage OEM — ça corrompt les accents français et les caractères diacritiques (apparaît en `�` dans Obsidian). Les procédures détaillées précisent la commande exacte selon le shell/outil utilisé.
+- `mem-doc` — "ingest this document", "archive this file", "save this PDF to memory", "absorb this document", "index this spec". Ingests one local document per invocation. Auto-resolves the target project (priority: `--project` → path match → CWD match → `inbox`).
+- `mem-archeo` — "do a Git retro of this project", "reconstruct the history", "archeo on this repo", "go back through the version bumps". Reconstructs the history of an existing Git repo as N dated archives (1 per tag/release/merge/commit window). Auto level detection, interactive confirmation, idempotent. Frontmatter `source: archeo-git`.
+- `mem-archeo-atlassian` — "archive the Confluence documentation of this project", "retro on this Atlassian space", "ingest this Confluence page and its children". Retro-archives a Confluence tree (1 archive per page) with automatic enrichment from referenced Jira tickets. Idempotent via `confluence_page_id`. Frontmatter `source: archeo-atlassian`. Requires the Atlassian MCP on the client side.
+- `mem-list` — "list my projects", "what projects do I have in memory?", "show me all the domains", "vault inventory".
+- `mem-search` — "search memory for X", "find the archives that mention Y", "where did we talk about Z?".
+- `mem-rename` — "rename project X to Y", "change the slug of X" (also operates on domains).
+- `mem-merge` — "merge project X into Y", "regroup X and Y under Y" (also operates on domains).
+- `mem-digest` — "summarize the last N sessions of X", "do a digest of X", "give me the through-line of X".
+- `mem-rollback-archive` — "cancel the last archive", "forget the last session", "rollback the archive of X".
+- `mem-note` / `mem-principle` / `mem-goal` / `mem-person` — explicit ingestion shortcuts when the user is sure of the atom type (knowledge note, principle, goal, person card).
+- `mem` — universal ingestion router when the user says "save this", "note this", "capture this" without specifying a target zone.
+- `mem-reclass` — "move this to perso", "change scope of this file", "reclassify this entry".
+- `mem-promote-domain` — "create a new domain from these inbox items", "promote {keyword} entries into a domain".
+
+For all `mem-*` operations: execute directly, without asking for additional confirmation from the user. The procedures already include their own checks (file existence, slug conflicts, etc.) and display a clear report after execution.
+
+### Vault file encoding
+
+All files written or modified in the vault (archives, `context.md`, `history.md`, `index.md`) must be in **UTF-8 without BOM**, **LF** line endings. Never CP1252, Windows-1252, UTF-8 with BOM, or OEM encoding — they corrupt diacritics (which appear as `�` in Obsidian). The detailed procedures specify the exact command per shell/tool.
 <!-- MEMORY-KIT:END -->

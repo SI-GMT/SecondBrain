@@ -1,87 +1,87 @@
-# Procédure : Merge (v0.5 brain-centric)
+# Procedure: Merge (v0.5 brain-centric)
 
-Objectif : fusionner deux projets OU deux domaines du vault mémoire. Réattribue les archives, principes, objectifs, personnes liés à la source vers la cible. Retire la source de l'index.
+Goal: merge two projects OR two domains in the memory vault. Reassigns archives, principles, goals, people linked to the source over to the target. Removes the source from the index.
 
-Renommé depuis `mem-merge-projects` en v0.5. **Restriction** : on ne peut pas mélanger projet ↔ domaine (la nature est différente : un projet a une fin, un domaine non). Pour transformer un projet en domaine, utiliser `mem-promote-domain`.
+Renamed from `mem-merge-projects` in v0.5. **Restriction**: you cannot mix project ↔ domain (their nature differs: a project ends, a domain does not). To turn a project into a domain, use `mem-promote-domain`.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-merge {source} {cible}` ou exprime l'intention en langage naturel : « fusionne le projet X dans Y », « regroupe les domaines X et Y sous Y ».
+The user types `/mem-merge {source} {target}` or expresses intent in natural language: "merge project X into Y", "group domains X and Y under Y".
 
-Arguments :
-- `{source}` (**obligatoire**) : slug à fusionner (sera supprimé après merge).
-- `{cible}` (**obligatoire**) : slug qui absorbe (conservé).
-- `--dry-run` : affiche le plan sans appliquer.
-- `--no-confirm` : applique sans confirmation.
+Arguments:
+- `{source}` (**required**): slug to merge (will be removed after merge).
+- `{target}` (**required**): slug that absorbs (kept).
+- `--dry-run`: shows the plan without applying.
+- `--no-confirm`: applies without confirmation.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Identifier kind des deux slugs
+### 1. Identify the kind of both slugs
 
-Chercher chacun dans `projets/` puis `domaines/`. Vérifier qu'ils ont **le même kind** (les deux projets, ou les deux domaines). Sinon, arrêter avec message clair.
+Search each in `projects/` then `domains/`. Verify they share **the same kind** (both projects, or both domains). Otherwise, stop with a clear message.
 
-### 2. Énumérer les éléments à transférer
+### 2. Enumerate items to transfer
 
-- **Archives** : `{VAULT}/10-episodes/{kind}/{source}/archives/*.md` → cible.
-- **`historique.md` source** : à fusionner en fin de l'`historique.md` cible (ordre chronologique préservé).
-- **`contexte.md` source** : NE PAS écraser le cible. Annexer les sections « Décisions cumulées » et « Prochaines étapes » de source dans cible avec une note `(fusionné depuis {source} le YYYY-MM-DD)`.
-- **Atomes transverses** (40-principes, 50-objectifs, 60-personnes, 20-knowledge) avec tag `projet/{source}` ou `domaine/{source}` : retag vers `projet/{cible}` ou `domaine/{cible}`. Le frontmatter `projet:` / `domaine:` aussi mis à jour.
-- **Liens Obsidian** : `[[{source}]]` → `[[{cible}]]`.
-- **`99-meta/_index.md`** : retirer source, mettre à jour cible.
+- **Archives**: `{VAULT}/10-episodes/{kind}/{source}/archives/*.md` → target.
+- **Source `history.md`**: to be merged at the end of the target `history.md` (chronological order preserved).
+- **Source `context.md`**: DO NOT overwrite the target. Append the source's "Cumulative decisions" and "Next steps" sections into the target with a note `(merged from {source} on YYYY-MM-DD)`.
+- **Cross-cutting atoms** (40-principles, 50-goals, 60-people, 20-knowledge) with tag `project/{source}` or `domain/{source}`: retag to `project/{target}` or `domain/{target}`. The `project:` / `domain:` frontmatter is also updated.
+- **Obsidian links**: `[[{source}]]` → `[[{target}]]`.
+- **`index.md`**: remove source, update target.
 
-### 3. Présenter le plan
+### 3. Present the plan
 
-Format :
+Format:
 
 ```
-## Fusion — {source} → {cible} ({kind})
+## Merge — {source} → {target} ({kind})
 
-À transférer :
-  - {N} archives → {VAULT}/10-episodes/{kind}/{cible}/archives/
-  - {N} entrées historique.md
-  - {N} principes, {N} objectifs, {N} personnes, {N} notes connaissance retaggés
-  - {N} liens Obsidian réécrits
+To transfer:
+  - {N} archives → {VAULT}/10-episodes/{kind}/{target}/archives/
+  - {N} history.md entries
+  - {N} principles, {N} goals, {N} people, {N} knowledge notes retagged
+  - {N} Obsidian links rewritten
 
-À supprimer après merge :
-  - Dossier {VAULT}/10-episodes/{kind}/{source}/
+To delete after merge:
+  - Folder {VAULT}/10-episodes/{kind}/{source}/
 
-contexte.md cible : annexion des sections "Décisions cumulées" et "Prochaines étapes"
+target context.md: appending "Cumulative decisions" and "Next steps" sections
 
-Continuer ? [o/n]
+Continue? [y/n]
 ```
 
-Si `--dry-run` : s'arrêter ici.
+If `--dry-run`: stop here.
 
-### 4. Appliquer (si confirmé ou `--no-confirm`)
+### 4. Apply (if confirmed or `--no-confirm`)
 
 {{INCLUDE _encoding}}
 
 {{INCLUDE _concurrence}}
 
-Étapes :
+Steps:
 
-1. **Déplacer les archives** : `mv {source}/archives/*.md {cible}/archives/`. Si conflit de nom (extrêmement rare avec des horodatages différents), renommer en `{nom}-from-{source}.md`.
-2. **Renommer les fichiers d'archives** qui contiennent `{source}` dans leur nom : `2026-01-15-...-{source}-...md` → `2026-01-15-...-{cible}-...md`.
-3. **Réécrire frontmatters** : remplacer `projet: {source}` → `projet: {cible}` (et `domaine:` idem) dans tous les fichiers transférés et dans tous les atomes transverses.
-4. **Réécrire les tags** : `projet/{source}` → `projet/{cible}` (idem domaine).
-5. **Réécrire les liens Obsidian** : `[[{source}` → `[[{cible}` dans tout le vault.
-6. **Fusionner `historique.md`** : annexer les entrées source en fin de cible (préserver l'ordre chronologique global → resort par date après fusion).
-7. **Annexer `contexte.md`** : ajouter à la fin du `contexte.md` cible une section « ## Fusionné depuis {source} le YYYY-MM-DD » avec les sections clés du source.
-8. **Supprimer le dossier source** : `rm -rf {VAULT}/10-episodes/{kind}/{source}/` après vérification que toutes les archives ont bien été transférées.
-9. **Mettre à jour `99-meta/_index.md`** : retirer entrée source, garder cible.
+1. **Move archives**: `mv {source}/archives/*.md {target}/archives/`. If name conflict (extremely rare with different timestamps), rename to `{name}-from-{source}.md`.
+2. **Rename archive files** containing `{source}` in their name: `2026-01-15-...-{source}-...md` → `2026-01-15-...-{target}-...md`.
+3. **Rewrite frontmatters**: replace `project: {source}` → `project: {target}` (and same for `domain:`) in all transferred files and in all cross-cutting atoms.
+4. **Rewrite tags**: `project/{source}` → `project/{target}` (same for domain).
+5. **Rewrite Obsidian links**: `[[{source}` → `[[{target}` across the whole vault.
+6. **Merge `history.md`**: append source entries at the end of the target (preserve global chronological order → resort by date after merge).
+7. **Append `context.md`**: add to the end of the target `context.md` a section "## Merged from {source} on YYYY-MM-DD" with the source's key sections.
+8. **Delete the source folder**: `rm -rf {VAULT}/10-episodes/{kind}/{source}/` after verifying that all archives have been transferred.
+9. **Update `index.md`**: remove source entry, keep target.
 
-### 5. Confirmer
+### 5. Confirm
 
-Format :
+Format:
 
 ```
-Fusion effectuée : {source} → {cible} ({kind})
-  Archives transférées : {N}
-  Atomes retaggés : {N}
-  Liens réécrits : {N}
-  Dossier source supprimé.
+Merge done: {source} → {target} ({kind})
+  Archives transferred: {N}
+  Atoms retagged: {N}
+  Links rewritten: {N}
+  Source folder removed.
 ```

@@ -1,6 +1,6 @@
 ---
 name: mem-list
-description: Lister projets et domaines du vault avec leur etat synthetique. Renomme depuis mem-list-projects en v0.5 (gere maintenant projets ET domaines). Peut aussi lister le contenu d'une zone via --zone X.
+description: List vault projects and domains with their synthetic state. Renamed from mem-list-projects in v0.5 (now handles BOTH projects and domains). Can also list a zone's contents via --zone X.
 user-invocable: true
 ---
 

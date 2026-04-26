@@ -1,92 +1,92 @@
-# Procédure : Rename (v0.5 brain-centric)
+# Procedure: Rename (v0.5 brain-centric)
 
-Objectif : renommer un projet ou domaine dans le vault. Réécrit le slug **partout** (dossier physique, frontmatter de toutes les archives, tags `projet/{slug}` ou `domaine/{slug}`, liens Obsidian, `_index.md`, `historique.md`).
+Goal: rename a project or domain in the vault. Rewrites the slug **everywhere** (physical folder, frontmatter of all archives, tags `project/{slug}` or `domain/{slug}`, Obsidian links, `index.md`, `history.md`).
 
-Renommé depuis `mem-rename-project` en v0.5 car il opère maintenant sur projets ET domaines.
+Renamed from `mem-rename-project` in v0.5 since it now operates on both projects AND domains.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-rename {ancien} {nouveau}` ou exprime l'intention en langage naturel : « renomme le projet X en Y », « change le slug du domaine X ».
+The user types `/mem-rename {old} {new}` or expresses intent in natural language: "rename project X to Y", "change the slug of domain X".
 
-Arguments :
-- `{ancien}` (**obligatoire**) : slug actuel.
-- `{nouveau}` (**obligatoire**) : nouveau slug.
-- `--dry-run` : affiche le plan sans appliquer.
-- `--no-confirm` : applique sans confirmation.
+Arguments:
+- `{old}` (**required**): current slug.
+- `{new}` (**required**): new slug.
+- `--dry-run`: shows the plan without applying.
+- `--no-confirm`: applies without confirmation.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Identifier kind (projet ou domaine)
+### 1. Identify kind (project or domain)
 
-Chercher `{ancien}` dans :
-- `{VAULT}/10-episodes/projets/{ancien}/` → kind=projet
-- `{VAULT}/10-episodes/domaines/{ancien}/` → kind=domaine
+Search `{old}` in:
+- `{VAULT}/10-episodes/projects/{old}/` → kind=project
+- `{VAULT}/10-episodes/domains/{old}/` → kind=domain
 
-Si introuvable : arrêter avec message clair.
-Si trouvé dans les deux : arrêter, demander explicitation (extrêmement rare, mais à protéger).
+If not found: stop with a clear message.
+If found in both: stop, ask for clarification (extremely rare, but to be guarded against).
 
-### 2. Vérifier conflit avec le nouveau slug
+### 2. Check for conflict with the new slug
 
-Vérifier que `{VAULT}/10-episodes/{kind}/{nouveau}/` n'existe pas déjà. Si conflit, arrêter avec message clair.
+Verify that `{VAULT}/10-episodes/{kind}/{new}/` does not already exist. If conflict, stop with a clear message.
 
-### 3. Énumérer toutes les références à réécrire
+### 3. Enumerate all references to rewrite
 
-- **Dossier projet/domaine** : `{VAULT}/10-episodes/{kind}/{ancien}/` → `{VAULT}/10-episodes/{kind}/{nouveau}/`
-- **Frontmatter `projet:` ou `domaine:`** : tous les fichiers du vault qui ont `projet: {ancien}` ou `domaine: {ancien}`.
-- **Tags `projet/{ancien}` ou `domaine/{ancien}`** : tous les fichiers avec ce tag (transverses : peuvent être en `40-principes/`, `50-objectifs/`, etc.).
-- **Liens Obsidian** : `[[{ancien}]]`, `[[{ancien}/...]]`, `[[archives/...{ancien}...]]`.
-- **`99-meta/_index.md`** : entrée projet/domaine + entrées d'archives.
-- **`historique.md`** : titre + liens.
-- **`contexte.md`** : champ `slug:` du frontmatter.
-- **Sous-dossiers `50-objectifs/pro/projets/{ancien}/`** s'il existe.
+- **Project/domain folder**: `{VAULT}/10-episodes/{kind}/{old}/` → `{VAULT}/10-episodes/{kind}/{new}/`
+- **Frontmatter `project:` or `domain:`**: all vault files that have `project: {old}` or `domain: {old}`.
+- **Tags `project/{old}` or `domain/{old}`**: all files with this tag (cross-cutting: can be in `40-principles/`, `50-goals/`, etc.).
+- **Obsidian links**: `[[{old}]]`, `[[{old}/...]]`, `[[archives/...{old}...]]`.
+- **`index.md`**: project/domain entry + archive entries.
+- **`history.md`**: title + links.
+- **`context.md`**: `slug:` field of the frontmatter.
+- **Sub-folders `50-goals/work/projects/{old}/`** if it exists.
 
-### 4. Présenter le plan
+### 4. Present the plan
 
-Format :
+Format:
 
 ```
-## Renommage — {ancien} → {nouveau} ({kind})
+## Rename — {old} → {new} ({kind})
 
-Fichiers touchés : {N}
-  - Dossier principal : {ancien-chemin} → {nouveau-chemin}
-  - Archives : {N} fichiers (frontmatter + tags)
-  - Atomes transverses (40-principes, 50-objectifs, ...) : {N} fichiers
-  - Liens Obsidian dans le vault : {N} occurrences
-  - Index global : 1 entrée
-  - Historique : 1 fichier
+Files affected: {N}
+  - Main folder: {old-path} → {new-path}
+  - Archives: {N} files (frontmatter + tags)
+  - Cross-cutting atoms (40-principles, 50-goals, ...): {N} files
+  - Obsidian links in the vault: {N} occurrences
+  - Global index: 1 entry
+  - History: 1 file
 
-Continuer ? [o/n]
+Continue? [y/n]
 ```
 
-Si `--dry-run` : s'arrêter ici.
+If `--dry-run`: stop here.
 
-### 5. Appliquer (si confirmé ou `--no-confirm`)
+### 5. Apply (if confirmed or `--no-confirm`)
 
 {{INCLUDE _encoding}}
 
 {{INCLUDE _concurrence}}
 
-Étapes (ordre important) :
+Steps (order matters):
 
-1. **Renommer le dossier** : `mv {VAULT}/10-episodes/{kind}/{ancien}/ {VAULT}/10-episodes/{kind}/{nouveau}/`
-2. **Renommer les fichiers d'archives** dans `{nouveau}/archives/` qui contiennent `{ancien}` dans leur nom : `2026-01-15-...-{ancien}-...md` → `2026-01-15-...-{nouveau}-...md`
-3. **Réécrire les frontmatters et tags** : pour chaque fichier touché, regex remplace `projet: {ancien}` → `projet: {nouveau}`, `domaine: {ancien}` → `domaine: {nouveau}`, `projet/{ancien}` → `projet/{nouveau}`, `domaine/{ancien}` → `domaine/{nouveau}`. Pattern 1+2 sur chaque écriture.
-4. **Réécrire les liens Obsidian** dans tout le vault : grep + remplace `[[{ancien}` → `[[{nouveau}` (préfixe, attention aux faux positifs sur les noms d'archives).
-5. **Mettre à jour `99-meta/_index.md`** : entrée projet/domaine + entrées d'archives.
-6. **Mettre à jour `50-objectifs/pro/projets/`** si concerné.
+1. **Rename the folder**: `mv {VAULT}/10-episodes/{kind}/{old}/ {VAULT}/10-episodes/{kind}/{new}/`
+2. **Rename archive files** in `{new}/archives/` that contain `{old}` in their name: `2026-01-15-...-{old}-...md` → `2026-01-15-...-{new}-...md`
+3. **Rewrite frontmatters and tags**: for each affected file, regex replace `project: {old}` → `project: {new}`, `domain: {old}` → `domain: {new}`, `project/{old}` → `project/{new}`, `domain/{old}` → `domain/{new}`. Pattern 1+2 on every write.
+4. **Rewrite Obsidian links** across the whole vault: grep + replace `[[{old}` → `[[{new}` (prefix, beware of false positives in archive names).
+5. **Update `index.md`**: project/domain entry + archive entries.
+6. **Update `50-goals/work/projects/`** if affected.
 
-### 6. Confirmer
+### 6. Confirm
 
-Format :
+Format:
 
 ```
-Renommage effectué : {ancien} → {nouveau} ({kind})
-{N} fichiers modifiés
-{N} liens réécrits
+Rename done: {old} → {new} ({kind})
+{N} files modified
+{N} links rewritten
 
-Vérifie le résultat dans Obsidian (Graph + arborescence).
+Check the result in Obsidian (Graph + tree).
 ```

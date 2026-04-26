@@ -1,6 +1,6 @@
 ---
 name: mem-goal
-description: Ingerer un objectif (intention future, etat desire, but) dans 50-objectifs/. Shortcut explicite. Detecte horizon (court/moyen/long) depuis l'echeance.
+description: Ingest a goal (future intention, desired state, aim) into 50-goals/. Explicit shortcut. Detects horizon (short/medium/long) from the deadline.
 ---
 
 {{PROCEDURE}}

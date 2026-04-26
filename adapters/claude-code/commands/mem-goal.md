@@ -1,5 +1,5 @@
-Ingerer un objectif (intention future, etat desire, but) dans 50-objectifs/.
+Ingest a goal (future intention, desired state, aim) into 50-goals/.
 
-Contenu de l'objectif. Options : --scope perso|pro, --horizon court|moyen|long, --echeance YYYY-MM-DD, --projet {slug}, --no-confirm, --dry-run.
+Goal content. Options: --scope personal|work, --horizon short|medium|long, --deadline YYYY-MM-DD, --project {slug}, --no-confirm, --dry-run.
 
 $ARGUMENTS

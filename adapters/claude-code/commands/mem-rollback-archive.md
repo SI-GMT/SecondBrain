@@ -1,5 +1,5 @@
-Annuler la dernière archive via le skill `mem-rollback-archive`.
+Cancel the last archive of a project (or of the global vault if no project specified).
 
-Argument optionnel : slug du projet concerné. Si absent, cible l'archive la plus récente du vault global.
+Optional: project slug. If omitted, rolls back the most recent archive globally. Options: --with-derived (also remove derived atoms), --dry-run, --no-confirm.
 
 $ARGUMENTS

@@ -1,5 +1,5 @@
 ---
-description: Ingerer une fiche personne (collegue, client, ami, famille) dans 60-personnes/. Shortcut explicite. Toujours sensitive=true par defaut (interdit la promotion vers CollectiveBrain).
+description: Ingest a person card (colleague, client, friend, family) into 60-people/. Explicit shortcut. Always sensitive=true by default (forbids promotion to CollectiveBrain).
 ---
 
 {{PROCEDURE}}

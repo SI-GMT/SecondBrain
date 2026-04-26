@@ -1,5 +1,5 @@
-Lister projets et domaines du vault avec leur etat synthetique.
+List vault projects and domains with their synthetic state.
 
-Aucun argument requis. Options : --kind projet|domaine|all, --scope perso|pro|all, --zone X, --detail.
+No required argument. Options: --kind project|domain|all, --scope personal|work|all, --zone X, --detail.
 
 $ARGUMENTS

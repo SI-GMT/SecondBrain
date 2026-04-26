@@ -1,30 +1,30 @@
-## Frontmatter universel (toutes zones hors inbox/meta)
+## Universal frontmatter (all zones except inbox/meta)
 
-Tout fichier du vault hors `00-inbox/` et `99-meta/` porte les **6 champs universels** suivants. Les autres champs sont propres à chaque zone (cf. spec section 7 du document de cadrage).
+Every file in the vault outside `00-inbox/` and `99-meta/` carries the **6 universal fields** below. Other fields are specific to each zone (see spec section 7 of the cadrage document).
 
-| Champ | Type | Obligatoire | Description |
+| Field | Type | Required | Description |
 |---|---|---|---|
-| `date` | `YYYY-MM-DD` | ✅ | Date de création du fichier. Mise à jour tolérée sur `contexte.md` et notes longues. |
-| `zone` | enum | ✅ | `inbox`, `episodes`, `knowledge`, `procedures`, `principes`, `objectifs`, `personnes`, `cognition`, `meta`. |
-| `scope` | enum | ✅ | `perso` ou `pro`. |
-| `collectif` | bool | ✅ (défaut `false`) | Flag de promotion vers CollectiveBrain. Non lu par SecondBrain v0.5.0. |
-| `modality` | enum | ✅ | `left` ou `right`. Défaut `left`. `right` pour schémas, Excalidraw, métaphores, moodboards. |
-| `tags` | liste | ✅ | Tags Obsidian. Doivent **redonder les champs frontmatter** pour permettre la vue graphique (Obsidian indexe les tags, pas les champs). |
+| `date` | `YYYY-MM-DD` | yes | File creation date. Updates tolerated on `context.md` and long notes. |
+| `zone` | enum | yes | `inbox`, `episodes`, `knowledge`, `procedures`, `principles`, `goals`, `people`, `cognition`, `meta`. |
+| `scope` | enum | yes | `personal` or `work`. |
+| `collective` | bool | yes (default `false`) | Promotion flag toward CollectiveBrain. Not read by SecondBrain v0.5.0. |
+| `modality` | enum | yes | `left` or `right`. Default `left`. `right` for schemas, Excalidraw, metaphors, moodboards. |
+| `tags` | list | yes | Obsidian tags. Must **redundantly mirror the frontmatter fields** to enable the graph view (Obsidian indexes tags, not fields). |
 
-### Invariants à vérifier à l'écriture
+### Invariants to check at write time
 
-Le router et `mem-reclass` enforce les invariants cross-champs ci-dessous. Toute violation est bloquée à l'écriture et signalée à l'utilisateur :
+The router and `mem-reclass` enforce the cross-field invariants below. Any violation is blocked at write time and reported to the user:
 
-1. **Scope perso ⇒ collectif false.** Toujours. `collectif: true` sur `scope: perso` = erreur bloquante.
-2. **Sensitive true ⇒ collectif false.** Si le frontmatter porte `sensitive: true` (par défaut sur les fiches `60-personnes/`), `collectif: true` est interdit.
-3. **Zone episodes ⇒ `kind` présent.** Jamais d'archive sans `kind: projet` ou `kind: domaine`.
-4. **Kind projet ⇒ `projet: {slug}` présent et slug existant** dans `10-episodes/projets/`. Idem pour `kind: domaine` et `domaine: {slug}` dans `10-episodes/domaines/`.
-5. **Tags reflètent frontmatter.** `zone: episodes` ⇒ tag `zone/episodes` obligatoire, et inversement. Idem pour `scope/*`, `kind/*`, `modality/*`.
-6. **Modality absent ⇒ défaut `left`.** Appliqué silencieusement à l'écriture.
-7. **Date obligatoire hors inbox/meta + contexte.md/historique.md.** Les contextes et historiques sont mutables, non datés.
+1. **Scope personal => collectif false.** Always. `collective: true` on `scope: personal` = blocking error.
+2. **Sensitive true => collectif false.** If the frontmatter carries `sensitive: true` (default on `60-people/` cards), `collective: true` is forbidden.
+3. **Zone episodes => `kind` present.** Never an archive without `kind: project` or `kind: domain`.
+4. **Kind project => `project: {slug}` present and slug exists** in `10-episodes/projects/`. Same for `kind: domain` and `domain: {slug}` in `10-episodes/domains/`.
+5. **Tags reflect frontmatter.** `zone: episodes` => tag `zone/episodes` mandatory, and conversely. Same for `scope/*`, `kind/*`, `modality/*`.
+6. **Modality absent => default `left`.** Applied silently at write time.
+7. **Date mandatory outside inbox/meta + context.md/history.md.** Contexts and histories are mutable, undated.
 
-### Cas particuliers
+### Special cases
 
-- **`00-inbox/`** : aucun champ obligatoire hormis `zone: inbox` et `tags: [zone/inbox]`. Les autres champs (scope, modality, etc.) sont fixés au moment du reclassement par `mem-reclass`.
-- **`99-meta/`** : pas de `scope`, `collectif`, `modality` (méta neutre, transverse). Frontmatter minimal : `date`, `zone: meta`, `type` (parmi `index|doctrine|taxonomie|regle`), `tags`.
-- **`contexte.md` et `historique.md`** : pas de `date` (fichiers mutables). Héritent du scope du projet/domaine déclaré une seule fois dans `contexte.md`.
+- **`00-inbox/`**: no required field except `zone: inbox` and `tags: [zone/inbox]`. Other fields (scope, modality, etc.) are set at the moment of reclassification by `mem-reclass`.
+- **`99-meta/`**: no `scope`, `collective`, `modality` (meta is neutral, transverse). Minimal frontmatter: `date`, `zone: meta`, `type` (among `index|doctrine|taxonomy|rule`), `tags`.
+- **`context.md` and `history.md`**: no `date` (mutable files). Inherit the scope of the project/domain declared once in `context.md`.

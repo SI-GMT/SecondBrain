@@ -1,103 +1,103 @@
-# Procédure : Digest (v0.5 brain-centric)
+# Procedure: Digest (v0.5 brain-centric)
 
-Objectif : synthèse des N dernières archives d'un projet OU domaine, ou agrégation par zone (objectifs, principes, etc.). Utile pour voir les arcs majeurs sans relire chaque archive. **Lecture seule** — n'écrit rien dans le vault.
+Goal: synthesis of the last N archives of a project OR domain, or aggregation by zone (goals, principles, etc.). Useful for seeing the major arcs without re-reading every archive. **Read-only** — writes nothing in the vault.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-digest {slug} [N]` ou exprime l'intention en langage naturel : « résume-moi les N dernières sessions de X », « fais un digest de X », « donne-moi le fil rouge de X », « état des lieux des objectifs ouverts ».
+The user types `/mem-digest {slug} [N]` or expresses the intent in natural language: "summarize the last N sessions of X", "do a digest of X", "give me the through-line of X", "status of open goals".
 
-Options reconnues :
-- `{slug}` : slug du projet ou domaine. Obligatoire si pas de `--zone`.
-- `{N}` : nombre d'archives à synthétiser. Défaut `5`.
-- `--zone X` : digest sur une zone entière au lieu d'un projet. Ex : `--zone objectifs --scope pro` = état des lieux des objectifs pro.
-- `--scope perso|pro|all` : filtre par scope.
-- `--depuis YYYY-MM-DD` : ne considère que les archives postérieures.
+Recognized options:
+- `{slug}`: slug of the project or domain. Required if no `--zone`.
+- `{N}`: number of archives to synthesize. Default `5`.
+- `--zone X`: digest on a whole zone instead of a project. E.g., `--zone goals --scope work` = status of work goals.
+- `--scope personal|work|all`: filters by scope.
+- `--since YYYY-MM-DD`: only consider archives after this date.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire le champ `vault`. Dans la suite, `{VAULT}` désigne cette valeur.
+Read {{CONFIG_FILE}} and extract the `vault` field. In what follows, `{VAULT}` denotes this value.
 
-Si le fichier est absent ou illisible, répondre :
-> Kit mémoire non configuré. Fichier attendu : {{CONFIG_FILE}}. Exécute `deploy.ps1` depuis la racine du kit.
+If the file is absent or unreadable, reply:
+> Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
 
-Puis s'arrêter.
+Then stop.
 
-## Procédure — mode projet/domaine (par défaut)
+## Procedure — project/domain mode (default)
 
-### 1. Récupérer les arguments
+### 1. Retrieve the arguments
 
-- `{slug}` : slug du projet ou domaine. Obligatoire. Si absent, demander à l'utilisateur via `/mem-list`.
-- `{N}` : défaut 5.
+- `{slug}`: slug of the project or domain. Required. If absent, ask the user via `/mem-list`.
+- `{N}`: default 5.
 
-### 2. Identifier kind (projet ou domaine)
+### 2. Identify kind (project or domain)
 
-Chercher d'abord dans `{VAULT}/10-episodes/projets/{slug}/`, puis dans `{VAULT}/10-episodes/domaines/{slug}/`. Si introuvable, répondre « Slug `{slug}` introuvable. Utilise `/mem-list` pour voir les disponibles. » et s'arrêter.
+First search in `{VAULT}/10-episodes/projects/{slug}/`, then in `{VAULT}/10-episodes/domains/{slug}/`. If not found, reply "Slug `{slug}` not found. Use `/mem-list` to see what's available." and stop.
 
-### 3. Charger l'historique
+### 3. Load the history
 
-Lire `{VAULT}/10-episodes/{kind}/{slug}/historique.md`. Extraire les N dernières lignes d'archive (trier par date décroissante).
+Read `{VAULT}/10-episodes/{kind}/{slug}/history.md`. Extract the last N archive lines (sort by date descending).
 
-### 4. Lire les archives sélectionnées
+### 4. Read the selected archives
 
-Pour chaque archive : lire le contenu et extraire **Résumé**, **Décisions**, **Prochaines étapes**. Ignorer **Travail effectué** et **Fichiers modifiés** (trop bas niveau pour un digest).
+For each archive: read the content and extract **Summary**, **Decisions**, **Next steps**. Ignore **Work performed** and **Modified files** (too low-level for a digest).
 
-### 5. Charger les atomes dérivés (nouveau v0.5)
+### 5. Load derived atoms (new in v0.5)
 
-Pour chaque archive sélectionnée, suivre le champ `derived_atoms` du frontmatter. Lister les principes, objectifs, connaissances dérivés des archives — ils enrichissent la synthèse.
+For each selected archive, follow the `derived_atoms` field of the frontmatter. List the principles, goals, knowledge derived from the archives — they enrich the synthesis.
 
-### 6. Synthétiser
+### 6. Synthesize
 
-Produire une synthèse structurée :
+Produce a structured synthesis:
 
-- **Arcs majeurs** : grandes transitions (nouvelle phase, pivot, livraison) à travers les résumés successifs.
-- **Décisions structurantes** : décisions ayant eu des conséquences sur plusieurs sessions.
-- **Atomes dérivés** : nouveaux principes / objectifs / concepts dégagés sur la période.
-- **Dérive des prochaines étapes** : ce qui a été fait vs ce qui a été abandonné/décalé.
-- **État final** : synthèse de où on en est maintenant.
+- **Major arcs**: large transitions (new phase, pivot, delivery) across successive summaries.
+- **Structuring decisions**: decisions that had consequences over multiple sessions.
+- **Derived atoms**: new principles / goals / concepts identified over the period.
+- **Drift of next steps**: what was done vs what was abandoned/postponed.
+- **Final state**: synthesis of where we stand now.
 
-### 7. Afficher le rapport
+### 7. Display the report
 
-Format :
+Format:
 
 ```
-## Digest — {slug} ({kind}) — {N} dernières sessions
+## Digest — {slug} ({kind}) — last {N} sessions
 
-Période : {date début} → {date fin}
+Period: {start date} → {end date}
 
-### Arcs majeurs
+### Major arcs
 - ...
 
-### Décisions structurantes
+### Structuring decisions
 - ...
 
-### Atomes dérivés ({N})
-- [{type}] {titre} → [[lien]]
+### Derived atoms ({N})
+- [{type}] {title} → [[link]]
 
-### Évolution des prochaines étapes
-- Annoncées : ...
-- Faites : ...
-- Décalées / abandonnées : ...
+### Evolution of next steps
+- Announced: ...
+- Done: ...
+- Postponed / abandoned: ...
 
-### État final
-{snapshot synthétique}
+### Final state
+{synthetic snapshot}
 ```
 
-## Procédure — mode zone (`--zone X`)
+## Procedure — zone mode (`--zone X`)
 
-### 1. Lister les fichiers de la zone
+### 1. List the files of the zone
 
-Énumérer récursivement `{VAULT}/{NN-zone}/`. Filtrer par scope si applicable.
+Recursively enumerate `{VAULT}/{NN-zone}/`. Filter by scope if applicable.
 
-### 2. Synthétiser
+### 2. Synthesize
 
-Selon la zone :
-- **principes** : grouper par `force` (ligne-rouge / heuristique / preference) puis par catégorie. Compter par groupe. Lister les principes les plus récents.
-- **objectifs** : grouper par `statut` (ouvert / en-cours / atteint / abandonne). Compter par groupe. Pour les ouverts/en-cours, trier par échéance.
-- **personnes** : grouper par catégorie (collègues / clients / famille / amis). Lister les personnes avec interaction récente (< 30 jours).
-- **knowledge** : grouper par famille (metier / tech / vie / methodes). Compter par groupe.
-- **procedures** : grouper par catégorie. Lister les plus récentes.
-- **autres** : liste plate, triée par date décroissante.
+Depending on the zone:
+- **principles**: group by `force` (red-line / heuristic / preference) then by category. Count per group. List the most recent principles.
+- **goals**: group by `status` (open / in-progress / achieved / abandoned). Count per group. For open/in-progress, sort by deadline.
+- **people**: group by category (colleagues / clients / family / friends). List people with recent interaction (< 30 days).
+- **knowledge**: group by family (business / tech / life / methods). Count per group.
+- **procedures**: group by category. List the most recent.
+- **other**: flat list, sorted by date descending.
 
-### 3. Afficher
+### 3. Display
 
-Format adapté à la zone, toujours commencer par un compteur global et les groupements.
+Format adapted to the zone, always start with a global counter and the groupings.

@@ -1,143 +1,143 @@
-# Procédure : Archive (v0.5 brain-centric)
+# Procedure: Archive (v0.5 brain-centric)
 
-Objectif : archiver la session de travail en cours afin de permettre à l'utilisateur de faire `/clear` sans perdre le contexte. L'archive doit contenir tout ce qu'il faut pour reprendre dans une session future.
+Goal: archive the current work session so the user can `/clear` without losing context. The archive must contain everything needed to resume in a future session.
 
-En v0.5, `mem-archive` délègue au **router sémantique** avec hint de zone forcée `episodes` + source `vecu`. Le router peut segmenter en plusieurs atomes (typiquement : 1 archive principale + N atomes dérivés en `40-principes`, `50-objectifs`, `20-knowledge` selon ce que la session a produit).
+In v0.5, `mem-archive` delegates to the **semantic router** with forced-zone hint `episodes` + source `lived`. The router may segment into multiple atoms (typically: 1 main archive + N derived atoms in `40-principles`, `50-goals`, `20-knowledge` depending on what the session produced).
 
-## Deux modes
+## Two modes
 
-### Mode incrémental silencieux (pendant la session)
+### Silent incremental mode (during the session)
 
-À tout moment, dès qu'un fait ou une décision important émerge et n'est pas encore présent dans le `contexte.md` cible :
+At any moment, as soon as an important fact or decision emerges and is not already present in the target `context.md`:
 
-- Mettre à jour **uniquement** `contexte.md` du projet/domaine courant — ajouter la ligne dans la section appropriée (Décisions cumulées, Prochaines étapes, Assets actifs).
-- **Ne pas** créer de fichier archive. **Ne pas** annoncer l'action à l'utilisateur sauf s'il le demande.
-- Justification : `contexte.md` est un snapshot mutable, conçu pour évoluer en continu ; les `archives/` sont réservées aux instantanés de fin de session.
+- Update **only** the `context.md` of the current project/domain — add the line in the appropriate section (Cumulative decisions, Next steps, Active assets).
+- **Do not** create an archive file. **Do not** announce the action to the user unless asked.
+- Rationale: `context.md` is a mutable snapshot, designed to evolve continuously; `archives/` is reserved for end-of-session snapshots.
 
-### Mode archive complet (fin de session)
+### Full archive mode (end of session)
 
-Déclenché par signal explicite :
-- L'utilisateur tape `/mem-archive` ou `/clear`.
-- L'utilisateur dit en langage naturel « on s'arrête », « je pars », « on termine », « archive ».
+Triggered by an explicit signal:
+- The user types `/mem-archive` or `/clear`.
+- The user says in natural language "we're stopping", "I'm leaving", "we're done", "archive".
 
-Exécuter alors la procédure complète ci-dessous.
+Then run the full procedure below.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Avant toute écriture, lire le fichier de configuration du kit mémoire ({{CONFIG_FILE}}) et en extraire le champ `vault`. Dans la suite, `{VAULT}` désigne cette valeur. Lire aussi `default_scope` pour la valeur par défaut du scope.
+Before any write, read the memory kit configuration file ({{CONFIG_FILE}}) and extract the `vault` field. In what follows, `{VAULT}` denotes this value. Also read `default_scope` for the default scope value.
 
-Si le fichier est absent ou illisible, répondre :
-> Kit mémoire non configuré. Fichier attendu : {{CONFIG_FILE}}. Exécute `deploy.ps1` depuis la racine du kit.
+If the file is absent or unreadable, reply:
+> Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
 
-Puis s'arrêter.
+Then stop.
 
-## Détection du projet/domaine cible
+## Detection of the target project/domain
 
-Pour déterminer où archiver, identifier le projet OU domaine :
+To determine where to archive, identify the project OR domain:
 
-1. Si l'utilisateur a fourni `--projet {slug}` ou `--domaine {slug}` → utiliser.
-2. Sinon, basename du `cwd` → matcher contre `{VAULT}/10-episodes/projets/` puis `{VAULT}/10-episodes/domaines/`.
-3. Si pas de match, demander à l'utilisateur : « Sur quel projet/domaine archiver cette session ? » + liste via `/mem-list`.
-4. Si réponse = nouveau slug, le créer (créer `{VAULT}/10-episodes/projets/{slug}/` avec `contexte.md` + `historique.md` squelettes).
+1. If the user provided `--project {slug}` or `--domain {slug}` → use it.
+2. Otherwise, basename of the `cwd` → match against `{VAULT}/10-episodes/projects/` then `{VAULT}/10-episodes/domains/`.
+3. If no match, ask the user: "On which project/domain should I archive this session?" + list via `/mem-list`.
+4. If reply = new slug, create it (create `{VAULT}/10-episodes/projects/{slug}/` with `context.md` + `history.md` skeletons).
 
-Détecter aussi la branche Git courante :
-- Mainlines (`main`, `master`, `recette`, `dev`, `hotfix/*`, `release/*`) → archive au niveau projet global.
-- Autres branches → archive en feature : `{VAULT}/10-episodes/projets/{slug}/features/{branche-san}/archives/`. Sanitisation `/` → `--`.
+Also detect the current Git branch:
+- Mainlines (`main`, `master`, `recette`, `dev`, `hotfix/*`, `release/*`) → archive at the global project level.
+- Other branches → archive in feature: `{VAULT}/10-episodes/projects/{slug}/features/{branch-san}/archives/`. Sanitization `/` → `--`.
 
-## Procédure (mode complet)
+## Procedure (full mode)
 
-### 1. Collecter le contexte de session
+### 1. Collect the session context
 
-Synthétiser depuis la conversation en cours :
+Synthesize from the ongoing conversation:
 
-- Projet/domaine concerné (résolu ci-dessus).
-- Travail effectué (livrables, fichiers créés/modifiés).
-- Décisions prises et leur justification.
-- État actuel : phase, validé, en cours.
-- Prochaines étapes prévues.
-- Fichiers modifiés avec chemins complets.
-- Assets générés (URLs ou « Aucun »).
-- **Atomes dérivés à extraire** : si la session a fait émerger des principes, objectifs, ou connaissances stables, les identifier pour que le router puisse les ranger dans leurs zones dédiées.
+- Project/domain involved (resolved above).
+- Work performed (deliverables, files created/modified).
+- Decisions made and their rationale.
+- Current state: phase, validated, in progress.
+- Planned next steps.
+- Modified files with full paths.
+- Generated assets (URLs or "None").
+- **Derived atoms to extract**: if the session brought out stable principles, goals, or knowledge, identify them so the router can place them in their dedicated zones.
 
-### 2. Construire le contenu pour le router
+### 2. Build the content for the router
 
-Préparer un Markdown structuré qui contient :
+Prepare a structured Markdown that contains:
 
-- Une **section principale** (titre `# Session ...`) qui sera l'archive de session vécue (zone episodes).
-- Des **sections dérivées** (titres `## Principe : ...`, `## Objectif : ...`, `## Concept : ...`) optionnelles, une par atome dérivé identifié.
+- A **main section** (heading `# Session ...`) which will be the lived session archive (episodes zone).
+- Optional **derived sections** (headings `## Principle: ...`, `## Goal: ...`, `## Concept: ...`), one per identified derived atom.
 
-Cette structure permet au router de segmenter facilement en plusieurs atomes via délimiteurs Markdown.
+This structure lets the router easily segment into multiple atoms via Markdown delimiters.
 
-### 3. Invoquer le router
+### 3. Invoke the router
 
-Appeler le router sémantique avec :
-- `Contenu` : le Markdown structuré.
-- `Hint zone` : `episodes` (force la section principale en zone episodes).
-- `Hint source` : `vecu`.
-- `Métadonnées` : projet/domaine résolu, branche, scope.
+Call the semantic router with:
+- `Content`: the structured Markdown.
+- `Zone hint`: `episodes` (forces the main section into the episodes zone).
+- `Source hint`: `lived`.
+- `Metadata`: resolved project/domain, branch, scope.
 
 {{INCLUDE _router}}
 
-Le router :
-- Écrit l'archive principale dans `{VAULT}/10-episodes/{kind}/{slug}/archives/{YYYY-MM-DD-HHhMM}-{slug}-{sujet}.md`.
-- Pour chaque atome dérivé, classe via la cascade d'heuristiques (les sections `## Principe :` vont en `40-principes`, etc.).
-- Crée les liens bidirectionnels `derived_atoms` ↔ `contexte_origine`.
+The router:
+- Writes the main archive into `{VAULT}/10-episodes/{kind}/{slug}/archives/{YYYY-MM-DD-HHhMM}-{slug}-{subject}.md`.
+- For each derived atom, classifies via the heuristics cascade (`## Principle:` sections go to `40-principles`, etc.).
+- Creates the bidirectional links `derived_atoms` ↔ `context_origin`.
 
-### 4. Réécrire le contexte cible
+### 4. Rewrite the target context
 
-Après l'écriture du router, **toujours** réécrire intégralement `{VAULT}/10-episodes/{kind}/{slug}/contexte.md` pour refléter le snapshot courant.
+After the router writes, **always** rewrite the entire `{VAULT}/10-episodes/{kind}/{slug}/context.md` to reflect the current snapshot.
 
 {{INCLUDE _encoding}}
 
 {{INCLUDE _concurrence}}
 
-Format de `contexte.md` :
+`context.md` format:
 
 ```markdown
 ---
 zone: episodes
-kind: {projet|domaine}
+kind: {project|domain}
 slug: {slug}
-scope: {perso|pro}
-collectif: false
-phase: {phase actuelle}
-derniere-session: YYYY-MM-DD
-tags: [zone/episodes, kind/*, {projet|domaine}/{slug}, scope/*]
+scope: {personal|work}
+collective: false
+phase: {current phase}
+last-session: YYYY-MM-DD
+tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 ---
 
-# {Slug} — Contexte actif
+# {Slug} — Active context
 
-## État courant
-- Phase : {phase}
-- Validé : {éléments terminés}
-- En cours : {éléments en cours}
+## Current state
+- Phase: {phase}
+- Validated: {completed items}
+- In progress: {ongoing items}
 
-## Décisions cumulées
-- {décision} — {raison}
+## Cumulative decisions
+- {decision} — {reason}
 
-## Prochaines étapes
-1. {étape}
+## Next steps
+1. {step}
 
-## Assets actifs (URLs)
-{URLs validées}
+## Active assets (URLs)
+{validated URLs}
 ```
 
-### 5. Mettre à jour l'historique
+### 5. Update the history
 
-Le router a déjà ajouté la ligne d'archive dans `historique.md` (cf. R7.5 du bloc router). Pas d'action supplémentaire ici.
+The router has already added the archive line to `history.md` (see R7.5 of the router block). No additional action here.
 
-### 6. Mettre à jour l'index global
+### 6. Update the global index
 
-Le router a déjà ajouté l'entrée dans `{VAULT}/99-meta/_index.md`. Pas d'action supplémentaire ici.
+The router has already added the entry to `{VAULT}/index.md`. No additional action here.
 
-### 7. Confirmer
+### 7. Confirm
 
-Afficher à l'utilisateur :
+Display to the user:
 
 ```
-Archive créée : {chemin de l'archive principale}
-{N} atome(s) dérivé(s) créé(s) dans : {liste des zones touchées}
-Contexte mis à jour : {chemin contexte.md}
+Archive created: {path of the main archive}
+{N} derived atom(s) created in: {list of touched zones}
+Context updated: {context.md path}
 
-Le /clear est safe — utilise /mem-recall {slug} pour reprendre.
+The /clear is safe — use /mem-recall {slug} to resume.
 ```

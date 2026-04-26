@@ -1,116 +1,116 @@
-# Procédure : Archeo (v0.5 brain-centric)
+# Procedure: Archeo (v0.5 brain-centric)
 
-Objectif : **reconstituer l'historique d'un dépôt Git existant** sous forme d'archives datées, **et d'atomes dérivés** (principes, concepts techniques) extraits de chaque jalon. Permet de démarrer un projet dans le kit mémoire avec un contexte riche reconstruit a posteriori.
+Goal: **reconstruct the history of an existing Git repository** as dated archives, **and derived atoms** (principles, technical concepts) extracted from each milestone. Lets you bootstrap a project in the memory kit with rich context reconstructed after the fact.
 
-En v0.5, `mem-archeo` ne produit plus une archive monolithique par jalon — il segmente via le router, qui peut générer plusieurs atomes répartis dans plusieurs zones (1 archive en `episodes` + N principes en `40-principes` + N concepts en `20-knowledge`).
+In v0.5, `mem-archeo` no longer produces a monolithic archive per milestone — it segments via the router, which can generate several atoms spread across multiple zones (1 archive in `episodes` + N principles in `40-principles` + N concepts in `20-knowledge`).
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-archeo [chemin-du-dépôt]` ou exprime l'intention en langage naturel : « fais une rétro Git de ce projet », « reconstitue l'historique », « archéo sur ce repo ».
+The user types `/mem-archeo [repo-path]` or expresses intent in natural language: "do a Git retro of this project", "reconstruct the history", "archeo on this repo".
 
-Arguments :
-- `{chemin-du-dépôt}` (optionnel, défaut = CWD) : chemin absolu vers un dépôt Git local.
-- `--projet {slug}` : force le projet cible.
-- `--niveau {tags|releases|merges|commits}` : force le niveau de granularité.
-- `--depuis YYYY-MM-DD` / `--jusqu-a YYYY-MM-DD` : bornes temporelles.
-- `--fenetre {jour|semaine|mois}` : taille de regroupement pour niveau `commits`.
-- `--dry-run` : liste les jalons qui seraient ingérés, sans écrire.
-- `--no-confirm` : passe au router en mode fluide même sur multi-atomes.
+Arguments:
+- `{repo-path}` (optional, default = CWD): absolute path to a local Git repository.
+- `--project {slug}`: forces the target project.
+- `--level {tags|releases|merges|commits}`: forces the granularity level.
+- `--since YYYY-MM-DD` / `--until YYYY-MM-DD`: time bounds.
+- `--window {day|week|month}`: grouping size for `commits` level.
+- `--dry-run`: lists the milestones that would be ingested, without writing.
+- `--no-confirm`: passes through to the router in fluent mode even on multi-atoms.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Valider le dépôt source
+### 1. Validate the source repository
 
-- Vérifier que `{chemin-du-dépôt}` est un dépôt Git (`git -C {chemin} rev-parse --git-dir`).
-- Sinon, arrêter avec message clair.
+- Verify that `{repo-path}` is a Git repository (`git -C {path} rev-parse --git-dir`).
+- Otherwise, stop with a clear message.
 
-### 2. Résoudre le projet/domaine cible
+### 2. Resolve the target project/domain
 
-Par priorité :
-1. `--projet {slug}` ou `--domaine {slug}` explicite.
-2. Match du basename du dépôt sur les slugs existants dans `{VAULT}/10-episodes/projets/` puis `domaines/`.
-3. Demander à l'utilisateur (avec `/mem-list` à l'appui).
-4. Si nouveau slug → créer la structure `{VAULT}/10-episodes/projets/{slug}/contexte.md` + `historique.md` + `archives/`.
+By priority:
+1. Explicit `--project {slug}` or `--domain {slug}`.
+2. Match the repo basename against existing slugs in `{VAULT}/10-episodes/projects/` then `domains/`.
+3. Ask the user (with `/mem-list` as support).
+4. If new slug → create the structure `{VAULT}/10-episodes/projects/{slug}/context.md` + `history.md` + `archives/`.
 
-### 3. Détecter le niveau de granularité
+### 3. Detect the granularity level
 
-Si `--niveau` non fourni, choisir automatiquement (premier qui retourne >0) :
+If `--level` not provided, choose automatically (first one returning >0):
 
-1. **Tags semver** (`v*.*.*`) → 1 archive par tag.
-2. **Releases GitHub** (via `gh release list` si dispo) → 1 archive par release.
-3. **Merges sur mainline** (`git log --merges main`) → 1 archive par merge.
-4. **Fenêtres de commits** (semaine/mois) → 1 archive par fenêtre.
+1. **Semver tags** (`v*.*.*`) → 1 archive per tag.
+2. **GitHub releases** (via `gh release list` if available) → 1 archive per release.
+3. **Merges on mainline** (`git log --merges main`) → 1 archive per merge.
+4. **Commit windows** (week/month) → 1 archive per window.
 
-Afficher le choix à l'utilisateur et demander confirmation avant de poursuivre.
+Display the choice to the user and ask for confirmation before proceeding.
 
-### 4. Pour chaque jalon : préparer le contenu
+### 4. For each milestone: prepare the content
 
-Pour chaque jalon (tag, release, merge, fenêtre) dans la fenêtre temporelle `--depuis`/`--jusqu-a` :
+For each milestone (tag, release, merge, window) within the time window `--since`/`--until`:
 
-#### a. Vérifier idempotence
+#### a. Verify idempotence
 
-Chercher dans le vault un atome existant avec :
+Search the vault for an existing atom with:
 - `source: archeo-git`
-- `source_jalon: {tag|sha|range}` égal au jalon courant.
+- `source_milestone: {tag|sha|range}` matching the current milestone.
 
-Si trouvé, **skip silencieux** (déjà ingéré) sauf si le jalon a changé (ex: tag déplacé) — dans ce cas, créer une révision avec `previous_atom: [[ancien]]`.
+If found, **silent skip** (already ingested) unless the milestone has changed (e.g. moved tag) — in which case create a revision with `previous_atom: [[old]]`.
 
-#### b. Extraire les informations du jalon
+#### b. Extract milestone information
 
-Selon le niveau :
-- **Tag/release** : message du tag, contenu de la release note GitHub (`gh release view`), commit SHA, date, auteur principal, fichiers modifiés (diff stats).
-- **Merge** : message de merge, branche source, fichiers, tickets référencés (regex `[A-Z]+-\d+` pour Jira, `#\d+` pour PR).
-- **Fenêtre commits** : agrégation des messages de commits dans la fenêtre, fichiers touchés, contributeurs.
+Depending on the level:
+- **Tag/release**: tag message, GitHub release note content (`gh release view`), commit SHA, date, main author, modified files (diff stats).
+- **Merge**: merge message, source branch, files, referenced tickets (regex `[A-Z]+-\d+` for Jira, `#\d+` for PR).
+- **Commit window**: aggregation of commit messages within the window, touched files, contributors.
 
-Enrichir avec :
-- **Fichiers IA racine** au moment du commit : `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `MISTRAL.md`, `README.md`, `contexte.md`, `historique.md` si présents (lire à `git show {sha}:{fichier}`).
-- **Tickets Jira/Linear** : extraire les clés du message + référence.
-- **PR liés** : `gh pr view {numero}` si disponible.
+Enrich with:
+- **Root AI files** at the time of commit: `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `MISTRAL.md`, `README.md`, `context.md`, `history.md` if present (read via `git show {sha}:{file}`).
+- **Jira/Linear tickets**: extract keys from the message + reference.
+- **Linked PRs**: `gh pr view {number}` if available.
 
-#### c. Construire le contenu pour le router
+#### c. Build the content for the router
 
-Préparer un Markdown structuré avec délimiteurs Markdown pour faciliter la segmentation par le router :
+Prepare a structured Markdown with Markdown delimiters to ease segmentation by the router:
 
 ```
-# Archive jalon — {tag|sha|range}
+# Milestone archive — {tag|sha|range}
 
-[Section principale — événement daté à archiver en episodes]
+[Main section — dated event to archive in episodes]
 
-## Principe : [titre court] [si dégagé]
+## Principle: [short title] [if extracted]
 
-[Si le jalon a fait émerger un principe explicite, le formuler ici]
+[If the milestone surfaced an explicit principle, formulate it here]
 
-## Concept : [titre court] [si dégagé]
+## Concept: [short title] [if extracted]
 
-[Si le jalon introduit un concept technique réutilisable, le formuler ici]
+[If the milestone introduces a reusable technical concept, formulate it here]
 ```
 
-### 5. Invoquer le router pour ce jalon
+### 5. Invoke the router for this milestone
 
-Appeler le router avec :
-- `Contenu` : Markdown structuré du jalon.
-- `Hint zone` : `episodes` (force la section principale).
-- `Hint source` : `archeo-git`.
-- `Métadonnées` : projet/domaine résolu, **`source_jalon: {tag|sha|range}`**, `commit_sha`, scope.
+Call the router with:
+- `Content`: structured Markdown of the milestone.
+- `Hint zone`: `episodes` (forces the main section).
+- `Hint source`: `archeo-git`.
+- `Metadata`: resolved project/domain, **`source_milestone: {tag|sha|range}`**, `commit_sha`, scope.
 
 {{INCLUDE _router}}
 
-Le router :
-- Écrit l'archive principale dans `{VAULT}/10-episodes/{kind}/{slug}/archives/`.
-- Pour chaque section dérivée (`## Principe :`, `## Concept :`), classe via la cascade.
-- Crée les liens bidirectionnels.
-- Vérifie l'idempotence via `source_jalon + type + sujet` (cf. R10 du bloc router).
+The router:
+- Writes the main archive into `{VAULT}/10-episodes/{kind}/{slug}/archives/`.
+- For each derived section (`## Principle:`, `## Concept:`), classifies via the cascade.
+- Creates bidirectional links.
+- Verifies idempotence via `source_milestone + type + subject` (cf. R10 of the router block).
 
-### 6. Boucle sur tous les jalons
+### 6. Loop over all milestones
 
-Si `--dry-run` : afficher la liste des jalons qui seraient ingérés (avec atomes dérivés prévus) + total estimé. Demander confirmation pour passer en `--apply`.
+If `--dry-run`: display the list of milestones that would be ingested (with planned derived atoms) + estimated total. Ask for confirmation to switch to `--apply`.
 
-Sinon : itérer sur tous les jalons. Le router gère la confirmation utilisateur en mode safe (par défaut), ou écriture directe si `--no-confirm`.
+Otherwise: iterate over all milestones. The router handles user confirmation in safe mode (default), or direct write if `--no-confirm`.
 
-### 7. Rapport final
+### 7. Final report
 
-Synthèse globale : N jalons traités, N archives créées, N atomes dérivés (par zone), N skips (idempotence).
+Global synthesis: N milestones processed, N archives created, N derived atoms (per zone), N skips (idempotence).

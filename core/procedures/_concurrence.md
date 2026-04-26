@@ -1,35 +1,35 @@
-## Écritures atomiques et protection contre les accès concurrents
+## Atomic writes and protection against concurrent access
 
-Le vault peut subir des accès concurrents — deux sessions LLM parallèles (ex: Claude Code + Codex), ou une session LLM qui écrit pendant qu'Obsidian édite manuellement le même fichier. Sans protection, last-write-wins corrompt ou fait perdre des entrées.
+The vault may experience concurrent access — two parallel LLM sessions (e.g., Claude Code + Codex), or an LLM session writing while Obsidian manually edits the same file. Without protection, last-write-wins corrupts or loses entries.
 
-### Pattern 1 — Rename atomique (pour toutes les écritures)
+### Pattern 1 — Atomic rename (for all writes)
 
-Chaque fichier écrit ou réécrit suit cette séquence :
+Every file written or rewritten follows this sequence:
 
-1. Écrire le nouveau contenu dans `{fichier}.tmp` (même répertoire que la cible).
-2. Rename atomique `{fichier}.tmp` → `{fichier}`. Sur POSIX, `rename()` est atomique et remplace silencieusement. Sur Windows, `Move-Item -Force` (PowerShell) ou équivalent (MoveFileEx avec `MOVEFILE_REPLACE_EXISTING`).
-3. Si le rename échoue, supprimer le `.tmp` et remonter l'erreur à l'utilisateur.
+1. Write the new content to `{file}.tmp` (same directory as the target).
+2. Atomic rename `{file}.tmp` → `{file}`. On POSIX, `rename()` is atomic and silently replaces. On Windows, `Move-Item -Force` (PowerShell) or equivalent (`MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`).
+3. If the rename fails, delete the `.tmp` and surface the error to the user.
 
-Commandes concrètes :
+Concrete commands:
 
-| Shell | Séquence |
+| Shell | Sequence |
 |---|---|
-| bash / POSIX | `printf '%s' "$contenu" > "$cible.tmp" && mv -f "$cible.tmp" "$cible"` |
-| PowerShell 7+ | `Set-Content -Path "$cible.tmp" -Value $contenu -Encoding utf8NoBOM -NoNewline; Move-Item -Path "$cible.tmp" -Destination $cible -Force` |
-| Python | `Path(f"{cible}.tmp").write_text(contenu, encoding='utf-8', newline=''); Path(f"{cible}.tmp").replace(cible)` (`replace` est atomique cross-platform) |
+| bash / POSIX | `printf '%s' "$content" > "$target.tmp" && mv -f "$target.tmp" "$target"` |
+| PowerShell 7+ | `Set-Content -Path "$target.tmp" -Value $content -Encoding utf8NoBOM -NoNewline; Move-Item -Path "$target.tmp" -Destination $target -Force` |
+| Python | `Path(f"{target}.tmp").write_text(content, encoding='utf-8', newline=''); Path(f"{target}.tmp").replace(target)` (`replace` is atomic cross-platform) |
 
-### Pattern 2 — Hash check read-before-write (pour les fichiers partagés)
+### Pattern 2 — Hash check read-before-write (for shared files)
 
-Les fichiers partagés (modifiables par plusieurs procédures ou par Obsidian en parallèle — typiquement `_index.md`, les `historique.md`, les `contexte.md`) exigent un hash check avant toute réécriture :
+Shared files (modifiable by multiple procedures or by Obsidian in parallel — typically `index.md`, `history.md`, `context.md`) require a hash check before any rewrite:
 
-1. **Début d'opération** : lire le fichier, calculer son SHA-256, mémoriser (`hash_initial`).
-2. **Juste avant l'écriture** : relire le fichier cible, recalculer son SHA-256 (`hash_avant`).
-3. Si `hash_avant != hash_initial` → le fichier a été modifié entre-temps par un autre acteur. **Ne pas écraser**. Relire le contenu actuel, merger les modifs qu'on voulait apporter, puis reprendre à l'étape 2 (boucle jusqu'à 3 tentatives).
-4. Si `hash_avant == hash_initial` → procéder au rename atomique (pattern 1).
-5. Si après 3 tentatives le hash continue de diverger → stopper, afficher un avertissement à l'utilisateur : « Fichier `{cible}` modifié par un acteur externe pendant l'opération. Vérifie manuellement, puis relance la commande. »
+1. **Operation start**: read the file, compute its SHA-256, store it (`hash_initial`).
+2. **Just before writing**: re-read the target file, recompute its SHA-256 (`hash_before`).
+3. If `hash_before != hash_initial` → the file was modified meanwhile by another actor. **Do not overwrite**. Re-read the current content, merge the changes you wanted to apply, then resume at step 2 (loop up to 3 attempts).
+4. If `hash_before == hash_initial` → proceed with atomic rename (pattern 1).
+5. If after 3 attempts the hash keeps diverging → stop, display a warning to the user: "File `{target}` modified by an external actor during the operation. Check manually, then re-run the command."
 
-Les fichiers **horodatés et nouveaux** (typiquement les archives sous `archives/` ou sous `{zone}/{...}/archives/`) sont exemptés du hash check : aucun conflit possible sur un nom unique. Mais ils doivent quand même utiliser le rename atomique (pattern 1).
+**Timestamped and new** files (typically archives under `archives/` or under `{zone}/{...}/archives/`) are exempt from the hash check: no conflict possible on a unique name. But they must still use atomic rename (pattern 1).
 
-### Limite connue
+### Known limit
 
-Ces patterns réduisent fortement la fenêtre de race mais ne l'éliminent pas complètement. Une race reste théoriquement possible entre le calcul de `hash_avant` et le rename. Pour une protection stricte, le MCP memory-kit (Phase 3) utilisera un verrou applicatif via `asyncio.Lock`.
+These patterns strongly reduce the race window but do not eliminate it completely. A race remains theoretically possible between computing `hash_before` and the rename. For strict protection, the memory-kit MCP (Phase 3) will use an application-level lock via `asyncio.Lock`.

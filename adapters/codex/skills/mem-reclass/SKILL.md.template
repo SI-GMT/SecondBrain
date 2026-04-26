@@ -1,6 +1,6 @@
 ---
 name: mem-reclass
-description: Changer le scope ou la zone d'un contenu existant. Met a jour frontmatter + tags + deplace le fichier + reecrit les references croisees. Confirme par decision D3.4 du cadrage v0.5.
+description: Change the scope or zone of an existing item. Updates frontmatter + tags + moves the file + rewrites cross-references. Confirmed by decision D3.4 of the v0.5 design doc.
 ---
 
 {{PROCEDURE}}

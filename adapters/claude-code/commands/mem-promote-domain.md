@@ -1,5 +1,5 @@
-Promouvoir un ensemble d'items coherents de l'inbox en un nouveau domaine permanent dans 10-episodes/domaines/{slug}/.
+Promote a coherent set of items from the inbox into a new permanent domain in 10-episodes/domains/{slug}/.
 
-Slug du nouveau domaine + items optionnels. Options : --scope perso|pro, --from-inbox {keyword}, --dry-run, --no-confirm.
+New domain slug + optional items. Options: --scope personal|work, --from-inbox {keyword}, --dry-run, --no-confirm.
 
 $ARGUMENTS

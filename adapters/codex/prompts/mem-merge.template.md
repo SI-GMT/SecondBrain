@@ -1,5 +1,5 @@
 ---
-description: Fusionner deux projets OU deux domaines du vault. Reattribue archives + atomes transverses. Restriction : pas de melange projet <-> domaine. Renomme depuis mem-merge-projects en v0.5.
+description: Merge two projects OR two domains in the vault. Reattributes archives + cross-cutting atoms. Restriction: no project <-> domain mixing. Renamed from mem-merge-projects in v0.5.
 ---
 
 {{PROCEDURE}}

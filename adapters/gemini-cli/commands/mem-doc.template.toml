@@ -1,9 +1,7 @@
-description = "Ingérer un document local (PDF, Markdown, texte, image, docx...) dans le vault mémoire comme archive single-shot. Résolution auto du projet cible (priorité descendante : --projet → chemin → CWD → inbox)."
+description = "Ingest a local document (PDF, Markdown, text, image, docx…) into the memory vault as a single-shot archive. AUTO-TRIGGER (without waiting for the user to type /mem-doc) when they express, in natural language — 'ingest this document', 'archive this file', 'save this PDF to memory', 'absorb this document', 'index this spec'. Also explicitly invocable via /mem-doc {path} with options --project {slug}, --title \"{text}\". The target project is auto-resolved (priority: explicit arg → path match → CWD match → inbox fallback)."
 prompt = '''
 {{PROCEDURE}}
 
 ---
-Arguments à parser : {{args}}
-
-Le premier token non-option est le chemin du fichier. Options : `--projet {nom}` force le projet cible, `--titre "{texte}"` fournit un titre court.
+Required: path to the document. Options: --project {slug}, --title "{text}", --zone X (force target zone), --no-confirm, --dry-run.
 '''

@@ -1,5 +1,5 @@
-Ingerer une fiche personne (collegue, client, ami, famille) dans 60-personnes/.
+Ingest a person card (colleague, client, friend, family) into 60-people/.
 
-Contenu / description de la personne. Options : --scope perso|pro, --categorie collegues|clients|partenaires|famille|amis|connaissances, --no-confirm, --dry-run.
+Person content/description. Options: --scope personal|work, --category colleagues|clients|partners|family|friends|acquaintances, --no-confirm, --dry-run.
 
 $ARGUMENTS

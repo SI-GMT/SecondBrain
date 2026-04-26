@@ -1,48 +1,48 @@
-# Procédure : Person (nouveau v0.5)
+# Procedure: Person (new in v0.5)
 
-Objectif : ingérer une fiche personne (collègue, client, ami, famille) dans `60-personnes/`. Shortcut explicite. Toujours `sensitive: true` par défaut (interdit la promotion vers CollectiveBrain).
+Goal: ingest a person card (colleague, client, friend, family) into `60-people/`. Explicit shortcut. Always `sensitive: true` by default (forbids promotion to CollectiveBrain).
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-person {contenu}` ou exprime l'intention en langage naturel : « ajoute cette personne », « note ce contact », « fiche de {nom} ».
+The user types `/mem-person {content}` or expresses intent in natural language: "add this person", "note this contact", "card for {name}".
 
-Options reconnues :
-- `--scope perso|pro` : force le scope.
-- `--categorie collegues|clients|partenaires|famille|amis|connaissances` : force la sous-catégorie.
-- `--no-confirm`, `--dry-run` : passe au router.
+Recognized options:
+- `--scope personal|work`: forces the scope.
+- `--category colleagues|clients|partners|family|friends|acquaintances`: forces the sub-category.
+- `--no-confirm`, `--dry-run`: passed through to the router.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Préformatage
+### 1. Pre-format
 
-Extraire du contenu fourni :
-- `nom` : prénom + NOM (obligatoire, demander à l'utilisateur si absent).
-- `role` : rôle ou relation (« CTO », « collègue », « médecin de famille », « ami d'enfance »).
-- `organisation` : société/structure (pour pro).
-- `contact` : email, tel si fournis.
-- Notes libres : contexte, premières interactions, points notables.
+Extract from the provided content:
+- `name`: first name + LAST NAME (required, ask the user if missing).
+- `role`: role or relationship ("CTO", "colleague", "family doctor", "childhood friend").
+- `organization`: company/structure (for work).
+- `contact`: email, phone if provided.
+- Free-form notes: context, first interactions, notable points.
 
-Si `nom` est extractible des premiers mots du contenu (« Jean DUPONT a fait... » → nom = Jean DUPONT), le faire automatiquement. Sinon, demander.
+If `name` can be extracted from the first words of the content ("Jean DUPONT did..." → name = Jean DUPONT), do it automatically. Otherwise, ask.
 
-### 2. Invoquer le router avec hint zone forcée
+### 2. Invoke the router with forced zone hint
 
-Appeler le router avec :
-- `Contenu` : la fiche structurée.
-- `Hint zone` : `personnes`.
-- `Hint source` : `manuel`.
-- `Métadonnées` : nom, role, organisation, contact, catégorie si fournie.
+Call the router with:
+- `Content`: the structured card.
+- `Hint zone`: `people`.
+- `Hint source`: `manual`.
+- `Metadata`: name, role, organization, contact, category if provided.
 
 {{INCLUDE _router}}
 
-Le router :
-- Détermine la sous-catégorie selon scope et indices (« mon enfant » → famille, « collègue » → collegues, etc.).
-- Écrit dans `{VAULT}/60-personnes/{scope}/{categorie}/{slug-nom}.md`.
-- Frontmatter avec `type: personne`, `nom`, `role`, `organisation`, `contact`, `derniere_interaction: today`, **`sensitive: true` (toujours)**.
+The router:
+- Determines the sub-category based on scope and cues ("my child" → family, "colleague" → colleagues, etc.).
+- Writes into `{VAULT}/60-people/{scope}/{category}/{slug-name}.md`.
+- Frontmatter with `type: person`, `name`, `role`, `organization`, `contact`, `last_interaction: today`, **`sensitive: true` (always)**.
 
-### 3. Confirmer
+### 3. Confirm
 
-Rapport du router. Mentionner explicitement que la fiche est `sensitive: true` (donc jamais remontée vers CollectiveBrain).
+Router report. Mention explicitly that the card is `sensitive: true` (therefore never lifted into CollectiveBrain).

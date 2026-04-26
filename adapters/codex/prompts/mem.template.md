@@ -1,5 +1,5 @@
 ---
-description: Router universel d'ingestion. Recoit un contenu libre, le segmente en atomes, classe chaque atome dans la bonne zone du vault selon une cascade d'heuristiques. Chemin par defaut zero-friction. Declencher quand l'utilisateur dit 'note ceci', 'enregistre', 'capture ca', 'ajoute a la memoire' sans preciser de zone.
+description: Universal ingestion router. Receives free-form content, segments it into atoms, and classifies each atom into the right vault zone via a heuristic cascade. Zero-friction default path. Trigger when the user says 'note this', 'save', 'capture this', 'add to memory' without specifying a zone.
 ---
 
 {{PROCEDURE}}

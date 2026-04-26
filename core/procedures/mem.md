@@ -1,48 +1,48 @@
-# Procédure : Mem (router universel — nouveau v0.5)
+# Procedure: Mem (universal router — new in v0.5)
 
-Objectif : ingestion zéro-friction d'un contenu libre dans le vault. Le router sémantique segmente, classe et écrit dans la(les) bonne(s) zone(s) sans que l'utilisateur ait à réfléchir au classement.
+Goal: zero-friction ingestion of free-form content into the vault. The semantic router segments, classifies and writes into the right zone(s) without the user having to think about classification.
 
-C'est le **chemin par défaut** pour 80 % des cas d'ingestion. Les skills spécialisés (`mem-archive`, `mem-note`, `mem-principle`, `mem-goal`, `mem-person`, `mem-doc`, `mem-archeo*`) sont des shortcuts qui forcent une zone spécifique.
+This is the **default path** for 80% of ingestion cases. Specialized skills (`mem-archive`, `mem-note`, `mem-principle`, `mem-goal`, `mem-person`, `mem-doc`, `mem-archeo*`) are shortcuts that force a specific zone.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem {contenu}` ou exprime l'intention en langage naturel : « note ceci », « enregistre », « capture ça », « ajoute à la mémoire ».
+The user types `/mem {content}` or expresses the intent in natural language: "note this", "save", "capture this", "add to memory".
 
-Options reconnues :
-- `--scope perso|pro` : force le scope. Défaut : `default_scope` du `memory-kit.json`.
-- `--zone X` : force la zone (équivalent à invoquer le skill spécialisé). Bypass de la cascade d'heuristiques.
-- `--projet {slug}` ou `--domaine {slug}` : force le rattachement épisodique.
-- `--no-confirm` : force le mode fluide même sur multi-atomes.
-- `--dry-run` : affiche le plan sans écrire.
+Recognized options:
+- `--scope personal|work`: forces the scope. Default: `default_scope` from `memory-kit.json`.
+- `--zone X`: forces the zone (equivalent to invoking the specialized skill). Bypass the heuristics cascade.
+- `--project {slug}` or `--domain {slug}`: forces the episodic attachment.
+- `--no-confirm`: forces fluid mode even on multi-atoms.
+- `--dry-run`: shows the plan without writing.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire les champs `vault` et `default_scope`. Dans la suite, `{VAULT}` désigne la valeur du vault.
+Read {{CONFIG_FILE}} and extract the `vault` and `default_scope` fields. In what follows, `{VAULT}` denotes the vault value.
 
-Si le fichier est absent ou illisible, répondre :
-> Kit mémoire non configuré. Fichier attendu : {{CONFIG_FILE}}. Exécute `deploy.ps1` depuis la racine du kit.
+If the file is absent or unreadable, reply:
+> Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
 
-Puis s'arrêter.
+Then stop.
 
-## Procédure
+## Procedure
 
-### 1. Préformatage par l'adapter
+### 1. Preformatting by the adapter
 
-L'adapter (Claude Code, Gemini CLI, Codex, Vibe) a déjà :
-- Normalisé fins de ligne (LF) et encodage (UTF-8 sans BOM).
-- Injecté le contexte d'invocation : projet courant (CWD), branche Git, scope par défaut.
-- Pré-annoté les indices de scope si évidents.
+The adapter (Claude Code, Gemini CLI, Codex, Vibe) has already:
+- Normalized line endings (LF) and encoding (UTF-8 without BOM).
+- Injected the invocation context: current project (CWD), Git branch, default scope.
+- Pre-annotated scope clues if obvious.
 
-### 2. Invoquer le router
+### 2. Invoke the router
 
-Passer au router le contenu, sans hint de zone (sauf si `--zone X` fourni). Laisser le router décider de la segmentation, du classement, de l'écriture.
+Pass to the router the content, with no zone hint (unless `--zone X` provided). Let the router decide segmentation, classification, writing.
 
 {{INCLUDE _router}}
 
-### 3. Rapport
+### 3. Report
 
-Le router produit son propre rapport (cf. R9 du bloc router). Aucune action supplémentaire de la procédure `mem`.
+The router produces its own report (see R9 of the router block). No additional action by the `mem` procedure.
 
 ---
 
-Arguments à parser : le contenu est tout ce qui suit `/mem` (ou la phrase naturelle). Les options `--xxx` sont extraites avant invocation du router.
+Arguments to parse: the content is everything after `/mem` (or the natural sentence). The `--xxx` options are extracted before invoking the router.

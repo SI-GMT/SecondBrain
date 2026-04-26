@@ -1,5 +1,5 @@
-Ingerer un principe (heuristique, ligne rouge, valeur, regle d'action) dans 40-principes/.
+Ingest a principle (heuristic, red line, value, action rule) into 40-principles/.
 
-Contenu du principe. Options : --scope perso|pro, --force ligne-rouge|heuristique|preference, --domaine X, --projet {slug}, --no-confirm, --dry-run.
+Principle content. Options: --scope personal|work, --force red-line|heuristic|preference, --domain X, --project {slug}, --no-confirm, --dry-run.
 
 $ARGUMENTS

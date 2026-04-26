@@ -1,5 +1,5 @@
-Renommer un projet ou un domaine de maniere complete : dossier physique, frontmatter, tags, liens Obsidian, _index.
+Rename a project or domain completely: physical folder, frontmatter, tags, Obsidian links, index.
 
-Deux arguments obligatoires : ancien-slug nouveau-slug. Options : --dry-run, --no-confirm.
+Two required arguments: old-slug new-slug. Options: --dry-run, --no-confirm.
 
 $ARGUMENTS

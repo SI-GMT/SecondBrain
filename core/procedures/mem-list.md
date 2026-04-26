@@ -1,99 +1,99 @@
-# Procédure : List (v0.5 brain-centric)
+# Procedure: List (v0.5 brain-centric)
 
-Objectif : afficher l'inventaire du vault (projets, domaines, contenus par zone) avec état synthétique. Renommé depuis `mem-list-projects` en v0.5 car il liste maintenant aussi les domaines et peut filtrer par zone.
+Goal: display the vault inventory (projects, domains, contents by zone) with a synthetic state. Renamed from `mem-list-projects` in v0.5 because it now also lists domains and can filter by zone.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-list` ou exprime l'intention en langage naturel : « liste mes projets », « quels projets j'ai en mémoire ? », « montre-moi tous les domaines », « inventaire du vault ».
+The user types `/mem-list` or expresses the intent in natural language: "list my projects", "what projects do I have in memory?", "show me all the domains", "vault inventory".
 
-Options reconnues :
-- `--kind projet|domaine|all` : restreint l'inventaire. Défaut : `all` (projets + domaines).
-- `--scope perso|pro|all` : filtre par scope. Défaut : `all`.
-- `--zone {liste}` : liste les contenus des zones données au lieu de l'inventaire projets/domaines (ex: `--zone principes` = liste des principes).
-- `--detail` : affiche en plus les compteurs par zone et le dernier événement.
+Recognized options:
+- `--kind project|domain|all`: restricts the inventory. Default: `all` (projects + domains).
+- `--scope personal|work|all`: filters by scope. Default: `all`.
+- `--zone {list}`: lists the contents of the given zones instead of the projects/domains inventory (e.g., `--zone principles` = list of principles).
+- `--detail`: also shows counters per zone and the latest event.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire le champ `vault`. Dans la suite, `{VAULT}` désigne cette valeur.
+Read {{CONFIG_FILE}} and extract the `vault` field. In what follows, `{VAULT}` denotes this value.
 
-Si le fichier est absent ou illisible, répondre :
-> Kit mémoire non configuré. Fichier attendu : {{CONFIG_FILE}}. Exécute `deploy.ps1` depuis la racine du kit.
+If the file is absent or unreadable, reply:
+> Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
 
-Puis s'arrêter.
+Then stop.
 
-## Procédure — mode inventaire (par défaut)
+## Procedure — inventory mode (default)
 
-### 1. Énumérer projets et domaines
+### 1. Enumerate projects and domains
 
-Lister les sous-dossiers de :
-- `{VAULT}/10-episodes/projets/` → kind=projet
-- `{VAULT}/10-episodes/domaines/` → kind=domaine
+List the subfolders of:
+- `{VAULT}/10-episodes/projects/` → kind=project
+- `{VAULT}/10-episodes/domains/` → kind=domain
 
-Pour chaque slug, lire son `contexte.md` pour récupérer :
-- `scope` (filtrer si `--scope` actif).
-- `phase` (champ frontmatter ou première ligne de la section État).
-- `derniere-session` (frontmatter).
-- Compteur d'archives dans `archives/`.
+For each slug, read its `context.md` to retrieve:
+- `scope` (filter if `--scope` active).
+- `phase` (frontmatter field or first line of the State section).
+- `last-session` (frontmatter).
+- Counter of archives in `archives/`.
 
-### 2. Afficher l'inventaire
+### 2. Display the inventory
 
-Format de base :
+Base format:
 
 ```
-## Vault SecondBrain — Inventaire
+## SecondBrain vault — Inventory
 
-### Projets ({N}) — vocation finie
-- **{slug}** ({scope}) — phase : {phase} — {N} archive(s) — dernière : {date}
+### Projects ({N}) — finite vocation
+- **{slug}** ({scope}) — phase: {phase} — {N} archive(s) — last: {date}
 - ...
 
-### Domaines ({N}) — permanents
-- **{slug}** ({scope}) — phase : {phase} — {N} archive(s) — dernière : {date}
+### Domains ({N}) — permanent
+- **{slug}** ({scope}) — phase: {phase} — {N} archive(s) — last: {date}
 - ...
 ```
 
-Si `--detail` :
+If `--detail`:
 
 ```
 - **{slug}** ({scope})
-  Phase : {phase}
-  Archives : {N}
-  Principes rattachés : {N}
-  Objectifs ouverts : {N}
-  Personnes liées : {N}
-  Dernière session : {date}
+  Phase: {phase}
+  Archives: {N}
+  Attached principles: {N}
+  Open goals: {N}
+  Linked people: {N}
+  Last session: {date}
 ```
 
-## Procédure — mode liste de zone (`--zone X`)
+## Procedure — zone list mode (`--zone X`)
 
-Si `--zone X` est fourni, lister les contenus de la zone au lieu de l'inventaire projets/domaines.
+If `--zone X` is provided, list the contents of the zone instead of the projects/domains inventory.
 
-### 1. Lister les fichiers de la zone
+### 1. List the files of the zone
 
-Énumérer récursivement les `.md` sous `{VAULT}/{NN-zone}/` et lire leur frontmatter.
+Recursively enumerate the `.md` under `{VAULT}/{NN-zone}/` and read their frontmatter.
 
-### 2. Filtrer par scope si `--scope` actif
+### 2. Filter by scope if `--scope` active
 
-### 3. Afficher
+### 3. Display
 
-Format :
+Format:
 
 ```
-## Vault SecondBrain — Zone {zone}
+## SecondBrain vault — Zone {zone}
 
-{N} item(s) trouvé(s).
+{N} item(s) found.
 
-### {sous-dossier 1}
-- [{titre}]({chemin}) — {scope}, {date}
+### {subfolder 1}
+- [{title}]({path}) — {scope}, {date}
 - ...
 
-### {sous-dossier 2}
+### {subfolder 2}
 - ...
 ```
 
-## Sortie minimale
+## Minimal output
 
-Si le vault est vide ou ne contient ni projets ni domaines :
+If the vault is empty or contains neither projects nor domains:
 
 ```
-Vault vide. Crée ton premier projet ou domaine via /mem-archive ou /mem.
+Empty vault. Create your first project or domain via /mem-archive or /mem.
 ```

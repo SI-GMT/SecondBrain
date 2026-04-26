@@ -1,5 +1,5 @@
-Fusionner deux projets OU deux domaines du vault.
+Merge two projects OR two domains in the vault.
 
-Deux arguments obligatoires : source-slug cible-slug. Options : --dry-run, --no-confirm.
+Two required arguments: source-slug target-slug. Options: --dry-run, --no-confirm.
 
 $ARGUMENTS

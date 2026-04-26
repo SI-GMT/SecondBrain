@@ -1,6 +1,6 @@
 ---
 name: mem-doc
-description: Ingérer un document local (PDF, Markdown, texte, image, docx…) dans le vault mémoire comme archive single-shot. DÉCLENCHEMENT AUTOMATIQUE (sans attendre que l'utilisateur tape /mem-doc) quand il exprime en langage naturel — « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire », « absorbe ce document », « indexe cette spec ». Également invocable explicitement via /mem-doc {chemin} avec options --projet {nom} et --titre "{texte}". La résolution du projet cible est automatique par priorité descendante (argument explicite → match dans le chemin → match dans le CWD → fallback inbox).
+description: Ingest a local document (PDF, Markdown, text, image, docx…) into the memory vault as a single-shot archive. AUTO-TRIGGER (without waiting for the user to type /mem-doc) when they express, in natural language — 'ingest this document', 'archive this file', 'save this PDF to memory', 'absorb this document', 'index this spec'. Also explicitly invocable via /mem-doc {path} with options --project {slug}, --title "{text}". The target project is auto-resolved (priority: explicit arg → path match → CWD match → inbox fallback).
 ---
 
 {{PROCEDURE}}

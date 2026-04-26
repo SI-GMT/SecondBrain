@@ -1,44 +1,44 @@
-# Procédure : Goal (nouveau v0.5)
+# Procedure: Goal (new in v0.5)
 
-Objectif : ingérer un objectif (intention future, état désiré, but) dans `50-objectifs/`. Shortcut explicite quand l'utilisateur formule un objectif.
+Goal: ingest a goal (future intent, desired state, target) into `50-goals/`. Explicit shortcut when the user formulates a goal.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-goal {contenu}` ou exprime l'intention en langage naturel : « ajoute cet objectif », « note ce but », « j'aimerais atteindre X d'ici Y ».
+The user types `/mem-goal {content}` or expresses intent in natural language: "add this goal", "note this target", "I'd like to reach X by Y".
 
-Options reconnues :
-- `--scope perso|pro` : force le scope.
-- `--horizon court|moyen|long` : force l'horizon temporel. Court = semaines, moyen = mois, long = années.
-- `--echeance YYYY-MM-DD` : date cible explicite.
-- `--projet {slug}` : rattachement projet (typiquement pour objectifs `pro/projets/`).
-- `--no-confirm`, `--dry-run` : passe au router.
+Recognized options:
+- `--scope personal|work`: forces the scope.
+- `--horizon short|medium|long`: forces the time horizon. Short = weeks, medium = months, long = years.
+- `--deadline YYYY-MM-DD`: explicit target date.
+- `--project {slug}`: project attachment (typically for `work/projects/` goals).
+- `--no-confirm`, `--dry-run`: passed through to the router.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Préformatage
+### 1. Pre-format
 
-Le titre de l'objectif est extrait des premières mots significatifs. Le corps inclut le « pourquoi » (motivation), les jalons éventuels, les indicateurs de succès.
+The goal title is extracted from the first significant words. The body includes the "why" (motivation), any milestones, success indicators.
 
-### 2. Invoquer le router avec hint zone forcée
+### 2. Invoke the router with forced zone hint
 
-Appeler le router avec :
-- `Contenu` : le contenu de l'objectif.
-- `Hint zone` : `objectifs`.
-- `Hint source` : `manuel` (sauf dérivation par `mem-archive`).
-- `Métadonnées` : horizon, échéance, projet si fournis.
+Call the router with:
+- `Content`: the goal content.
+- `Hint zone`: `goals`.
+- `Hint source`: `manual` (unless derived by `mem-archive`).
+- `Metadata`: horizon, deadline, project if provided.
 
 {{INCLUDE _router}}
 
-Le router :
-- Détermine `horizon` si non forcé (heuristique : échéance < 1 mois = court, < 6 mois = moyen, > = long).
-- Détermine la sous-catégorie selon scope et projet (`perso/{vie|sante|famille|finances}` ou `pro/{carriere|projets/{slug}}`).
-- Écrit dans `{VAULT}/50-objectifs/...`.
-- Frontmatter avec `type: objectif`, `horizon`, `echeance`, `statut: ouvert` (par défaut), `projet`.
+The router:
+- Determines `horizon` if not forced (heuristic: deadline < 1 month = short, < 6 months = medium, >= long).
+- Determines the sub-category based on scope and project (`personal/{life|health|family|finance}` or `work/{career|projects/{slug}}`).
+- Writes into `{VAULT}/50-goals/...`.
+- Frontmatter with `type: goal`, `horizon`, `deadline`, `status: open` (default), `project`.
 
-### 3. Confirmer
+### 3. Confirm
 
-Rapport du router.
+Router report.

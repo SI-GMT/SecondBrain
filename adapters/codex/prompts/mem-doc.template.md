@@ -1,12 +1,10 @@
 ---
-description: Ingérer un document local (PDF, Markdown, texte, image, docx...) dans le vault mémoire comme archive single-shot, avec copie préservée du source et synthèse structurée.
+description: Ingest a local document (PDF, Markdown, text, image, docx…) into the memory vault as a single-shot archive. AUTO-TRIGGER (without waiting for the user to type /mem-doc) when they express, in natural language — 'ingest this document', 'archive this file', 'save this PDF to memory', 'absorb this document', 'index this spec'. Also explicitly invocable via /mem-doc {path} with options --project {slug}, --title "{text}". The target project is auto-resolved (priority: explicit arg → path match → CWD match → inbox fallback).
 ---
 
 {{PROCEDURE}}
 
-## Arguments utilisateur
-
-Le premier token non-option est le chemin du fichier à ingérer. Options reconnues : `--projet {nom}` pour forcer le projet cible, `--titre "{texte}"` pour fournir un titre court.
+## User input
 
 ```text
 $ARGUMENTS

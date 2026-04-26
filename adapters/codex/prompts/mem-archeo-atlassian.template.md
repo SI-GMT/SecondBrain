@@ -1,12 +1,10 @@
 ---
-description: Rétro-archiver une arborescence de pages Confluence (page racine + descendance ou space complet) dans le vault mémoire, avec enrichissement automatique par les tickets Jira référencés depuis les pages. Prérequis MCP Atlassian côté client.
+description: Retro-archive a Confluence page tree (root page + descendants, or a full space) into the memory vault, with automatic enrichment from the Jira tickets referenced in the pages. AUTO-TRIGGER (without waiting for /mem-archeo-atlassian) when the user says — 'archive the Confluence documentation of this project', 'do a retro on this Atlassian space', 'ingest this page and its children', 'archive this doc and the linked tickets'. Also invocable via /mem-archeo-atlassian {url} with options --depth, --skip-children, --since, --skip-jira, --project, --dry-run. Requires the Atlassian MCP on the client side. 1 archive per Confluence page, with content converted to Markdown + summary of each Jira ticket mentioned. Idempotent (skips pages already archived up-to-date via confluence_page_id + confluence_updated). Frontmatter source=archeo-atlassian.
 ---
 
 {{PROCEDURE}}
 
-## Arguments utilisateur
-
-Le premier token non-option est l'URL Confluence (page ou space root). Options : `--projet {nom}`, `--profondeur N`, `--skip-children`, `--depuis YYYY-MM-DD`, `--skip-jira`, `--dry-run`.
+## User input
 
 ```text
 $ARGUMENTS

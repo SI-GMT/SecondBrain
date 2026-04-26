@@ -1,97 +1,108 @@
 <!-- MEMORY-KIT:START -->
-## Kit Mémoire — Second cerveau persistant
+## Memory Kit — Persistent second brain
 
-Ce poste dispose d'un vault mémoire qui persiste le contexte entre les sessions Mistral Vibe. Les procédures détaillées vivent dans les skills `mem-*` auto-découverts depuis `~/.vibe/skills/`. Ce bloc fixe les règles globales qui encadrent leur exécution.
+This machine has a memory vault that persists context across Mistral Vibe sessions. The detailed procedures live in the `mem-*` skills auto-discovered from `~/.vibe/skills/`. This block sets the global rules that frame their execution.
 
-### ⚠ Règle d'or — Vault
+### Conversational language
+
+**Always communicate with the user in their preferred language** (read `language` from `~/.vibe/memory-kit.json`; fallback to `en` if absent). All written content stored in the vault uses the structural English schema (folder names, frontmatter values, tags), but your conversational replies, questions, and confirmations to the user must be in their language.
+
+### ⚠ Golden rule — Vault
 
 **VAULT = `{{VAULT_PATH}}`**
 
-- C'est un **chemin absolu, immuable, EXTERNE au répertoire courant de travail**.
-- **NE JAMAIS** lister le cwd (`ls`, `pwd`, `dir`) pour « trouver » le vault. Il ne s'y trouve **pas**.
-- **NE JAMAIS** supposer que le vault est dans le projet courant.
-- **NE JAMAIS** demander confirmation du chemin à l'utilisateur — il est écrit ci-dessus, en dur, à l'installation.
-- **TOUJOURS** attaquer directement avec ce chemin absolu, dès la première commande.
-- Si un doute émerge en cours d'opération, relire cette règle et repartir du chemin absolu.
+- This is an **absolute, immutable path, EXTERNAL to the current working directory**.
+- **NEVER** list the cwd (`ls`, `pwd`, `dir`) to "find" the vault. It is **not** there.
+- **NEVER** assume the vault is inside the current project.
+- **NEVER** ask the user to confirm the path — it is hard-coded above at install time.
+- **ALWAYS** attack directly with this absolute path, from the very first command.
+- If doubt arises mid-operation, re-read this rule and start again from the absolute path.
 
-### Outil recommandé : shell système (chemin absolu)
+### Recommended tool: system shell (absolute path)
 
-Pour toute opération mémoire, utiliser l'outil shell système avec le **chemin absolu complet**. Les outils `read_file` / `write_file` peuvent être sandboxés sur le cwd et refuser un chemin absolu externe — le shell n'a pas cette limite.
+For any memory operation, use the system shell tool with the **full absolute path**. The `read_file` / `write_file` tools may be sandboxed to the cwd and refuse an external absolute path — the shell does not have this limit.
 
-**Choisir les commandes en fonction du shell disponible** (bash, PowerShell, cmd). Les équivalents pour les opérations courantes :
+**Choose commands based on the available shell** (bash, PowerShell, cmd). Equivalents for common operations:
 
 | Action | bash / macOS / Linux / git-bash | PowerShell / pwsh | cmd (Windows) |
 |---|---|---|---|
-| Lister un dossier | `ls "{{VAULT_PATH}}/archives/"` | `Get-ChildItem "{{VAULT_PATH}}/archives/"` | `dir "{{VAULT_PATH}}\archives\"` |
-| Lire un fichier | `cat "{{VAULT_PATH}}/projets/X/contexte.md"` | `Get-Content "{{VAULT_PATH}}/projets/X/contexte.md"` | `type "{{VAULT_PATH}}\projets\X\contexte.md"` |
-| Écrire un fichier | `cat > "…" <<'EOF' … EOF` | `Set-Content -Path "…" -Value …` | `echo …> "…"` (limité) |
-| Rechercher récursif | `grep -rni "requête" "{{VAULT_PATH}}/"` | `Select-String -Path "{{VAULT_PATH}}/**/*.md" -Pattern "requête"` | `findstr /s /i "requête" "{{VAULT_PATH}}\*.md"` |
-| Supprimer | `rm "{{VAULT_PATH}}/…"` | `Remove-Item "{{VAULT_PATH}}/…"` | `del "{{VAULT_PATH}}\…"` |
-| Renommer / déplacer | `mv "…" "…"` | `Move-Item "…" "…"` | `move "…" "…"` |
-| Modifier en place | `sed -i 's/ancien/nouveau/g' "…"` | `(Get-Content "…") -replace 'ancien','nouveau' \| Set-Content "…"` | — (pas d'équivalent direct) |
+| List a folder | `ls "{{VAULT_PATH}}/10-episodes/projects/"` | `Get-ChildItem "{{VAULT_PATH}}/10-episodes/projects/"` | `dir "{{VAULT_PATH}}\10-episodes\projects\"` |
+| Read a file | `cat "{{VAULT_PATH}}/10-episodes/projects/X/context.md"` | `Get-Content "{{VAULT_PATH}}/10-episodes/projects/X/context.md"` | `type "{{VAULT_PATH}}\10-episodes\projects\X\context.md"` |
+| Write a file | `cat > "…" <<'EOF' … EOF` | `Set-Content -Path "…" -Value …` | `echo …> "…"` (limited) |
+| Recursive search | `grep -rni "query" "{{VAULT_PATH}}/"` | `Select-String -Path "{{VAULT_PATH}}/**/*.md" -Pattern "query"` | `findstr /s /i "query" "{{VAULT_PATH}}\*.md"` |
+| Delete | `rm "{{VAULT_PATH}}/…"` | `Remove-Item "{{VAULT_PATH}}/…"` | `del "{{VAULT_PATH}}\…"` |
+| Rename / move | `mv "…" "…"` | `Move-Item "…" "…"` | `move "…" "…"` |
+| In-place edit | `sed -i 's/old/new/g' "…"` | `(Get-Content "…") -replace 'old','new' \| Set-Content "…"` | — (no direct equivalent) |
 
-Si une commande échoue ("command not found", "n'est pas reconnu"), **essayer l'équivalent du shell natif de la plateforme** avant de considérer que l'opération est impossible. Sur Windows, si `bash`/`ls`/`cat` échouent, retomber directement sur PowerShell ou cmd — le vault est toujours accessible via un chemin absolu, peu importe le shell.
+If a command fails ("command not found", "is not recognized"), **try the platform's native shell equivalent** before considering the operation impossible. On Windows, if `bash`/`ls`/`cat` fail, fall back directly to PowerShell or cmd — the vault is always accessible via an absolute path, regardless of the shell.
 
-### Structure du vault
+### Vault structure (v0.5)
 
-- `{{VAULT_PATH}}/_index.md` — catalogue des projets et archives.
-- `{{VAULT_PATH}}/archives/YYYY-MM-DD-HHhMM-{projet}-{résumé}.md` — archives de fin de session, **immuables** (nom de fichier et corps narratif). Le frontmatter peut être modifié par les skills `mem-rename-project` et `mem-merge-projects`.
-- `{{VAULT_PATH}}/projets/{nom}/contexte.md` — snapshot mutable du projet (toujours à jour, voie rapide).
-- `{{VAULT_PATH}}/projets/{nom}/historique.md` — fil chronologique des sessions du projet.
+- `{{VAULT_PATH}}/index.md` — master catalog (root).
+- `{{VAULT_PATH}}/00-inbox/` — raw unqualified capture.
+- `{{VAULT_PATH}}/10-episodes/projects/{slug}/context.md` — mutable project snapshot (always up-to-date, fast lane).
+- `{{VAULT_PATH}}/10-episodes/projects/{slug}/history.md` — chronological session log.
+- `{{VAULT_PATH}}/10-episodes/projects/{slug}/archives/YYYY-MM-DD-HHhMM-{slug}-{subject}.md` — end-of-session archives, **immutable** (filename and narrative body). Frontmatter may be modified by `mem-rename` and `mem-merge`.
+- `{{VAULT_PATH}}/10-episodes/domains/{slug}/...` — long-running domains (no end date).
+- `{{VAULT_PATH}}/20-knowledge/`, `30-procedures/`, `40-principles/`, `50-goals/`, `60-people/`, `70-cognition/`, `99-meta/` — other vault zones.
 
-### Skills disponibles
+### Available skills
 
-Les skills `mem-*` sont installés dans `~/.vibe/skills/` et sont **auto-découverts** par Vibe. Chaque skill porte sa procédure complète. Déclenchement automatique sur langage naturel :
+The `mem-*` skills are installed in `~/.vibe/skills/` and are **auto-discovered** by Vibe. Each skill carries its own full procedure. Auto-trigger on natural language (in any language):
 
-| Skill | Intention naturelle |
+| Skill | Natural intent (examples in English) |
 |---|---|
-| `mem-recall` | « reprends [projet] », « on continue », « tu te rappelles de… », « où on en était ? » |
-| `mem-archive` | « on s'arrête », « je pars », « on termine », `/clear` (mode complet) — **mid-session** : mise à jour silencieuse de `contexte.md` dès qu'une décision ou fait important émerge |
-| `mem-doc` | « ingère ce document », « archive ce fichier », « enregistre ce PDF dans ma mémoire », « absorbe ce document » |
-| `mem-archeo` | « fais une rétro Git de ce projet », « reconstitue l'historique », « remonte les bumps de version », « archéo sur ce repo » |
-| `mem-archeo-atlassian` | « archive la documentation Confluence », « rétro sur cet espace Atlassian », « ingère cette page et ses enfants », « archive cette doc et les tickets liés » |
-| `mem-list-projects` | « liste mes projets », « quels projets j'ai en mémoire ? » |
-| `mem-search` | « cherche [X] dans la mémoire », « trouve les archives qui parlent de Y » |
-| `mem-digest` | « résume-moi les N dernières sessions de [projet] », « fil rouge de [projet] » |
-| `mem-rename-project` | « renomme le projet [ancien] en [nouveau] » |
-| `mem-merge-projects` | « fusionne [source] dans [cible] » |
-| `mem-rollback-archive` | « annule la dernière archive », « rollback l'archive de [projet] » |
+| `mem-recall` | "resume [project]", "let's continue", "do you remember…", "where were we?" |
+| `mem-archive` | "we're stopping", "I'm leaving", "we're done", `/clear` (full mode) — **mid-session**: silent update of `context.md` whenever a decision or important fact emerges |
+| `mem-doc` | "ingest this document", "archive this file", "save this PDF to memory", "absorb this document" |
+| `mem-archeo` | "do a Git retro of this project", "reconstruct the history", "go back through the version bumps" |
+| `mem-archeo-atlassian` | "archive the Confluence documentation", "retro on this Atlassian space", "ingest this page and its children" |
+| `mem-list` | "list my projects", "what projects do I have in memory?" |
+| `mem-search` | "search memory for [X]", "find archives that mention Y" |
+| `mem-digest` | "summarize the last N sessions of [project]", "through-line of [project]" |
+| `mem-rename` | "rename project [old] to [new]" (also operates on domains) |
+| `mem-merge` | "merge [source] into [target]" (also operates on domains) |
+| `mem-rollback-archive` | "cancel the last archive", "rollback the archive of [project]" |
+| `mem-note` / `mem-principle` / `mem-goal` / `mem-person` | explicit ingestion shortcuts |
+| `mem` | universal ingestion router ("save this", "note this") |
+| `mem-reclass` | "move this to personal", "change scope of this file" |
+| `mem-promote-domain` | "create a new domain from these inbox items" |
 
-### Exemple canonique — première action attendue
+### Canonical example — first expected action
 
-Utilisateur : « reprends SecondBrain »
-Toi, **immédiatement**, sans exploration préalable, selon ton shell :
+User: "resume SecondBrain"
+You, **immediately**, without prior exploration, depending on your shell:
 
 ```
 # bash / macOS / Linux / git-bash
-cat "{{VAULT_PATH}}/projets/secondbrain/contexte.md"
+cat "{{VAULT_PATH}}/10-episodes/projects/secondbrain/context.md"
 
 # PowerShell
-Get-Content "{{VAULT_PATH}}/projets/secondbrain/contexte.md"
+Get-Content "{{VAULT_PATH}}/10-episodes/projects/secondbrain/context.md"
 
 # cmd (Windows)
-type "{{VAULT_PATH}}\projets\secondbrain\contexte.md"
+type "{{VAULT_PATH}}\10-episodes\projects\secondbrain\context.md"
 ```
 
-**PAS** de `ls`/`dir`/`Get-ChildItem` du cwd, **PAS** de `pwd`, **PAS** de question à l'utilisateur. Le fichier existe ou n'existe pas ; dans les deux cas la lecture directe donne la réponse.
+**NO** `ls`/`dir`/`Get-ChildItem` of the cwd, **NO** `pwd`, **NO** question to the user. The file exists or it doesn't; in both cases the direct read gives the answer.
 
-### Règles opérationnelles
+### Operational rules
 
-- **Mode incrémental vs complet pour `mem-archive`** : mid-session, mettre à jour UNIQUEMENT `contexte.md` sans créer d'archive ni annoncer l'action. Ne créer un fichier dans `archives/` que sur signal explicite de fin de session.
-- **Exécuter directement, sans demander confirmation supplémentaire**. Les skills intègrent leurs propres vérifications et affichent un rapport clair après exécution.
-- **Pas d'exploration du cwd**. Pas de `pwd`, pas de `ls`/`dir`/`Get-ChildItem` du répertoire courant pour chercher le vault.
-- **Tolérance aux shells**. Si une commande shell échoue parce qu'elle n'est pas reconnue (ex: `ls` sur Windows sans git-bash), **ne pas abandonner** — retomber immédiatement sur l'équivalent natif (`dir` pour cmd, `Get-ChildItem` pour PowerShell) en gardant le même chemin absolu.
+- **Incremental vs full mode for `mem-archive`**: mid-session, update ONLY `context.md` without creating an archive or announcing the action. Only create a file in `archives/` on an explicit end-of-session signal.
+- **Execute directly, without asking for additional confirmation**. The skills include their own checks and display a clear report after execution.
+- **No cwd exploration**. No `pwd`, no `ls`/`dir`/`Get-ChildItem` of the current directory to find the vault.
+- **Shell tolerance**. If a shell command fails because it is not recognized (e.g., `ls` on Windows without git-bash), **do not give up** — immediately fall back to the native equivalent (`dir` for cmd, `Get-ChildItem` for PowerShell) keeping the same absolute path.
 
-### ⚙ Encodage des fichiers du vault
+### ⚙ Vault file encoding
 
-Tous les fichiers écrits ou modifiés dans le vault (archives, `contexte.md`, `historique.md`, `_index.md`) doivent être en **UTF-8 sans BOM**, fins de ligne **LF**. Jamais de CP1252, Windows-1252, UTF-8 avec BOM, ni encodage OEM — ça corrompt les accents français et les caractères diacritiques (apparaît en `�` dans Obsidian).
+All files written or modified in the vault (archives, `context.md`, `history.md`, `index.md`) must be in **UTF-8 without BOM**, **LF** line endings. Never CP1252, Windows-1252, UTF-8 with BOM, or OEM encoding — they corrupt diacritics (which appear as `�` in Obsidian).
 
-| Shell | Commande d'écriture UTF-8 sans BOM |
+| Shell | UTF-8 without BOM write |
 |---|---|
-| bash / macOS / Linux / git-bash | `cat > "path" <<'EOF' … EOF` (natif UTF-8 sans BOM) |
-| PowerShell 7+ (pwsh) | `Set-Content -Path "path" -Value $contenu -Encoding utf8NoBOM` |
-| Windows PowerShell 5.1 | `[System.IO.File]::WriteAllText("path", $contenu, [System.Text.UTF8Encoding]::new($false))` |
-| cmd.exe | **à éviter pour le Markdown accentué** — basculer sur PowerShell ou bash |
+| bash / macOS / Linux / git-bash | `cat > "path" <<'EOF' … EOF` (native UTF-8 without BOM) |
+| PowerShell 7+ (pwsh) | `Set-Content -Path "path" -Value $content -Encoding utf8NoBOM` |
+| Windows PowerShell 5.1 | `[System.IO.File]::WriteAllText("path", $content, [System.Text.UTF8Encoding]::new($false))` |
+| cmd.exe | **avoid for accented Markdown** — fall back to PowerShell or bash |
 
-Si la commande d'écriture du shell disponible ajoute un BOM ou corrompt les accents, **rebasculer sur un shell compatible** plutôt que tenter de produire le fichier ainsi.
+If the available shell's write command adds a BOM or corrupts diacritics, **switch to a compatible shell** rather than try to produce the file that way.
 <!-- MEMORY-KIT:END -->

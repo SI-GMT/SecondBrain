@@ -1,5 +1,5 @@
-Reconstituer l'historique d'un dépôt Git via le skill `mem-archeo` (rétro-archivage).
+Reconstruct the history of an existing Git repo as multiple dated archives in the memory vault (1 archive per tag, release, merge, or commit window).
 
-Le premier argument est le chemin du dépôt (défaut : répertoire de travail courant). Options reconnues : `--niveau {tags|releases|merges|commits}`, `--projet {nom}`, `--depuis YYYY-MM-DD`, `--jusqu-a YYYY-MM-DD`, `--fenetre {jour|semaine|mois}`, `--dry-run`.
+Optional: path to the Git repo (default: CWD). Options: --level tags|releases|merges|commits, --project {slug}, --since YYYY-MM-DD, --until YYYY-MM-DD, --window day|week|month, --dry-run, --no-confirm.
 
 $ARGUMENTS

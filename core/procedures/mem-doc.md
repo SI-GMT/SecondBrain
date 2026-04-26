@@ -1,74 +1,74 @@
-# Procédure : Doc (v0.5 brain-centric)
+# Procedure: Doc (v0.5 brain-centric)
 
-Objectif : ingérer **un document local** (PDF, Markdown, texte, image, docx, etc.) dans le vault mémoire avec synthèse structurée et copie préservée du fichier source. Le router classe le contenu selon sa nature (épisodique, sémantique, procédural...).
+Goal: ingest **a local document** (PDF, Markdown, text, image, docx, etc.) into the memory vault with a structured synthesis and a preserved copy of the source file. The router classifies content based on its nature (episodic, semantic, procedural...).
 
-Complémentaire de `/mem-archive` (session vécue) et `/mem-archeo*` (reconstruction Git/Confluence). `/mem-doc` couvre le cas du document qui traîne sur le disque : SFD reçu par mail, spec Word sur NAS, présentation kickoff, PDF scanné, etc.
+Complementary to `/mem-archive` (lived session) and `/mem-archeo*` (Git/Confluence reconstruction). `/mem-doc` covers the case of a document sitting on disk: a spec received by email, a Word spec on a NAS, a kickoff presentation, a scanned PDF, etc.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-doc {chemin}` ou exprime l'intention en langage naturel : « ingère ce document », « archive ce fichier », « enregistre ce PDF ».
+The user types `/mem-doc {path}` or expresses intent in natural language: "ingest this document", "archive this file", "save this PDF".
 
-Arguments :
-- `{chemin}` (**obligatoire**) : chemin absolu ou relatif du fichier à ingérer.
-- `--projet {slug}` ou `--domaine {slug}` (optionnel) : force le rattachement.
-- `--zone X` (optionnel) : force la zone cible (par défaut, le router décide selon la nature du contenu — un PDF de spec va en `20-knowledge/`, un compte-rendu de réunion en `10-episodes/`).
-- `--titre "{texte}"` (optionnel) : titre court pour l'archive.
-- `--no-confirm`, `--dry-run` : passe au router.
+Arguments:
+- `{path}` (**required**): absolute or relative path of the file to ingest.
+- `--project {slug}` or `--domain {slug}` (optional): forces attachment.
+- `--zone X` (optional): forces the target zone (by default, the router decides based on content nature — a spec PDF goes to `20-knowledge/`, a meeting minutes to `10-episodes/`).
+- `--title "{text}"` (optional): short title for the archive.
+- `--no-confirm`, `--dry-run`: passed through to the router.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Valider le chemin source
+### 1. Validate the source path
 
-- Vérifier que `{chemin}` existe et est un fichier (pas un dossier).
-- Calculer la taille en octets.
-- Si > 50 Mo, demander confirmation.
-- Déterminer le type via extension :
-  - `.md`, `.txt` → texte natif.
-  - `.pdf` → extraction via outil natif LLM (en v0.5.1 : `scripts/doc-readers/read_pdf.py`).
-  - `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` → description vision LLM.
-  - `.docx`, `.pptx`, `.xlsx`, `.odt`, `.html`, `.htm` → v0.5.1 (doc-readers Python).
-  - Autre → tenter UTF-8, sinon arrêter avec message explicite.
+- Verify that `{path}` exists and is a file (not a directory).
+- Compute the size in bytes.
+- If > 50 MB, ask for confirmation.
+- Determine the type via extension:
+  - `.md`, `.txt` → native text.
+  - `.pdf` → extraction via native LLM tool (in v0.5.1: `scripts/doc-readers/read_pdf.py`).
+  - `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` → LLM vision description.
+  - `.docx`, `.pptx`, `.xlsx`, `.odt`, `.html`, `.htm` → v0.5.1 (Python doc-readers).
+  - Other → try UTF-8, otherwise stop with explicit message.
 
-### 2. Calculer le hash SHA-256 et détecter re-ingestion
+### 2. Compute the SHA-256 hash and detect re-ingestion
 
-- SHA-256 du fichier en mode binaire.
-- Chercher dans le vault un atome existant avec `source_hash` égal. Si trouvé, demander confirmation à l'utilisateur (« Déjà ingéré le {date} dans `{archive}`. Ré-ingérer ? »).
+- SHA-256 of the file in binary mode.
+- Search the vault for an existing atom with matching `source_hash`. If found, ask the user for confirmation ("Already ingested on {date} into `{archive}`. Re-ingest?").
 
-### 3. Copier le fichier source
+### 3. Copy the source file
 
-Chemin destination : `{VAULT}/99-meta/sources/{YYYY-MM}/{hash8}-{nom-original}.{ext}`
+Destination path: `{VAULT}/99-meta/sources/{YYYY-MM}/{hash8}-{original-name}.{ext}`
 
-Note : en v0.5, les sources sont conservées dans `99-meta/sources/` (et non plus `archives/_sources/` qui n'existe plus). Idempotent : si la copie existe déjà, skip.
+Note: in v0.5, sources are kept in `99-meta/sources/` (and no longer `archives/_sources/` which no longer exists). Idempotent: if the copy already exists, skip.
 
-Créer `{VAULT}/99-meta/sources/.gitignore` au premier usage avec le pattern d'exclusion des binaires lourds.
+Create `{VAULT}/99-meta/sources/.gitignore` on first use with the exclusion pattern for heavy binaries.
 
-### 4. Extraire le contenu et préformater
+### 4. Extract content and pre-format
 
-Extraire le contenu textuel du fichier (selon le type). Préformater pour le router :
+Extract the textual content of the file (depending on type). Pre-format for the router:
 
-- Le contenu est passé tel quel.
-- Si la nature est ambiguë, le router décidera de la zone.
-- Si l'utilisateur a passé `--zone X`, le router force la zone.
+- The content is passed as-is.
+- If the nature is ambiguous, the router will decide the zone.
+- If the user passed `--zone X`, the router forces the zone.
 
-### 5. Invoquer le router avec hint source forcée
+### 5. Invoke the router with forced source hint
 
-Appeler le router avec :
-- `Contenu` : contenu extrait du document.
-- `Hint zone` : valeur de `--zone` si fournie, sinon laisser le router décider.
-- `Hint source` : `doc`.
-- `Métadonnées` : projet/domaine résolu, scope, **`source_hash`**, **`source_path`** (chemin original), **`source_copy`** (chemin de la copie dans 99-meta/sources/), **`source_size_bytes`**.
+Call the router with:
+- `Content`: extracted content of the document.
+- `Hint zone`: value of `--zone` if provided, otherwise let the router decide.
+- `Hint source`: `doc`.
+- `Metadata`: resolved project/domain, scope, **`source_hash`**, **`source_path`** (original path), **`source_copy`** (copy path inside 99-meta/sources/), **`source_size_bytes`**.
 
 {{INCLUDE _router}}
 
-Le router ajoute au frontmatter de chaque atome créé :
+The router adds to the frontmatter of each created atom:
 - `source: doc`
 - `source_hash`, `source_path`, `source_copy`, `source_size_bytes`
-- `source_type` (extension du fichier)
+- `source_type` (file extension)
 
-### 6. Confirmer
+### 6. Confirm
 
-Le router produit son rapport. Mentionner explicitement : « Fichier source copié dans `{copie}`, hash `{hash8}...`. Ré-ingestion idempotente. »
+The router produces its report. Mention explicitly: "Source file copied to `{copy}`, hash `{hash8}...`. Re-ingestion is idempotent."

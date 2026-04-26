@@ -1,212 +1,212 @@
-## Router sémantique — procédure d'ingestion
+## Semantic router — ingestion procedure
 
-Le router est le composant central d'ingestion du vault SecondBrain v0.5. Il est invoqué par tous les skills d'ingestion (`mem`, `mem-archive`, `mem-doc`, `mem-archeo`, `mem-archeo-atlassian`, `mem-note`, `mem-principle`, `mem-goal`, `mem-person`) avec un éventuel **hint de zone forcée** transmis par le skill appelant.
+The router is the central ingestion component of the SecondBrain v0.5 vault. It is invoked by all ingestion skills (`mem`, `mem-archive`, `mem-doc`, `mem-archeo`, `mem-archeo-atlassian`, `mem-note`, `mem-principle`, `mem-goal`, `mem-person`) with an optional **forced-zone hint** passed by the calling skill.
 
-### R1. Réception et préformatage
+### R1. Reception and preformatting
 
-Le router reçoit en entrée :
+The router receives as input:
 
-- **Contenu** : texte Markdown (peut contenir plusieurs atomes hétérogènes).
-- **Hint de zone forcée** (optionnel) : valeur parmi `episodes`, `knowledge`, `procedures`, `principes`, `objectifs`, `personnes`, `cognition`. Si présent, **bypass de la cascade d'heuristiques** pour l'ensemble du contenu (mais la segmentation peut quand même produire plusieurs atomes au sein de la zone).
-- **Hint de source** (optionnel) : `vecu | doc | archeo-git | archeo-atlassian | manuel`. Renseigné par le skill appelant. Défaut : `manuel`.
-- **Métadonnées de contexte** (optionnel) : projet/domaine courant détecté par l'adapter (CWD), branche Git, scope par défaut (`default_scope` lu dans `~/.claude/memory-kit.json`).
+- **Content**: Markdown text (may contain several heterogeneous atoms).
+- **Forced-zone hint** (optional): one of `episodes`, `knowledge`, `procedures`, `principles`, `goals`, `people`, `cognition`. If present, **bypass the heuristics cascade** for the entire content (but segmentation may still produce multiple atoms within the zone).
+- **Source hint** (optional): `lived | doc | archeo-git | archeo-atlassian | manual`. Set by the calling skill. Default: `manual`.
+- **Context metadata** (optional): current project/domain detected by the adapter (CWD), Git branch, default scope (`default_scope` read in `~/.claude/memory-kit.json`).
 
-Préparation :
+Preparation:
 
-1. Normaliser le contenu (LF, UTF-8 sans BOM — les adapters l'ont déjà fait, mais on revérifie).
-2. Établir le **scope par défaut** : valeur de `default_scope` du `memory-kit.json` (ou `pro` si absent), surchargée par `--scope perso|pro` éventuel passé par l'utilisateur.
-3. Établir la **date / heure courante** au format `YYYY-MM-DD` / `HH:MM`.
+1. Normalize content (LF, UTF-8 without BOM — adapters already did this, but verify again).
+2. Establish the **default scope**: `default_scope` value from `memory-kit.json` (or `work` if absent), overridden by any `--scope personal|work` passed by the user.
+3. Establish the **current date / time** in `YYYY-MM-DD` / `HH:MM` format.
 
-### R2. Segmentation en atomes
+### R2. Segmentation into atoms
 
-Un input peut contenir un seul atome (cas le plus fréquent : « ne jamais X » → un principe unique) ou plusieurs (ex: une session de dev qui livre une décision + 2 principes + 1 connaissance).
+An input may contain a single atom (most common case: "never X" → a single principle) or several (e.g., a dev session yielding a decision + 2 principles + 1 piece of knowledge).
 
-Heuristiques de segmentation, à appliquer dans l'ordre :
+Segmentation heuristics, applied in order:
 
-1. **Délimiteurs explicites** : `---` Markdown, ou puces de liste de premier niveau séparées par des lignes vides → chaque section est un atome candidat.
-2. **Titres Markdown** (`#`, `##`) : chaque section sous un titre est un atome candidat.
-3. **Verbes / structures rhétoriques distinctes** dans un même paragraphe : « décision », « règle », « note », « contact », « TODO » → atomes candidats même sans délimiteur explicite.
-4. **Aucune segmentation détectée** : le contenu entier = un seul atome.
+1. **Explicit delimiters**: Markdown `---`, or top-level list bullets separated by blank lines → each section is a candidate atom.
+2. **Markdown headings** (`#`, `##`): each section under a heading is a candidate atom.
+3. **Distinct verbs / rhetorical structures** within the same paragraph: "decision", "rule", "note", "contact", "TODO" → candidate atoms even without an explicit delimiter.
+4. **No segmentation detected**: the entire content = a single atom.
 
-Pour chaque atome candidat, conserver :
-- Son **texte brut** (préservé tel quel, le LLM ne reformule pas).
-- Son **contexte parent** (le reste du contenu, pour donner du contexte au classement).
+For each candidate atom, keep:
+- Its **raw text** (preserved as-is, the LLM does not rephrase).
+- Its **parent context** (the rest of the content, to give context for classification).
 
-Limite : si le router détecte plus de **8 atomes** dans un même input, considérer que la segmentation est suspecte → tout regrouper en un seul atome envoyé en `00-inbox/` avec un message à l'utilisateur (« Segmentation > 8 atomes refusée, contenu placé en inbox pour reclassement manuel »).
+Limit: if the router detects more than **8 atoms** in a single input, consider segmentation suspicious → group everything into a single atom sent to `00-inbox/` with a message to the user ("Segmentation > 8 atoms refused, content placed in inbox for manual reclassification").
 
-### R3. Cascade d'heuristiques de classement
+### R3. Classification heuristics cascade
 
-Pour chaque atome (et si pas de hint de zone forcée), appliquer la cascade en ordre de priorité — **premier match gagne** :
+For each atom (and if no forced-zone hint), apply the cascade in priority order — **first match wins**:
 
-| Priorité | Indice détecté | Zone cible | Type |
+| Priority | Detected clue | Target zone | Type |
 |---|---|---|---|
-| 1 | Hint de zone forcée par le skill appelant | Zone forcée | (selon zone) |
-| 2 | Événement daté au passé + contexte projet/domaine identifiable (« hier », « aujourd'hui », « le DD/MM », verbes au passé concrets, hint `source: vecu\|archeo-*`) | `10-episodes/{kind}/{slug}/archives/` | `archive` |
-| 3 | Verbe impératif ou structure étape-par-étape (« comment faire », « pour X : étape 1, 2, 3 », « playbook ») | `30-procedures/{scope}/{categorie}/` | `procedure` |
-| 4 | Règle / contrainte / valeur (« toujours », « jamais », « privilégier », « éviter », « ligne rouge », « ne pas ») | `40-principes/{scope}/{domaine}/` | `principe` |
-| 5 | Intention future + horizon temporel (« objectif », « vise », « d'ici X », date-échéance, « ambition ») | `50-objectifs/{scope}/{horizon}/` | `objectif` |
-| 6 | Fiche personne (nom propre + rôle/relation, « collègue », « client », « ami ») | `60-personnes/{scope}/{categorie}/` | `personne` |
-| 7 | Production non verbale ou référence à schéma (Excalidraw, métaphore explicite, mention `.canvas`/`.excalidraw`) | `70-cognition/{type}/` | `schema\|metaphore\|moodboard\|sketch` |
-| 8 | Fait / concept / définition / synthèse stable (description, glossaire, fiche de connaissance) | `20-knowledge/{famille}/{sous-domaine}/` | `concept\|fiche\|synthese\|glossaire\|reference` |
-| 9 | Aucun match clair, ambigu | `00-inbox/` | (laissé vide) |
+| 1 | Forced-zone hint by the calling skill | Forced zone | (depends on zone) |
+| 2 | Past-dated event + identifiable project/domain context ("yesterday", "today", "on DD/MM", concrete past-tense verbs, hint `source: lived\|archeo-*`) | `10-episodes/{kind}/{slug}/archives/` | `archive` |
+| 3 | Imperative verb or step-by-step structure ("how to", "for X: step 1, 2, 3", "playbook") | `30-procedures/{scope}/{category}/` | `procedure` |
+| 4 | Rule / constraint / value ("always", "never", "prefer", "avoid", "red line", "do not") | `40-principles/{scope}/{domain}/` | `principle` |
+| 5 | Future intent + time horizon ("goal", "aim", "by X", deadline date, "ambition") | `50-goals/{scope}/{horizon}/` | `goal` |
+| 6 | Person card (proper noun + role/relation, "colleague", "client", "friend") | `60-people/{scope}/{category}/` | `person` |
+| 7 | Non-verbal production or schema reference (Excalidraw, explicit metaphor, mention of `.canvas`/`.excalidraw`) | `70-cognition/{type}/` | `schema\|metaphor\|moodboard\|sketch` |
+| 8 | Stable fact / concept / definition / synthesis (description, glossary, knowledge card) | `20-knowledge/{family}/{subdomain}/` | `concept\|card\|synthesis\|glossary\|reference` |
+| 9 | No clear match, ambiguous | `00-inbox/` | (left empty) |
 
-**Détection du scope** par indices lexicaux :
+**Scope detection** by lexical clues:
 
-| Indice | Scope déduit |
+| Clue | Inferred scope |
 |---|---|
-| « mon équipe », « client », « collègue », « projet de travail », nom de société | `pro` |
-| « ma famille », « ma santé », « mon enfant », « mes vacances » | `perso` |
-| Aucun indice clair | `default_scope` du `memory-kit.json` (défaut `pro`) |
+| "my team", "client", "colleague", "work project", company name | `work` |
+| "my family", "my health", "my child", "my vacation" | `personal` |
+| No clear clue | `default_scope` from `memory-kit.json` (default `work`) |
 
-**Détection du projet/domaine** : si l'atome mentionne explicitement un slug de projet existant (lister via `{VAULT}/10-episodes/projets/` et `{VAULT}/10-episodes/domaines/`), associer. Sinon, utiliser le projet/domaine du **contexte d'invocation** (CWD ou métadonnées passées par l'adapter). Sinon, laisser sans rattachement (sauf pour zone `episodes` qui exige toujours un `kind` + slug).
+**Project/domain detection**: if the atom explicitly mentions an existing project slug (list via `{VAULT}/10-episodes/projects/` and `{VAULT}/10-episodes/domains/`), associate it. Otherwise, use the project/domain from the **invocation context** (CWD or metadata passed by the adapter). Otherwise, leave unattached (except for zone `episodes` which always requires a `kind` + slug).
 
-### R4. Enrichissement du frontmatter
+### R4. Frontmatter enrichment
 
-Pour chaque atome classé, construire un frontmatter conforme à la zone cible (cf. `_frontmatter-universel.md` pour les champs universels, et la section 7 du document de cadrage `docs/architecture/brain-architecture-v0.5.md` pour les champs propres à chaque zone).
+For each classified atom, build a frontmatter compliant with the target zone (see `_frontmatter-universal.md` for universal fields, and section 7 of the cadrage document `docs/architecture/brain-architecture-v0.5.md` for zone-specific fields).
 
-Champs systématiquement renseignés :
-- `date` : date courante.
-- `zone` : zone cible.
-- `scope` : `perso` ou `pro`.
-- `collectif: false` (toujours à l'écriture initiale).
-- `modality: left` (par défaut), `right` uniquement si zone = `cognition`.
-- `tags` : liste reflétant le frontmatter (`zone/*`, `scope/*`, `kind/*` si episodes, `type/*`, etc. — cf. section 6 du doc de cadrage).
+Fields always set:
+- `date`: current date.
+- `zone`: target zone.
+- `scope`: `personal` or `work`.
+- `collective: false` (always at initial write).
+- `modality: left` (by default), `right` only if zone = `cognition`.
+- `tags`: list mirroring the frontmatter (`zone/*`, `scope/*`, `kind/*` if episodes, `type/*`, etc. — see section 6 of the cadrage doc).
 
-Champs spécifiques à la zone (voir section 7 du doc) :
-- **episodes** : `kind`, `projet` ou `domaine`, `heure`, `source`, `derived_atoms` (vide à la création, rempli si atomes dérivés).
-- **knowledge** : `type` (`concept|fiche|synthese|glossaire|reference`), `sources: []`.
-- **procedures** : `type: procedure`, `etapes`, `duree_estimee`, `outils`.
-- **principes** : `force` (`ligne-rouge|heuristique|preference`), `contexte_origine` (lien vers archive fondatrice si dérivé), `projet`.
-- **objectifs** : `horizon` (`court|moyen|long`), `echeance`, `statut: ouvert`, `projet`.
-- **personnes** : `nom`, `role`, `organisation`, `contact`, `derniere_interaction`, `sensitive: true`.
-- **cognition** : `type` (`schema|metaphore|moodboard|sketch`), `projet`.
+Zone-specific fields (see section 7 of the doc):
+- **episodes**: `kind`, `project` or `domain`, `time`, `source`, `derived_atoms` (empty at creation, filled if derived atoms).
+- **knowledge**: `type` (`concept|card|synthesis|glossary|reference`), `sources: []`.
+- **procedures**: `type: procedure`, `steps`, `estimated_duration`, `tools`.
+- **principles**: `force` (`red-line|heuristic|preference`), `context_origin` (link to founding archive if derived), `project`.
+- **goals**: `horizon` (`short|medium|long`), `deadline`, `status: open`, `project`.
+- **people**: `name`, `role`, `organization`, `contact`, `last_interaction`, `sensitive: true`.
+- **cognition**: `type` (`schema|metaphor|moodboard|sketch`), `project`.
 
-### R5. Construction du chemin cible
+### R5. Target path construction
 
-Le chemin du fichier suit la zone et la sous-arborescence :
+The file path follows the zone and sub-tree:
 
-| Zone | Chemin |
+| Zone | Path |
 |---|---|
-| `inbox` | `{VAULT}/00-inbox/{YYYY-MM-DD}-{slug-sujet}.md` |
-| `episodes` (projet) | `{VAULT}/10-episodes/projets/{slug}/archives/{YYYY-MM-DD-HHhMM}-{slug}-{sujet-court}.md` |
-| `episodes` (domaine) | `{VAULT}/10-episodes/domaines/{slug}/archives/{YYYY-MM-DD-HHhMM}-{slug}-{sujet-court}.md` |
-| `knowledge` | `{VAULT}/20-knowledge/{famille}/{sous-domaine}/{slug-sujet}.md` |
-| `procedures` | `{VAULT}/30-procedures/{scope}/{categorie}/{slug-sujet}.md` |
-| `principes` | `{VAULT}/40-principes/{scope}/{domaine}/{slug-sujet}.md` |
-| `objectifs` (perso) | `{VAULT}/50-objectifs/perso/{categorie}/{slug-sujet}.md` |
-| `objectifs` (pro projet) | `{VAULT}/50-objectifs/pro/projets/{slug-projet}/{slug-sujet}.md` |
-| `personnes` | `{VAULT}/60-personnes/{scope}/{categorie}/{slug-nom}.md` |
-| `cognition` | `{VAULT}/70-cognition/{type}/{slug-sujet}.md` |
+| `inbox` | `{VAULT}/00-inbox/{YYYY-MM-DD}-{slug-subject}.md` |
+| `episodes` (project) | `{VAULT}/10-episodes/projects/{slug}/archives/{YYYY-MM-DD-HHhMM}-{slug}-{short-subject}.md` |
+| `episodes` (domain) | `{VAULT}/10-episodes/domains/{slug}/archives/{YYYY-MM-DD-HHhMM}-{slug}-{short-subject}.md` |
+| `knowledge` | `{VAULT}/20-knowledge/{family}/{subdomain}/{slug-subject}.md` |
+| `procedures` | `{VAULT}/30-procedures/{scope}/{category}/{slug-subject}.md` |
+| `principles` | `{VAULT}/40-principles/{scope}/{domain}/{slug-subject}.md` |
+| `goals` (personal) | `{VAULT}/50-goals/personal/{category}/{slug-subject}.md` |
+| `goals` (work project) | `{VAULT}/50-goals/work/projects/{project-slug}/{slug-subject}.md` |
+| `people` | `{VAULT}/60-people/{scope}/{category}/{name-slug}.md` |
+| `cognition` | `{VAULT}/70-cognition/{type}/{slug-subject}.md` |
 
-`{slug-sujet}` est dérivé du sujet de l'atome : lowercase, accents retirés, espaces → `-`, max 60 caractères, caractères FS-invalides (`/\:*?"<>|`) supprimés.
+`{slug-subject}` is derived from the atom's subject: lowercase, accents stripped, spaces → `-`, max 60 characters, FS-invalid characters (`/\:*?"<>|`) removed.
 
-Si le dossier parent n'existe pas, le créer avant l'écriture (`New-Item -ItemType Directory -Force` ou équivalent).
+If the parent folder does not exist, create it before writing (`New-Item -ItemType Directory -Force` or equivalent).
 
-### R6. Plan d'ingestion et mode safe conditionnel
+### R6. Ingestion plan and conditional safe mode
 
-**Si segmentation = 1 atome** (cas le plus fréquent) → **mode fluide** : écrire directement, puis afficher le rapport.
+**If segmentation = 1 atom** (most common case) → **fluid mode**: write directly, then display the report.
 
-**Si segmentation > 1 atome** → **mode safe** : afficher d'abord le **plan d'ingestion** et attendre la confirmation utilisateur :
+**If segmentation > 1 atom** → **safe mode**: first display the **ingestion plan** and wait for user confirmation:
 
 ```
-Plan d'ingestion (N atomes détectés) :
-  [1] {résumé court de l'atome 1}
-      → {chemin cible 1}  (zone: {zone}, source: {source}, scope: {scope})
-  [2] {résumé court de l'atome 2}
-      → {chemin cible 2}  (zone: {zone}, source: {source}, scope: {scope})
+Ingestion plan (N atoms detected):
+  [1] {short summary of atom 1}
+      → {target path 1}  (zone: {zone}, source: {source}, scope: {scope})
+  [2] {short summary of atom 2}
+      → {target path 2}  (zone: {zone}, source: {source}, scope: {scope})
   ...
 
-Continuer ? [o/n/e(dit)]
+Continue? [y/n/e(dit)]
 ```
 
-- `o` (oui) → écrire tous les atomes selon le plan.
-- `n` (non) → annuler, ne rien écrire.
-- `e` (edit) → permettre à l'utilisateur de modifier la classification d'un atome (changer zone, scope, ou rejeter cet atome) avant écriture.
+- `y` (yes) → write all atoms per the plan.
+- `n` (no) → cancel, write nothing.
+- `e` (edit) → allow the user to modify an atom's classification (change zone, scope, or reject this atom) before writing.
 
-**Flags utilisateur** :
-- `--no-confirm` : force le mode fluide même sur multi-atomes (utile en batch / scripts).
-- `--dry-run` : force le mode safe sans écriture (inspection seule du plan, retour `n` automatique après affichage).
+**User flags**:
+- `--no-confirm`: force fluid mode even on multi-atoms (useful in batch / scripts).
+- `--dry-run`: force safe mode without writing (plan inspection only, automatic `n` return after display).
 
-### R7. Écriture
+### R7. Writing
 
-Pour chaque atome accepté du plan :
+For each accepted atom in the plan:
 
 {{INCLUDE _encoding}}
 
 {{INCLUDE _concurrence}}
 
-Étapes par atome :
+Steps per atom:
 
-1. **Construire le contenu Markdown final** : frontmatter (R4) + corps de la note (texte brut de l'atome avec mise en forme minimale).
-2. **Vérifier les invariants** (cf. `_frontmatter-universel.md` section « Invariants à vérifier à l'écriture ») — si violation, signaler à l'utilisateur et écrire en `00-inbox/` avec tag `invariant-violation` au lieu de la zone cible.
-3. **Créer le dossier parent** si absent.
-4. **Écrire via rename atomique** (Pattern 1).
-5. Si la zone cible est `episodes` : mettre à jour `historique.md` du projet/domaine via **rename atomique + hash check** (Pattern 2). Ajouter une ligne `- [YYYY-MM-DD HHhMM — {sujet}](archives/{nom-archive}.md)`.
-6. Si l'atome a un `derived_atoms` (atome parent qui a généré celui-ci) : enrichir l'atome parent en ajoutant `derived_atoms: [..., "[[nouveau-atome]]"]`. Bidirectionnalité.
-7. Mettre à jour `99-meta/_index.md` (rename atomique + hash check) : ajouter une entrée dans la section `Archives` (zone episodes uniquement) ou simplement maintenir le compteur global.
+1. **Build the final Markdown content**: frontmatter (R4) + note body (raw atom text with minimal formatting).
+2. **Check invariants** (see `_frontmatter-universal.md` section "Invariants to check at write time") — if violated, report to the user and write to `00-inbox/` with tag `invariant-violation` instead of the target zone.
+3. **Create the parent folder** if missing.
+4. **Write via atomic rename** (Pattern 1).
+5. If the target zone is `episodes`: update the project/domain `history.md` via **atomic rename + hash check** (Pattern 2). Add a line `- [YYYY-MM-DD HHhMM — {subject}](archives/{archive-name}.md)`.
+6. If the atom has a `derived_atoms` (parent atom that generated this one): enrich the parent atom by adding `derived_atoms: [..., "[[new-atom]]"]`. Bidirectionality.
+7. Update `index.md` (atomic rename + hash check): add an entry in the `Archives` section (episodes zone only) or simply maintain the global counter.
 
-### R8. Liens bidirectionnels (atomes dérivés)
+### R8. Bidirectional links (derived atoms)
 
-Quand un atome A en zone `episodes` génère un atome B en **autre zone** (principe, objectif, connaissance, procédure, fiche personne, production cognitive — peu importe la zone cible), créer un **lien bidirectionnel** :
+When an atom A in zone `episodes` generates an atom B in **another zone** (principle, goal, knowledge, procedure, person card, cognitive production — regardless of the target zone), create a **bidirectional link**:
 
-- Dans A (`10-episodes/...`) : ajouter dans le frontmatter `derived_atoms: ["[[chemin-relatif-vers-B]]"]`.
-- Dans B (zone cible, **toutes zones confondues**) : renseigner `contexte_origine: "[[chemin-relatif-vers-A]]"`.
+- In A (`10-episodes/...`): add to the frontmatter `derived_atoms: ["[[relative-path-to-B]]"]`.
+- In B (target zone, **all zones combined**): set `context_origin: "[[relative-path-to-A]]"`.
 
-**Règle universelle** (clarifiée v0.5.0.1 suite au retour terrain Gemini archeo mcp-iris-connector) : `contexte_origine` est obligatoire sur **tout atome dérivé**, pas seulement sur les principes. Cela inclut :
+**Universal rule** (clarified v0.5.0.1 following Gemini archeo mcp-iris-connector field feedback): `context_origin` is mandatory on **every derived atom**, not only on principles. This includes:
 
-- Concepts en `20-knowledge/` extraits d'une archive ou d'une page Confluence.
-- Procédures en `30-procedures/` extraites d'une archive de session.
-- Principes en `40-principes/` extraits d'une archive ou d'une décision.
-- Objectifs en `50-objectifs/` formulés au sein d'une session vécue.
-- Fiches personnes en `60-personnes/` mentionnées pour la première fois dans une archive.
-- Productions cognitives en `70-cognition/` rattachées à une session.
+- Concepts in `20-knowledge/` extracted from an archive or a Confluence page.
+- Procedures in `30-procedures/` extracted from a session archive.
+- Principles in `40-principles/` extracted from an archive or a decision.
+- Goals in `50-goals/` formulated within a lived session.
+- Person cards in `60-people/` mentioned for the first time in an archive.
+- Cognitive productions in `70-cognition/` linked to a session.
 
-Sans cette symétrie, les atomes dérivés deviennent orphelins : `mem-recall` ne peut plus remonter de l'archive aux atomes ni inversement, et la vue Obsidian Graph perd la filiation.
+Without this symmetry, derived atoms become orphans: `mem-recall` can no longer go from the archive to the atoms or vice versa, and the Obsidian Graph view loses the lineage.
 
-**Schéma de la bidirectionnalité** :
+**Bidirectionality schema**:
 
 ```
-Archive (10-episodes)              Atome dérivé (20-* à 70-*)
+Archive (10-episodes)              Derived atom (20-* to 70-*)
 ┌────────────────────┐             ┌─────────────────────────┐
 │ frontmatter:       │             │ frontmatter:            │
-│   derived_atoms: [ │ ─────────→  │   contexte_origine:     │
+│   derived_atoms: [ │ ─────────→  │   context_origin:     │
 │     [[B1]],        │             │     "[[A]]"             │
 │     [[B2]],        │ ←─────────  │                         │
 │     ...            │             │                         │
 └────────────────────┘             └─────────────────────────┘
 ```
 
-Obsidian Graph rendra visible la filiation dans les deux sens. Cette bidirectionnalité est indispensable pour que `mem-recall {projet}` puisse charger non seulement les archives mais aussi les principes/objectifs/connaissances/personnes dérivés du projet.
+Obsidian Graph will make the lineage visible in both directions. This bidirectionality is essential so that `mem-recall {project}` can load not only the archives but also the principles/goals/knowledge/people derived from the project.
 
-### R9. Rapport utilisateur
+### R9. User report
 
-À la fin de l'écriture, afficher un **rapport synthétique** :
+At the end of writing, display a **synthetic report**:
 
 ```
-✓ {N} atome(s) ingéré(s) :
-  [1] {sujet} → {chemin}
-  [2] {sujet} → {chemin}
+✓ {N} atom(s) ingested:
+  [1] {subject} → {path}
+  [2] {subject} → {path}
   ...
 
-Liens : {N} liens bidirectionnels créés (visible dans Obsidian Graph).
-Prochaines étapes suggérées : {ouvrir le vault | reclasser via /mem-reclass | voir l'index}.
+Links: {N} bidirectional links created (visible in Obsidian Graph).
+Suggested next steps: {open the vault | reclassify via /mem-reclass | view the index}.
 ```
 
-Si certains atomes ont été refusés (mode safe avec `n` ou `e`), les lister dans le rapport :
+If some atoms were rejected (safe mode with `n` or `e`), list them in the report:
 
 ```
-✗ {M} atome(s) non écrit(s) (refusé par utilisateur) :
-  [3] {sujet} — refusé
+✗ {M} atom(s) not written (rejected by user):
+  [3] {subject} — rejected
 ```
 
-### R10. Idempotence (pour skills `mem-archeo*`)
+### R10. Idempotence (for `mem-archeo*` skills)
 
-Quand le router est invoqué par `mem-archeo` ou `mem-archeo-atlassian` (rétro-archivage), il doit éviter de **recréer des atomes déjà ingérés** lors d'un précédent passage.
+When the router is invoked by `mem-archeo` or `mem-archeo-atlassian` (retro-archiving), it must avoid **recreating atoms already ingested** during a previous pass.
 
-Mécanisme :
-- L'atome porte un identifiant d'origine : `source_jalon` (commit SHA pour archeo-git, page ID pour archeo-atlassian) + `source_atom_type` (event/principle/concept/etc.) + `source_atom_subject` (slug court du sujet).
-- Avant l'écriture, le router cherche dans le vault un fichier ayant les mêmes 3 champs. Si trouvé :
-  - Si contenu identique → skip silencieux.
-  - Si contenu modifié → créer une nouvelle version avec `previous_atom: [[ancien]]` + tag `revision`. Préserve l'immuabilité des archives historiques.
+Mechanism:
+- The atom carries an origin identifier: `source_milestone` (commit SHA for archeo-git, page ID for archeo-atlassian) + `source_atom_type` (event/principle/concept/etc.) + `source_atom_subject` (short slug of the subject).
+- Before writing, the router searches the vault for a file with the same 3 fields. If found:
+  - If content identical → silent skip.
+  - If content modified → create a new version with `previous_atom: [[old]]` + tag `revision`. Preserves the immutability of historical archives.
 
-Cette logique ne s'applique **pas** aux skills d'ingestion vécue (`mem-archive`, `mem-note`, etc.) : ces skills produisent toujours du contenu nouveau, pas de risque de doublon.
+This logic does **not** apply to lived ingestion skills (`mem-archive`, `mem-note`, etc.): these skills always produce new content, no risk of duplicate.

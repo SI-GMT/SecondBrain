@@ -1,111 +1,111 @@
-# Procédure : Recall (v0.5 brain-centric)
+# Procedure: Recall (v0.5 brain-centric)
 
-Objectif : retrouver le contexte de travail depuis le vault après un `/clear` ou au début d'une nouvelle session. Permettre à l'utilisateur de reprendre en 30 secondes sans re-briefing manuel. En v0.5, le rappel charge non seulement les archives de session mais aussi les **principes actifs**, **objectifs ouverts** et **personnes-clés** rattachés au projet/domaine — pour donner un contexte complet, pas juste épisodique.
+Goal: retrieve the work context from the vault after a `/clear` or at the start of a new session. Allow the user to resume in 30 seconds without manual re-briefing. In v0.5, recall loads not only the session archives but also the **active principles**, **open goals** and **key people** attached to the project/domain — to give a complete context, not only an episodic one.
 
-## Déclenchement
+## Trigger
 
-### Automatique (sans que l'utilisateur tape `/mem-recall`)
+### Automatic (without the user typing `/mem-recall`)
 
-Déclencher la procédure complète dès que l'utilisateur exprime, en langage naturel :
+Trigger the full procedure as soon as the user expresses, in natural language:
 
-- Une intention de reprise : « reprends », « on continue », « où on en était sur X », « on reprend ? », « on s'y remet ».
-- Un besoin de consulter la mémoire : « tu te rappelles de… », « qu'est-ce qu'on a décidé pour… », « on avait fait quoi déjà ? », « rappelle-moi… ».
+- A resume intent: "resume", "let's continue", "where were we on X", "shall we resume?", "let's get back to it".
+- A need to consult memory: "do you remember…", "what did we decide for…", "what did we do again?", "remind me…".
 
-Si le signal est ambigu (le projet ou domaine visé n'est pas clair), demander : « Tu veux que je charge le contexte de {nom} ? » avant d'exécuter.
+If the signal is ambiguous (the target project or domain is unclear), ask: "Do you want me to load the context of {name}?" before executing.
 
-### Explicite
+### Explicit
 
-L'utilisateur invoque `/mem-recall` avec ou sans argument. L'argument éventuel est le nom du projet ou domaine à charger.
+The user invokes `/mem-recall` with or without an argument. The optional argument is the name of the project or domain to load.
 
-Options reconnues :
-- `--scope perso|pro|all` : filtre les éléments rattachés selon le scope. Défaut : `all`.
-- `--zone {liste}` : limite le chargement à certaines zones (par défaut : toutes les zones rattachées au projet/domaine).
+Recognized options:
+- `--scope personal|work|all`: filters attached items by scope. Default: `all`.
+- `--zone {list}`: limits loading to certain zones (default: all zones attached to the project/domain).
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Avant toute lecture, lire le fichier de configuration du kit mémoire ({{CONFIG_FILE}}) et en extraire le champ `vault`. Dans la suite, `{VAULT}` désigne cette valeur. Lire aussi `default_scope` du même fichier pour connaître la valeur par défaut du scope.
+Before any read, read the memory kit configuration file ({{CONFIG_FILE}}) and extract the `vault` field. In what follows, `{VAULT}` denotes this value. Also read `default_scope` from the same file to know the default scope value.
 
-Si le fichier est absent ou illisible, répondre :
-> Kit mémoire non configuré. Fichier attendu : {{CONFIG_FILE}}. Exécute `deploy.ps1` depuis la racine du kit.
+If the file is absent or unreadable, reply:
+> Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
 
-Puis s'arrêter.
+Then stop.
 
-## Procédure
+## Procedure
 
-### 1. Identifier le projet ou domaine
+### 1. Identify the project or domain
 
-Dans cet ordre :
+In this order:
 
-1. **Argument fourni** : utiliser la valeur donnée par l'utilisateur. Le router cherche d'abord dans `{VAULT}/10-episodes/projets/{slug}/`, puis dans `{VAULT}/10-episodes/domaines/{slug}/`.
-2. **Auto-détection** : prendre le basename du `cwd`. Si ce nom correspond à un slug existant dans `projets/` ou `domaines/`, l'utiliser.
-3. **Fallback interactif** : lire `{VAULT}/99-meta/_index.md`, afficher la liste des projets ET domaines, et demander à l'utilisateur lequel charger.
-4. **Vault vide ou aucun projet/domaine** : répondre « Aucun projet/domaine trouvé. Mémoire initialisée — {VAULT}/99-meta/_index.md est prêt. Décris ce sur quoi tu travailles et on commence. » puis s'arrêter.
+1. **Argument provided**: use the value given by the user. The router first searches in `{VAULT}/10-episodes/projects/{slug}/`, then in `{VAULT}/10-episodes/domains/{slug}/`.
+2. **Auto-detection**: take the basename of the `cwd`. If this name matches an existing slug in `projects/` or `domains/`, use it.
+3. **Interactive fallback**: read `{VAULT}/index.md`, display the list of projects AND domains, and ask the user which to load.
+4. **Empty vault or no project/domain**: reply "No project/domain found. Memory initialized — {VAULT}/index.md is ready. Describe what you're working on and we'll start." then stop.
 
-Dans la suite, `{kind}` désigne `projets` ou `domaines`, et `{slug}` le slug identifié.
+In what follows, `{kind}` denotes `projects` or `domains`, and `{slug}` the identified slug.
 
-### 2. Charger le contexte courant (voie rapide)
+### 2. Load the current context (fast path)
 
-**Si `{VAULT}/10-episodes/{kind}/{slug}/contexte.md` existe** : le lire en priorité. C'est l'état courant synthétisé (snapshot mutable). Voie rapide.
+**If `{VAULT}/10-episodes/{kind}/{slug}/context.md` exists**: read it first. It is the synthesized current state (mutable snapshot). Fast path.
 
-**Sinon** : lire la dernière archive listée dans `historique.md`. Extraire : état du projet, décisions, prochaines étapes, assets.
+**Otherwise**: read the latest archive listed in `history.md`. Extract: project state, decisions, next steps, assets.
 
-### 3. Charger l'historique
+### 3. Load the history
 
-Lire `{VAULT}/10-episodes/{kind}/{slug}/historique.md` pour voir le fil chronologique des sessions.
+Read `{VAULT}/10-episodes/{kind}/{slug}/history.md` to see the chronological session thread.
 
-### 4. Charger les éléments rattachés (nouveau v0.5)
+### 4. Load attached items (new in v0.5)
 
-Le projet/domaine se projette **transversalement** dans plusieurs zones via les tags `projet/{slug}` ou `domaine/{slug}`. Charger :
+The project/domain projects **transversally** into multiple zones via the tags `project/{slug}` or `domain/{slug}`. Load:
 
-| Zone | Filtre | Pourquoi |
+| Zone | Filter | Why |
 |---|---|---|
-| `40-principes/` | tag `projet/{slug}` ou `domaine/{slug}`, **filtré par scope** si `--scope` | Principes actifs nés dans ce projet ou s'y appliquant — le LLM doit les respecter pendant la session. |
-| `50-objectifs/` | tag `projet/{slug}` + `statut: ouvert\|en-cours` | Objectifs actifs — pour orienter les prochaines étapes. |
-| `60-personnes/` | mentionnés dans les 3 dernières archives ou liés via tag projet | Personnes-clés du projet — utile pour conserver le contexte relationnel. |
+| `40-principles/` | tag `project/{slug}` or `domain/{slug}`, **filtered by scope** if `--scope` | Active principles born in this project or applying to it — the LLM must respect them during the session. |
+| `50-goals/` | tag `project/{slug}` + `status: open\|in-progress` | Active goals — to orient the next steps. |
+| `60-people/` | mentioned in the last 3 archives or linked via project tag | Key people of the project — useful to preserve relational context. |
 
-Implémentation : grep sur `{VAULT}/40-principes/`, `{VAULT}/50-objectifs/`, `{VAULT}/60-personnes/` pour les tags pertinents. Limiter à 5 items par zone si trop nombreux (afficher « +N autres » en fin).
+Implementation: grep on `{VAULT}/40-principles/`, `{VAULT}/50-goals/`, `{VAULT}/60-people/` for the relevant tags. Limit to 5 items per zone if too many (display "+N more" at the end).
 
-### 5. Présenter le briefing
+### 5. Present the briefing
 
-Format de réponse :
+Reply format:
 
 ```
-## Reprise — {Projet ou Domaine} ({kind})
+## Resume — {Project or Domain} ({kind})
 
-**Dernière session** : {date} — {résumé}
-**Phase actuelle** : {phase}
-**Scope** : {perso|pro}
+**Last session**: {date} — {summary}
+**Current phase**: {phase}
+**Scope**: {personal|work}
 
-### État
-- Validé : …
-- En cours : …
+### State
+- Validated: …
+- In progress: …
 
-### Décisions clés
+### Key decisions
 - …
 
-### Principes actifs ({N})
-- {force} — {titre court} → [[lien]]
+### Active principles ({N})
+- {force} — {short title} → [[link]]
 - …
 
-### Objectifs ouverts ({N})
-- [{horizon}] {titre} (échéance: {date}) → [[lien]]
+### Open goals ({N})
+- [{horizon}] {title} (deadline: {date}) → [[link]]
 - …
 
-### Personnes-clés
-- {nom} ({rôle}) — dernière interaction {date} → [[lien]]
+### Key people
+- {name} ({role}) — last interaction {date} → [[link]]
 
-### Prochaines étapes
+### Next steps
 1. …
 2. …
 
-### Assets disponibles
-- {URLs ou « Aucun »}
+### Available assets
+- {URLs or "None"}
 ```
 
-Adapter le briefing au scope demandé : si `--scope perso`, masquer les éléments `pro` et inversement.
+Adapt the briefing to the requested scope: if `--scope personal`, hide `work` items and conversely.
 
-### 6. Proposer la suite
+### 6. Propose what's next
 
-Demander : « On reprend à l'étape {X} ? »
+Ask: "Do we resume at step {X}?"
 
-Si l'utilisateur confirme, lire les fichiers projet nécessaires et démarrer le travail.
+If the user confirms, read the necessary project files and start the work.

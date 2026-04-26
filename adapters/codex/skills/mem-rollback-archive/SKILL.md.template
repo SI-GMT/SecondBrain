@@ -1,6 +1,6 @@
 ---
 name: mem-rollback-archive
-description: Annuler la dernière archive d'un projet. Supprime le fichier archive + retire ligne de historique.md + retire ligne de _index.md. NE RESTAURE PAS contexte.md. DÉCLENCHEMENT via /mem-rollback-archive [projet] ou langage naturel — « annule la dernière archive », « rollback l'archive de X ».
+description: Cancel the last archive of a project (or of the global vault if no project specified). Deletes the archive file, removes the corresponding line from history.md and from index.md. DOES NOT RESTORE context.md — warn the user and suggest /mem-recall to regenerate a context from the remaining archives. TRIGGER via /mem-rollback-archive [project] or natural language — 'cancel the last archive', 'forget the last session', 'rollback the archive of X'.
 ---
 
 {{PROCEDURE}}

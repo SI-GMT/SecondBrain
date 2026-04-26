@@ -1,6 +1,6 @@
 ---
 name: mem-note
-description: Ingerer rapidement une note de connaissance dans 20-knowledge/. Shortcut explicite quand l'utilisateur sait que ce qu'il capte est un fait, un concept, une fiche, une synthese.
+description: Quickly ingest a knowledge note into 20-knowledge/. Explicit shortcut when the user knows what they're capturing is a fact, concept, card, or stable synthesis.
 user-invocable: true
 ---
 

@@ -1,43 +1,43 @@
-# Procédure : Note (nouveau v0.5)
+# Procedure: Note (new in v0.5)
 
-Objectif : ingérer rapidement une note de connaissance dans `20-knowledge/`. Shortcut explicite quand l'utilisateur sait que ce qu'il capte est un fait, un concept, une fiche, ou une synthèse stable.
+Goal: quickly ingest a knowledge note into `20-knowledge/`. Explicit shortcut when the user knows that what they are capturing is a fact, a concept, a card, or a stable synthesis.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-note {contenu}` ou exprime l'intention en langage naturel : « note ce concept », « ajoute cette fiche », « enregistre cette définition ».
+The user types `/mem-note {content}` or expresses intent in natural language: "note this concept", "add this card", "save this definition".
 
-Options reconnues :
-- `--scope perso|pro` : force le scope.
-- `--famille metier|tech|vie|methodes` : force la famille de connaissance. Sinon, le router décide.
-- `--type concept|fiche|glossaire|synthese|reference` : force le type.
-- `--no-confirm`, `--dry-run` : passe au router.
+Recognized options:
+- `--scope personal|work`: forces the scope.
+- `--family business|tech|life|methods`: forces the knowledge family. Otherwise, the router decides.
+- `--type concept|card|glossary|synthesis|reference`: forces the type.
+- `--no-confirm`, `--dry-run`: passed through to the router.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Préformatage
+### 1. Pre-format
 
-Préparer le contenu Markdown de la note. Si l'utilisateur a fourni un titre clair, l'utiliser. Sinon, dériver un titre court depuis les premières lignes.
+Prepare the Markdown content of the note. If the user provided a clear title, use it. Otherwise, derive a short title from the first lines.
 
-### 2. Invoquer le router avec hint zone forcée
+### 2. Invoke the router with forced zone hint
 
-Appeler le router avec :
-- `Contenu` : le contenu de la note.
-- `Hint zone` : `knowledge` (force la zone, bypass cascade).
-- `Hint source` : `manuel`.
-- `Métadonnées` : famille forcée si fournie, type forcé si fourni.
+Call the router with:
+- `Content`: the note content.
+- `Hint zone`: `knowledge` (forces the zone, bypasses cascade).
+- `Hint source`: `manual`.
+- `Metadata`: forced family if provided, forced type if provided.
 
 {{INCLUDE _router}}
 
-Le router :
-- Détermine la sous-famille (`metier`, `tech`, `vie`, `methodes`) si non forcée, basée sur les indices lexicaux.
-- Écrit dans `{VAULT}/20-knowledge/{famille}/{sous-domaine}/{slug-titre}.md`.
-- Construit le frontmatter avec `type`, `tags`, etc.
-- Si l'invocation se fait depuis un projet/domaine courant, le tag `projet/{slug}` ou `domaine/{slug}` est ajouté pour rattachement transverse.
+The router:
+- Determines the sub-family (`business`, `tech`, `life`, `methods`) if not forced, based on lexical cues.
+- Writes into `{VAULT}/20-knowledge/{family}/{sub-domain}/{slug-title}.md`.
+- Builds the frontmatter with `type`, `tags`, etc.
+- If invocation happens from a current project/domain, the tag `project/{slug}` or `domain/{slug}` is added for cross-cutting attachment.
 
-### 3. Confirmer
+### 3. Confirm
 
-Le router produit son rapport. Pas d'action supplémentaire.
+The router produces its report. No additional action.

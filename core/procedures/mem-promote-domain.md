@@ -1,123 +1,123 @@
-# Procédure : Promote Domain (nouveau v0.5)
+# Procedure: Promote Domain (new in v0.5)
 
-Objectif : promouvoir un ensemble d'items cohérents de `00-inbox/` (ou items dispersés dans le vault) en un nouveau **domaine permanent** dans `10-episodes/domaines/{slug}/`. Vérifie la règle anti-dérive (≥ 3 items au même fil).
+Goal: promote a coherent set of items from `00-inbox/` (or items scattered across the vault) into a new **permanent domain** in `10-episodes/domains/{slug}/`. Enforces the anti-drift rule (>= 3 items on the same thread).
 
-Cas d'usage typique : tu as accumulé en inbox 3-4 notes sur ta santé qui ne rentrent dans aucun projet. Au lieu de créer un faux projet `sante`, tu les promeus en domaine permanent.
+Typical use case: you have accumulated 3-4 notes about your health in the inbox that don't fit into any project. Instead of creating a fake `health` project, promote them to a permanent domain.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-promote-domain {slug-cible} [items]` ou exprime l'intention en langage naturel : « crée un domaine santé », « promeus ces 3 notes en domaine », « regroupe ce fil en domaine ».
+The user types `/mem-promote-domain {target-slug} [items]` or expresses intent in natural language: "create a health domain", "promote these 3 notes into a domain", "regroup this thread into a domain".
 
-Arguments :
-- `{slug-cible}` (**obligatoire**) : slug du nouveau domaine à créer.
-- `{items}` (optionnel, multi-valué) : chemins des items à promouvoir. Si absent, demander à l'utilisateur la liste.
-- `--scope perso|pro` : scope du domaine. Défaut : `default_scope` du `memory-kit.json`.
-- `--from-inbox` : promouvoir tous les items de l'inbox qui matchent un mot-clé (à fournir).
-- `--dry-run` : affiche le plan sans appliquer.
-- `--no-confirm` : applique sans confirmation.
+Arguments:
+- `{target-slug}` (**required**): slug of the new domain to create.
+- `{items}` (optional, multi-valued): paths of items to promote. If absent, ask the user for the list.
+- `--scope personal|work`: scope of the domain. Default: `default_scope` from `memory-kit.json`.
+- `--from-inbox`: promote all inbox items matching a keyword (to be supplied).
+- `--dry-run`: shows the plan without applying.
+- `--no-confirm`: applies without confirmation.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Vérifier l'unicité du slug
+### 1. Verify slug uniqueness
 
-Vérifier que `{VAULT}/10-episodes/domaines/{slug-cible}/` n'existe pas déjà. Vérifier aussi qu'il n'y a pas de projet du même slug (collision sémantique).
+Verify that `{VAULT}/10-episodes/domains/{target-slug}/` does not already exist. Also verify there is no project with the same slug (semantic collision).
 
-Si conflit, arrêter avec message clair.
+If conflict, stop with a clear message.
 
-### 2. Énumérer les items à promouvoir
+### 2. Enumerate items to promote
 
-- Si `{items}` fourni : liste explicite.
-- Si `--from-inbox {keyword}` : grep dans `00-inbox/` pour les fichiers contenant le mot-clé.
-- Sinon : demander à l'utilisateur (le router peut suggérer en lisant l'inbox).
+- If `{items}` provided: explicit list.
+- If `--from-inbox {keyword}`: grep in `00-inbox/` for files containing the keyword.
+- Otherwise: ask the user (the router can suggest by reading the inbox).
 
-### 3. Vérifier la règle anti-dérive (≥ 3 items)
+### 3. Enforce the anti-drift rule (>= 3 items)
 
-Si moins de 3 items à promouvoir, afficher :
+If fewer than 3 items to promote, display:
 
-> Règle anti-dérive : un domaine ne se crée qu'à partir d'au moins 3 archives au même fil. Tu en as {N}.
-> Recommandation : laisse encore en inbox jusqu'à atteindre 3 items, ou rattache à un domaine existant.
+> Anti-drift rule: a domain can only be created from at least 3 archives on the same thread. You have {N}.
+> Recommendation: keep them in the inbox until you reach 3 items, or attach to an existing domain.
 
-Permettre à l'utilisateur de bypasser explicitement avec `--force` (bool, à ajouter en option si besoin).
+Allow the user to bypass explicitly with `--force` (bool, to be added as an option if needed).
 
-### 4. Présenter le plan
+### 4. Present the plan
 
-Format :
+Format:
 
 ```
-## Promotion de domaine — {slug-cible}
+## Domain promotion — {target-slug}
 
-Scope : {perso|pro}
+Scope: {personal|work}
 
-Items à promouvoir ({N}) :
-  - {chemin item 1} → 10-episodes/domaines/{slug}/archives/{nom}.md
-  - {chemin item 2} → ...
+Items to promote ({N}):
+  - {item path 1} → 10-episodes/domains/{slug}/archives/{name}.md
+  - {item path 2} → ...
   - ...
 
-Structure créée :
-  10-episodes/domaines/{slug-cible}/
-    contexte.md (squelette)
-    historique.md (squelette)
-    archives/ (avec items déplacés)
+Structure created:
+  10-episodes/domains/{target-slug}/
+    context.md (skeleton)
+    history.md (skeleton)
+    archives/ (with moved items)
 
-Continuer ? [o/n]
+Continue? [y/n]
 ```
 
-Si `--dry-run` : s'arrêter ici.
+If `--dry-run`: stop here.
 
-### 5. Appliquer (si confirmé ou `--no-confirm`)
+### 5. Apply (if confirmed or `--no-confirm`)
 
 {{INCLUDE _encoding}}
 
 {{INCLUDE _concurrence}}
 
-Étapes :
+Steps:
 
-1. **Créer la structure** : `mkdir -p 10-episodes/domaines/{slug-cible}/archives/`.
-2. **Créer `contexte.md`** squelette :
+1. **Create the structure**: `mkdir -p 10-episodes/domains/{target-slug}/archives/`.
+2. **Create `context.md`** skeleton:
    ```yaml
    ---
    zone: episodes
-   kind: domaine
-   slug: {slug-cible}
+   kind: domain
+   slug: {target-slug}
    scope: {scope}
-   collectif: false
-   tags: [zone/episodes, kind/domaine, domaine/{slug-cible}, scope/*]
+   collective: false
+   tags: [zone/episodes, kind/domain, domain/{target-slug}, scope/*]
    ---
 
-   # {slug-cible} — Contexte actif
+   # {target-slug} — Active context
 
-   ## État courant
-   Domaine permanent créé le YYYY-MM-DD à partir de {N} items.
+   ## Current state
+   Permanent domain created on YYYY-MM-DD from {N} items.
 
-   ## Décisions cumulées
-   (à enrichir au fil des sessions)
+   ## Cumulative decisions
+   (to be enriched session after session)
 
-   ## Prochaines étapes
-   (à définir)
+   ## Next steps
+   (to be defined)
    ```
-3. **Créer `historique.md`** squelette : titre + N entrées initiales pour les items promus.
-4. **Pour chaque item à promouvoir** :
-   - Lire son frontmatter actuel.
-   - Mettre à jour : `zone: episodes`, `kind: domaine`, `domaine: {slug-cible}`, ajouter tags `zone/episodes`, `kind/domaine`, `domaine/{slug-cible}`.
-   - Si la date du fichier n'est pas explicite, la dériver de la date de création FS.
-   - Renommer le fichier en `YYYY-MM-DD-HHhMM-{slug-cible}-{ancien-titre-court}.md`.
-   - Déplacer vers `10-episodes/domaines/{slug-cible}/archives/`.
-   - Pattern 1 (rename atomique).
-5. **Mettre à jour `99-meta/_index.md`** : ajouter le domaine en section Domaines.
-6. **Pour chaque item promu** : ajouter une ligne dans `historique.md` du nouveau domaine.
+3. **Create `history.md`** skeleton: title + N initial entries for the promoted items.
+4. **For each item to promote**:
+   - Read its current frontmatter.
+   - Update: `zone: episodes`, `kind: domain`, `domain: {target-slug}`, add tags `zone/episodes`, `kind/domain`, `domain/{target-slug}`.
+   - If the file date is not explicit, derive it from the FS creation date.
+   - Rename the file to `YYYY-MM-DD-HHhMM-{target-slug}-{old-short-title}.md`.
+   - Move to `10-episodes/domains/{target-slug}/archives/`.
+   - Pattern 1 (atomic rename).
+5. **Update `index.md`**: add the domain in the Domains section.
+6. **For each promoted item**: add a line in the new domain's `history.md`.
 
-### 6. Confirmer
+### 6. Confirm
 
-Format :
+Format:
 
 ```
-Domaine créé : {slug-cible} ({scope})
-{N} items promus depuis l'inbox / autres zones.
-Index mis à jour.
+Domain created: {target-slug} ({scope})
+{N} items promoted from inbox / other zones.
+Index updated.
 
-Pour ajouter de nouvelles archives à ce domaine : /mem-archive --domaine {slug-cible}
+To add new archives to this domain: /mem-archive --domain {target-slug}
 ```

@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Regenere les templates adapters pour la v0.5 : renommages + nouveaux skills.
+    Regenerates adapter templates for v0.5: renames + new skills.
 #>
 
 [CmdletBinding()]
@@ -14,55 +14,87 @@ $root = Split-Path -Parent $PSScriptRoot
 function Write-Ok([string]$msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Step([string]$msg) { Write-Host $msg -ForegroundColor Cyan }
 
-# Definitions des skills v0.5
+# v0.5 skill definitions
 $skillsV05 = [ordered]@{
+    'mem-archive' = @{
+        Description = "Archive the current work session into the memory vault so it can be resumed later via /mem-recall. Use this skill in TWO distinct situations. (1) FULL MODE, end of session — trigger when the user says 'we're stopping', 'I'm leaving', 'we're done', types /clear or /mem-archive, or explicitly asks to archive. Then execute the full procedure (timestamped archive file + rewrite of context.md + update of history.md + update of index.md). (2) SILENT INCREMENTAL MODE, during the session — as soon as a fact, decision, or important next step emerges AND is not already in context.md, update ONLY context.md without creating an archive or announcing the action to the user. Never create a full archive in silent mode: it would pollute the history."
+        ArgsText = "No required argument. Detection of the current project from CWD or git origin. Options: --project {slug} (force the target project), --message ""{summary}"" (override the auto-summary), --no-confirm, --dry-run."
+    }
+    'mem-recall' = @{
+        Description = "Load a project's context from the memory vault to resume a previous session without re-briefing. AUTO-TRIGGER (without waiting for the user to type /mem-recall) as soon as the user expresses, in natural language — a resumption intent ('let's resume', 'let's continue', 'where were we on X', 'back to it') OR a need to query memory ('do you remember…', 'what did we decide about…', 'what did we do again?', 'remind me'). Also explicitly invocable via /mem-recall with an optional project name. If the target project is ambiguous, ask for confirmation before executing."
+        ArgsText = "Optional argument: project or domain slug. If omitted, the skill tries to detect from CWD; if multiple matches, asks the user to choose."
+    }
+    'mem-doc' = @{
+        Description = "Ingest a local document (PDF, Markdown, text, image, docx…) into the memory vault as a single-shot archive. AUTO-TRIGGER (without waiting for the user to type /mem-doc) when they express, in natural language — 'ingest this document', 'archive this file', 'save this PDF to memory', 'absorb this document', 'index this spec'. Also explicitly invocable via /mem-doc {path} with options --project {slug}, --title ""{text}"". The target project is auto-resolved (priority: explicit arg → path match → CWD match → inbox fallback)."
+        ArgsText = "Required: path to the document. Options: --project {slug}, --title ""{text}"", --zone X (force target zone), --no-confirm, --dry-run."
+    }
+    'mem-archeo' = @{
+        Description = "Reconstruct the history of an existing Git repo as multiple dated archives in the memory vault (1 archive per tag, release, merge, or commit window). AUTO-TRIGGER (without waiting for /mem-archeo) when the user says — 'do a Git retro of this project', 'reconstruct the history of this repo', 'archeo on this repo', 'analyze the version tags and archive them'. Also invocable via /mem-archeo [repo-path] with options --level, --project, --since, --until, --window, --dry-run. Auto-detects granularity (tags → releases → merges → commit windows) with interactive confirmation before writing. Idempotent: skips archives already created for the same milestone. Never overwrites a lived archive."
+        ArgsText = "Optional: path to the Git repo (default: CWD). Options: --level tags|releases|merges|commits, --project {slug}, --since YYYY-MM-DD, --until YYYY-MM-DD, --window day|week|month, --dry-run, --no-confirm."
+    }
+    'mem-archeo-atlassian' = @{
+        Description = "Retro-archive a Confluence page tree (root page + descendants, or a full space) into the memory vault, with automatic enrichment from the Jira tickets referenced in the pages. AUTO-TRIGGER (without waiting for /mem-archeo-atlassian) when the user says — 'archive the Confluence documentation of this project', 'do a retro on this Atlassian space', 'ingest this page and its children', 'archive this doc and the linked tickets'. Also invocable via /mem-archeo-atlassian {url} with options --depth, --skip-children, --since, --skip-jira, --project, --dry-run. Requires the Atlassian MCP on the client side. 1 archive per Confluence page, with content converted to Markdown + summary of each Jira ticket mentioned. Idempotent (skips pages already archived up-to-date via confluence_page_id + confluence_updated). Frontmatter source=archeo-atlassian."
+        ArgsText = "Required: Confluence URL (page or space). Options: --depth N, --skip-children, --since YYYY-MM-DD, --skip-jira, --project {slug}, --dry-run, --no-confirm."
+    }
+    'mem-search' = @{
+        Description = "Full-text search in the memory vault (archives, contexts, histories, index). Returns matches with 2 lines of context, grouped by file, sorted recent-archives-first. TRIGGER via /mem-search {query} or natural language — 'search memory for X', 'find archives that mention Y', 'where did we talk about Z?'. Excludes .obsidian/, *.canvas, *.excalidraw.md, *.base. Read-only."
+        ArgsText = "Required: search query. Options: --zone X (limit to one zone), --project {slug} (limit to one project), --limit N, --case-sensitive."
+    }
+    'mem-digest' = @{
+        Description = "Synthesize the last N archives of a project — major arcs, structural decisions, drift of next steps, current state. Useful when a project has many sessions and you want the through-line without rereading everything. Read-only, writes nothing to the vault. TRIGGER via /mem-digest {project} [N] or natural language — 'summarize the last N sessions of X', 'do a digest of X', 'give me the through-line of X'. Default N=5."
+        ArgsText = "Required: project slug. Optional second argument: N (number of archives to include, default 5)."
+    }
+    'mem-rollback-archive' = @{
+        Description = "Cancel the last archive of a project (or of the global vault if no project specified). Deletes the archive file, removes the corresponding line from history.md and from index.md. DOES NOT RESTORE context.md — warn the user and suggest /mem-recall to regenerate a context from the remaining archives. TRIGGER via /mem-rollback-archive [project] or natural language — 'cancel the last archive', 'forget the last session', 'rollback the archive of X'."
+        ArgsText = "Optional: project slug. If omitted, rolls back the most recent archive globally. Options: --with-derived (also remove derived atoms), --dry-run, --no-confirm."
+    }
     'mem' = @{
-        Description = "Router universel d'ingestion. Recoit un contenu libre, le segmente en atomes, classe chaque atome dans la bonne zone du vault selon une cascade d'heuristiques. Chemin par defaut zero-friction. Declencher quand l'utilisateur dit 'note ceci', 'enregistre', 'capture ca', 'ajoute a la memoire' sans preciser de zone."
-        ArgsText = "Contenu a ingerer. Le router decide ou il va. Options : --scope perso|pro, --zone X (force la zone), --projet/--domaine {slug} (force le rattachement), --no-confirm, --dry-run."
+        Description = "Universal ingestion router. Receives free-form content, segments it into atoms, and classifies each atom into the right vault zone via a heuristic cascade. Zero-friction default path. Trigger when the user says 'note this', 'save', 'capture this', 'add to memory' without specifying a zone."
+        ArgsText = "Content to ingest. The router decides where it goes. Options: --scope personal|work, --zone X (force the zone), --project/--domain {slug} (force attachment), --no-confirm, --dry-run."
     }
     'mem-list' = @{
-        Description = "Lister projets et domaines du vault avec leur etat synthetique. Renomme depuis mem-list-projects en v0.5 (gere maintenant projets ET domaines). Peut aussi lister le contenu d'une zone via --zone X."
-        ArgsText = "Aucun argument requis. Options : --kind projet|domaine|all, --scope perso|pro|all, --zone X, --detail."
+        Description = "List vault projects and domains with their synthetic state. Renamed from mem-list-projects in v0.5 (now handles BOTH projects and domains). Can also list a zone's contents via --zone X."
+        ArgsText = "No required argument. Options: --kind project|domain|all, --scope personal|work|all, --zone X, --detail."
     }
     'mem-rename' = @{
-        Description = "Renommer un projet ou un domaine de maniere complete : dossier physique, frontmatter, tags, liens Obsidian, _index.md, historique.md. Renomme depuis mem-rename-project en v0.5 (opere sur projets ET domaines)."
-        ArgsText = "Deux arguments obligatoires : ancien-slug nouveau-slug. Options : --dry-run, --no-confirm."
+        Description = "Rename a project or domain completely: physical folder, frontmatter, tags, Obsidian links, index.md, history.md. Renamed from mem-rename-project in v0.5 (operates on BOTH projects and domains)."
+        ArgsText = "Two required arguments: old-slug new-slug. Options: --dry-run, --no-confirm."
     }
     'mem-merge' = @{
-        Description = "Fusionner deux projets OU deux domaines du vault. Reattribue archives + atomes transverses. Restriction : pas de melange projet <-> domaine. Renomme depuis mem-merge-projects en v0.5."
-        ArgsText = "Deux arguments obligatoires : source-slug cible-slug. Options : --dry-run, --no-confirm."
+        Description = "Merge two projects OR two domains in the vault. Reattributes archives + cross-cutting atoms. Restriction: no project <-> domain mixing. Renamed from mem-merge-projects in v0.5."
+        ArgsText = "Two required arguments: source-slug target-slug. Options: --dry-run, --no-confirm."
     }
     'mem-note' = @{
-        Description = "Ingerer rapidement une note de connaissance dans 20-knowledge/. Shortcut explicite quand l'utilisateur sait que ce qu'il capte est un fait, un concept, une fiche, une synthese."
-        ArgsText = "Contenu de la note. Options : --scope perso|pro, --famille metier|tech|vie|methodes, --type concept|fiche|glossaire|synthese|reference, --no-confirm, --dry-run."
+        Description = "Quickly ingest a knowledge note into 20-knowledge/. Explicit shortcut when the user knows what they're capturing is a fact, concept, card, or stable synthesis."
+        ArgsText = "Note content. Options: --scope personal|work, --family business|tech|life|methods, --type concept|card|glossary|synthesis|reference, --no-confirm, --dry-run."
     }
     'mem-principle' = @{
-        Description = "Ingerer un principe (heuristique, ligne rouge, valeur, regle d'action) dans 40-principes/. Shortcut explicite. Le router infere le niveau de contrainte depuis le ton."
-        ArgsText = "Contenu du principe. Options : --scope perso|pro, --force ligne-rouge|heuristique|preference, --domaine X, --projet {slug}, --no-confirm, --dry-run."
+        Description = "Ingest a principle (heuristic, red line, value, action rule) into 40-principles/. Explicit shortcut. The router infers the constraint level from the tone."
+        ArgsText = "Principle content. Options: --scope personal|work, --force red-line|heuristic|preference, --domain X, --project {slug}, --no-confirm, --dry-run."
     }
     'mem-goal' = @{
-        Description = "Ingerer un objectif (intention future, etat desire, but) dans 50-objectifs/. Shortcut explicite. Detecte horizon (court/moyen/long) depuis l'echeance."
-        ArgsText = "Contenu de l'objectif. Options : --scope perso|pro, --horizon court|moyen|long, --echeance YYYY-MM-DD, --projet {slug}, --no-confirm, --dry-run."
+        Description = "Ingest a goal (future intention, desired state, aim) into 50-goals/. Explicit shortcut. Detects horizon (short/medium/long) from the deadline."
+        ArgsText = "Goal content. Options: --scope personal|work, --horizon short|medium|long, --deadline YYYY-MM-DD, --project {slug}, --no-confirm, --dry-run."
     }
     'mem-person' = @{
-        Description = "Ingerer une fiche personne (collegue, client, ami, famille) dans 60-personnes/. Shortcut explicite. Toujours sensitive=true par defaut (interdit la promotion vers CollectiveBrain)."
-        ArgsText = "Contenu / description de la personne. Options : --scope perso|pro, --categorie collegues|clients|partenaires|famille|amis|connaissances, --no-confirm, --dry-run."
+        Description = "Ingest a person card (colleague, client, friend, family) into 60-people/. Explicit shortcut. Always sensitive=true by default (forbids promotion to CollectiveBrain)."
+        ArgsText = "Person content/description. Options: --scope personal|work, --category colleagues|clients|partners|family|friends|acquaintances, --no-confirm, --dry-run."
     }
     'mem-reclass' = @{
-        Description = "Changer le scope ou la zone d'un contenu existant. Met a jour frontmatter + tags + deplace le fichier + reecrit les references croisees. Confirme par decision D3.4 du cadrage v0.5."
-        ArgsText = "Chemin du fichier obligatoire + au moins une option de changement. Options : --zone X, --scope perso|pro, --type X, --projet/--domaine {slug}, --dry-run, --no-confirm."
+        Description = "Change the scope or zone of an existing item. Updates frontmatter + tags + moves the file + rewrites cross-references. Confirmed by decision D3.4 of the v0.5 design doc."
+        ArgsText = "File path required + at least one change option. Options: --zone X, --scope personal|work, --type X, --project/--domain {slug}, --dry-run, --no-confirm."
     }
     'mem-promote-domain' = @{
-        Description = "Promouvoir un ensemble d'items coherents de l'inbox en un nouveau domaine permanent dans 10-episodes/domaines/{slug}/. Verifie la regle anti-derive (>=3 items au meme fil)."
-        ArgsText = "Slug du nouveau domaine + items optionnels. Options : --scope perso|pro, --from-inbox {keyword}, --dry-run, --no-confirm."
+        Description = "Promote a coherent set of items from the inbox into a new permanent domain in 10-episodes/domains/{slug}/. Enforces the anti-drift rule (>=3 items on the same thread)."
+        ArgsText = "New domain slug + optional items. Options: --scope personal|work, --from-inbox {keyword}, --dry-run, --no-confirm."
     }
 }
 
-# Skills renommes (mapping ancien -> nouveau pour suppression)
+# Renamed skills (old -> new mapping for deletion)
 $renamings = @('mem-list-projects', 'mem-rename-project', 'mem-merge-projects')
 
-# Suppression des templates obsoletes
-Write-Step "> Suppression des templates renommes"
+# Delete obsolete templates
+Write-Step "> Deleting renamed templates"
 foreach ($old in $renamings) {
     $paths = @(
         "adapters\claude-code\skills\$old.template.md",
@@ -76,14 +108,14 @@ foreach ($old in $renamings) {
         $full = Join-Path $root $rel
         if (Test-Path $full) {
             Remove-Item -Path $full -Recurse -Force
-            Write-Ok "Supprime : $rel"
+            Write-Ok "Deleted: $rel"
         }
     }
 }
 
-# Generation des nouveaux templates
+# Generate new templates
 Write-Host ''
-Write-Step "> Generation des templates v0.5"
+Write-Step "> Generating v0.5 templates"
 
 foreach ($name in $skillsV05.Keys) {
     Write-Host ''
@@ -135,7 +167,7 @@ foreach ($name in $skillsV05.Keys) {
 }
 
 Write-Host ''
-Write-Step "=== Regeneration adapters terminee ==="
-Write-Host "Skills regeneres : $($skillsV05.Count)"
-Write-Host "Skills supprimes : $($renamings.Count)"
-Write-Host "Lance .\deploy.ps1 pour propager vers les CLI."
+Write-Step "=== Adapter regeneration complete ==="
+Write-Host "Skills regenerated : $($skillsV05.Count)"
+Write-Host "Skills deleted     : $($renamings.Count)"
+Write-Host "Run .\deploy.ps1 to propagate to the CLIs."

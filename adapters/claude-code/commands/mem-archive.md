@@ -1,5 +1,5 @@
-Archiver la session en cours via le skill `mem-archive` (mode complet).
+Archive the current work session into the memory vault so it can be resumed later via /mem-recall.
 
-Si `$ARGUMENTS` contient du texte, le considérer comme une note de l'utilisateur à intégrer au résumé de la session.
+No required argument. Detection of the current project from CWD or git origin. Options: --project {slug} (force the target project), --message "{summary}" (override the auto-summary), --no-confirm, --dry-run.
 
 $ARGUMENTS

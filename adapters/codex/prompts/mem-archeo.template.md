@@ -1,12 +1,10 @@
 ---
-description: Reconstituer l'historique d'un dépôt Git en plusieurs archives datées dans le vault mémoire (1 archive par tag, release, merge ou fenêtre de commits). Détection automatique du niveau de granularité, confirmation interactive, idempotence par identifiant de jalon.
+description: Reconstruct the history of an existing Git repo as multiple dated archives in the memory vault (1 archive per tag, release, merge, or commit window). AUTO-TRIGGER (without waiting for /mem-archeo) when the user says — 'do a Git retro of this project', 'reconstruct the history of this repo', 'archeo on this repo', 'analyze the version tags and archive them'. Also invocable via /mem-archeo [repo-path] with options --level, --project, --since, --until, --window, --dry-run. Auto-detects granularity (tags → releases → merges → commit windows) with interactive confirmation before writing. Idempotent: skips archives already created for the same milestone. Never overwrites a lived archive.
 ---
 
 {{PROCEDURE}}
 
-## Arguments utilisateur
-
-Le premier token non-option est le chemin du dépôt (défaut : cwd). Options reconnues : `--niveau {tags|releases|merges|commits}`, `--projet {nom}`, `--depuis YYYY-MM-DD`, `--jusqu-a YYYY-MM-DD`, `--fenetre {jour|semaine|mois}`, `--dry-run`.
+## User input
 
 ```text
 $ARGUMENTS

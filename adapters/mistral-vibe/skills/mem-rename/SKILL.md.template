@@ -1,6 +1,6 @@
 ---
 name: mem-rename
-description: Renommer un projet ou un domaine de maniere complete : dossier physique, frontmatter, tags, liens Obsidian, _index.md, historique.md. Renomme depuis mem-rename-project en v0.5 (opere sur projets ET domaines).
+description: Rename a project or domain completely: physical folder, frontmatter, tags, Obsidian links, index.md, history.md. Renamed from mem-rename-project in v0.5 (operates on BOTH projects and domains).
 user-invocable: true
 ---
 

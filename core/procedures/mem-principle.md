@@ -1,45 +1,45 @@
-# Procédure : Principle (nouveau v0.5)
+# Procedure: Principle (new in v0.5)
 
-Objectif : ingérer rapidement un principe (heuristique, ligne rouge, valeur, règle d'action) dans `40-principes/`. Shortcut explicite quand l'utilisateur formule explicitement une règle.
+Goal: quickly ingest a principle (heuristic, red line, value, action rule) into `40-principles/`. Explicit shortcut when the user explicitly formulates a rule.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-principle {contenu}` ou exprime l'intention en langage naturel : « note ce principe », « ajoute cette règle », « ligne rouge », « toujours / jamais ».
+The user types `/mem-principle {content}` or expresses intent in natural language: "note this principle", "add this rule", "red line", "always / never".
 
-Options reconnues :
-- `--scope perso|pro` : force le scope.
-- `--force ligne-rouge|heuristique|preference` : force le niveau de contrainte. Sinon le router infère depuis le ton (« ne jamais » = ligne-rouge, « préférer » = heuristique, « j'aime » = preference).
-- `--domaine X` : force la sous-catégorie (dev, communication, vie, sante, etc.).
-- `--projet {slug}` : force le rattachement projet origine. Sinon, projet courant si détecté.
-- `--no-confirm`, `--dry-run` : passe au router.
+Recognized options:
+- `--scope personal|work`: forces the scope.
+- `--force red-line|heuristic|preference`: forces the constraint level. Otherwise the router infers it from the tone ("never" = red-line, "prefer" = heuristic, "I like" = preference).
+- `--domain X`: forces the sub-category (dev, communication, life, health, etc.).
+- `--project {slug}`: forces attachment to the origin project. Otherwise, current project if detected.
+- `--no-confirm`, `--dry-run`: passed through to the router.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault` et `default_scope`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Préformatage
+### 1. Pre-format
 
-Le titre du principe est extrait des premières mots significatifs (« ne jamais X » → titre « no-x »). Le corps est le contenu complet, qui peut inclure le **contexte d'origine** (incident, lecture, expérience qui a fait émerger le principe).
+The principle title is extracted from the first significant words ("never X" → title "no-x"). The body is the full content, which can include the **origin context** (incident, reading, experience that surfaced the principle).
 
-### 2. Invoquer le router avec hint zone forcée
+### 2. Invoke the router with forced zone hint
 
-Appeler le router avec :
-- `Contenu` : le contenu du principe.
-- `Hint zone` : `principes`.
-- `Hint source` : `manuel` (sauf si extrait par `mem-archive` qui passera `vecu`).
-- `Métadonnées` : force, domaine, projet origine si fournis.
+Call the router with:
+- `Content`: the principle content.
+- `Hint zone`: `principles`.
+- `Hint source`: `manual` (unless extracted by `mem-archive` which will pass `lived`).
+- `Metadata`: force, domain, origin project if provided.
 
 {{INCLUDE _router}}
 
-Le router :
-- Détermine `force` (ligne-rouge / heuristique / preference) si non forcé.
-- Détermine la sous-catégorie domaine.
-- Écrit dans `{VAULT}/40-principes/{scope}/{domaine}/{slug-titre}.md`.
-- Construit le frontmatter avec `type: principe`, `force`, `contexte_origine` (si dérivé d'une archive), `projet`, `tags`.
-- Si invoqué depuis une archive parent (cas `mem-archive` qui extrait des principes), pose le lien bidirectionnel `derived_atoms` ↔ `contexte_origine`.
+The router:
+- Determines `force` (red-line / heuristic / preference) if not forced.
+- Determines the domain sub-category.
+- Writes into `{VAULT}/40-principles/{scope}/{domain}/{slug-title}.md`.
+- Builds the frontmatter with `type: principle`, `force`, `origin_context` (if derived from an archive), `project`, `tags`.
+- If invoked from a parent archive (case of `mem-archive` extracting principles), sets the bidirectional link `derived_atoms` ↔ `origin_context`.
 
-### 3. Confirmer
+### 3. Confirm
 
-Rapport du router.
+Router report.

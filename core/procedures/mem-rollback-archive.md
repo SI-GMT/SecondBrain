@@ -1,85 +1,85 @@
-# Procédure : Rollback Archive (v0.5 brain-centric)
+# Procedure: Rollback Archive (v0.5 brain-centric)
 
-Objectif : annuler la dernière archive d'un projet/domaine (ou du vault global). Supprime le fichier archive **ET ses atomes dérivés** (chaîne via `derived_atoms`). Demande confirmation si des atomes dérivés vont être orphelinisés.
+Goal: cancel the latest archive of a project/domain (or the global vault). Removes the archive file **AND its derived atoms** (chained via `derived_atoms`). Asks for confirmation if derived atoms would be orphaned.
 
-**Limite connue** : le `contexte.md` du projet/domaine est **écrasé** à chaque archive complet. Le rollback ne restaure **pas automatiquement** l'ancien `contexte.md` — l'utilisateur peut relancer `/mem-recall {slug}` pour régénérer un contexte à partir de l'avant-dernière archive.
+**Known limit**: the project/domain `context.md` is **overwritten** at each full archive. The rollback does **not automatically restore** the previous `context.md` — the user can re-run `/mem-recall {slug}` to regenerate a context based on the second-to-last archive.
 
-## Déclenchement
+## Trigger
 
-L'utilisateur tape `/mem-rollback-archive [{slug}]` ou exprime l'intention en langage naturel : « annule la dernière archive », « oublie la dernière session », « rollback l'archive de X ».
+The user types `/mem-rollback-archive [{slug}]` or expresses the intent in natural language: "cancel the last archive", "forget the last session", "rollback the X archive".
 
-Arguments :
-- `{slug}` (optionnel) : slug du projet/domaine. Si absent, rollback la dernière archive globale du vault (toutes zones confondues).
-- `--with-derived` : supprime aussi les atomes dérivés (par défaut, demande confirmation).
-- `--no-confirm` : applique sans confirmation.
+Arguments:
+- `{slug}` (optional): slug of the project/domain. If absent, rollback the latest global archive of the vault (all zones combined).
+- `--with-derived`: also delete the derived atoms (by default, asks for confirmation).
+- `--no-confirm`: apply without confirmation.
 
-## Résolution du chemin du vault
+## Vault path resolution
 
-Lire {{CONFIG_FILE}} et en extraire `vault`. Si absent, message d'erreur standard et arrêt.
+Read {{CONFIG_FILE}} and extract `vault`. If absent, standard error message and stop.
 
-## Procédure
+## Procedure
 
-### 1. Identifier l'archive à supprimer
+### 1. Identify the archive to delete
 
-- Si `{slug}` fourni : lire `{VAULT}/10-episodes/{kind}/{slug}/historique.md`, prendre la dernière entrée d'archive.
-- Sinon : scanner les `historique.md` de tous les projets et domaines, trouver l'archive la plus récente du vault.
+- If `{slug}` provided: read `{VAULT}/10-episodes/{kind}/{slug}/history.md`, take the latest archive entry.
+- Otherwise: scan all projects' and domains' `history.md`, find the most recent archive in the vault.
 
-Si aucune archive trouvée : afficher « Aucune archive à annuler. » et arrêter.
+If no archive found: display "No archive to cancel." and stop.
 
-### 2. Identifier les atomes dérivés
+### 2. Identify the derived atoms
 
-Lire le frontmatter de l'archive cible. Extraire le champ `derived_atoms`. Pour chaque atome dérivé, vérifier s'il a d'autres archives parentes (champ `contexte_origine` éventuellement multi-valué) :
+Read the frontmatter of the target archive. Extract the `derived_atoms` field. For each derived atom, check whether it has other parent archives (`context_origin` field possibly multi-valued):
 
-- Si l'atome a **une seule** archive parente (= celle qu'on supprime) → il sera orphelinisé.
-- Si l'atome a **plusieurs** archives parentes → mise à jour : retirer notre archive de sa liste, conserver l'atome.
+- If the atom has **a single** parent archive (= the one being deleted) → it will be orphaned.
+- If the atom has **several** parent archives → update: remove our archive from its list, keep the atom.
 
-### 3. Présenter le plan
+### 3. Present the plan
 
-Format :
+Format:
 
 ```
-## Rollback — {slug ou « vault global »}
+## Rollback — {slug or "global vault"}
 
-Archive à supprimer :
-  {chemin de l'archive}
+Archive to delete:
+  {archive path}
 
-Atomes dérivés ({N}) :
-  - [[atome 1]] — orphelin après rollback : {oui|non}
-  - [[atome 2]] — orphelin après rollback : {oui|non}
+Derived atoms ({N}):
+  - [[atom 1]] — orphaned after rollback: {yes|no}
+  - [[atom 2]] — orphaned after rollback: {yes|no}
 
-Action sur les atomes :
-  - {N orphelins} seront supprimés (avec --with-derived) ou conservés (par défaut, déliés)
-  - {N non-orphelins} : référence vers l'archive supprimée retirée
+Action on atoms:
+  - {N orphaned} will be deleted (with --with-derived) or kept (default, unlinked)
+  - {N non-orphaned}: reference to the deleted archive removed
 
-Continuer ? [o/n]
+Continue? [y/n]
 ```
 
-### 4. Appliquer (si confirmé ou `--no-confirm`)
+### 4. Apply (if confirmed or `--no-confirm`)
 
 {{INCLUDE _encoding}}
 
 {{INCLUDE _concurrence}}
 
-Étapes :
+Steps:
 
-1. **Supprimer le fichier archive** : `rm {chemin-archive}`.
-2. **Pour chaque atome dérivé** :
-   - Si orphelin et `--with-derived` : supprimer le fichier.
-   - Si orphelin sans `--with-derived` : retirer le champ `contexte_origine` (atome devient autonome).
-   - Si non-orphelin : retirer notre référence dans `contexte_origine` (peut être multi-valué).
-3. **Retirer la ligne dans `historique.md`** du projet/domaine. Pattern 2.
-4. **Retirer l'entrée dans `99-meta/_index.md`**. Pattern 2.
+1. **Delete the archive file**: `rm {archive-path}`.
+2. **For each derived atom**:
+   - If orphaned and `--with-derived`: delete the file.
+   - If orphaned without `--with-derived`: remove the `context_origin` field (atom becomes standalone).
+   - If non-orphaned: remove our reference in `context_origin` (may be multi-valued).
+3. **Remove the line in `history.md`** of the project/domain. Pattern 2.
+4. **Remove the entry in `index.md`**. Pattern 2.
 
-### 5. Avertissement contexte
+### 5. Context warning
 
-Afficher :
+Display:
 
 ```
-Rollback effectué.
-Archive supprimée : {chemin}
-Atomes dérivés : {N supprimés, N déliés}
+Rollback done.
+Deleted archive: {path}
+Derived atoms: {N deleted, N unlinked}
 
-ATTENTION : contexte.md du projet/domaine n'a PAS été restauré (il représentait
-l'état au moment de l'archive supprimée). Pour régénérer un contexte cohérent,
-lance /mem-recall {slug} qui se basera sur l'avant-dernière archive.
+WARNING: the project/domain context.md was NOT restored (it represented
+the state at the moment of the deleted archive). To regenerate a coherent context,
+run /mem-recall {slug} which will rely on the second-to-last archive.
 ```

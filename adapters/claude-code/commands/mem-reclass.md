@@ -1,5 +1,5 @@
-Changer le scope ou la zone d'un contenu existant.
+Change the scope or zone of an existing item.
 
-Chemin du fichier obligatoire + au moins une option de changement. Options : --zone X, --scope perso|pro, --type X, --projet/--domaine {slug}, --dry-run, --no-confirm.
+File path required + at least one change option. Options: --zone X, --scope personal|work, --type X, --project/--domain {slug}, --dry-run, --no-confirm.
 
 $ARGUMENTS

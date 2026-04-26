@@ -1,5 +1,5 @@
-Charger le contexte projet via le skill `mem-recall`.
+Load a project's context from the memory vault to resume a previous session without re-briefing.
 
-Argument optionnel : nom du projet à charger. Si absent, le skill tentera l'auto-détection (nom du dossier courant) puis proposera la liste.
+Optional argument: project or domain slug. If omitted, the skill tries to detect from CWD; if multiple matches, asks the user to choose.
 
 $ARGUMENTS
