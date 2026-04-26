@@ -11,7 +11,7 @@
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
-> **v0.5.2** — Refonte brain-centric (9 zones mémorielles), schéma 100 % anglais (folders, frontmatter, tags), instructions LLM en anglais (efficacité maximale), conversation dans la langue native de l'utilisateur (EN/FR/ES/DE/RU bundle, sélection à l'install).
+> **v0.5.3** — Refonte brain-centric (9 zones mémorielles), schéma 100 % anglais (folders, frontmatter, tags), instructions LLM en anglais (efficacité maximale), conversation dans la langue native de l'utilisateur (EN/FR/ES/DE/RU bundle, sélection à l'install). Tooling : migration FR→EN d'un vault existant + régénération de l'index depuis le filesystem.
 
 ---
 
@@ -270,6 +270,36 @@ Un seul vault peut contenir N projets et N domaines. Chaque projet a son propre 
 ```
 
 Le kit étant installé au niveau utilisateur, il n'est pas nécessaire de le recopier dans chaque projet.
+
+---
+
+## Outils de maintenance
+
+Scripts Python livrés dans `scripts/` pour les opérations de maintenance ponctuelles sur un vault existant. Tous tournent en **dry-run par défaut** ; ajouter `--apply` pour écrire.
+
+| Script | Quand l'utiliser |
+|---|---|
+| `migrate-vault-v0.5.py` | Migrer un vault **v0.4** (project-centric, `archives/` + `projets/` à plat) vers la structure brain-centric **v0.5** (9 zones). Backup automatique avant `--apply`. |
+| `migrate-vault-v05-to-v052.py` | Migrer un vault **v0.5 encore en français** (zones `40-principes`, valeurs `kind: projet`, etc.) vers le schéma **v0.5.2 anglais** (`40-principles`, `kind: project`, …). Préserve la prose française des archives narratives. |
+| `rebuild-vault-index.py` | Régénérer `{vault}/index.md` depuis un scan du filesystem en consommant `core/i18n/strings.yaml`. Utile après une migration ou une réorganisation manuelle. Détecte la langue de l'utilisateur depuis `~/.{cli}/memory-kit.json`. |
+| `scaffold-vault-v0.5.ps1` | Bootstrap d'un nouveau vault v0.5 vide (9 zones + sous-dossiers + `index.md` squelette). Idempotent. |
+| `fix-double-encoding.py` | Correction rétroactive du double-encodage UTF-8→CP1252→UTF-8 sur les fichiers du vault (signature `Ã©`, `â€"`, `Â `). À utiliser uniquement si l'agent a écrit via un shell mal configuré. |
+
+Exemple de migration FR→EN d'un vault existant :
+
+```bash
+# 1. Backup obligatoire
+cp -r ~/vault ~/vault.backup-$(date +%Y-%m-%d)
+
+# 2. Dry-run pour inspecter le plan
+python scripts/migrate-vault-v05-to-v052.py --vault ~/vault
+
+# 3. Apply
+python scripts/migrate-vault-v05-to-v052.py --vault ~/vault --apply
+
+# 4. Régénérer l'index avec le bon i18n
+python scripts/rebuild-vault-index.py --vault ~/vault
+```
 
 ---
 
