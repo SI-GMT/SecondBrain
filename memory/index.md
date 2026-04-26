@@ -6,7 +6,7 @@ tags: [type/index]
 
 Point d'entrée du second cerveau. Mis à jour automatiquement par le skill `mem-archive` en mode complet.
 
-## Projets
+## Projects
 
 <!-- Les projets actifs sont ajoutés ici à leur première archive. -->
 

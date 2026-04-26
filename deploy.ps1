@@ -35,6 +35,8 @@
 [CmdletBinding()]
 param(
     [string]$VaultPath,
+    [ValidateSet('en','fr','es','de','ru','')]
+    [string]$Language = '',
     [switch]$Force
 )
 
@@ -64,32 +66,89 @@ function Write-MemoryKitJson {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][string]$Vault,
-        [string]$DefaultScope = 'pro',
+        [string]$DefaultScope = 'work',
+        [string]$Language = 'en',
         [switch]$Force
     )
     $exists = Test-Path $Path
     if ($exists -and -not $Force) {
-        # Patch silencieux : si default_scope manque, l'ajouter sans toucher au reste.
+        # Patch silencieux : ajoute les champs manquants (default_scope, language) sans toucher au reste.
         try {
             $existing = Get-Content -Path $Path -Raw | ConvertFrom-Json -AsHashtable
         } catch {
             Write-Warn2 "memory-kit.json existant illisible ($Path) : $_"
             return
         }
+        $patched = $false
         if (-not $existing.ContainsKey('default_scope')) {
             $existing['default_scope'] = $DefaultScope
-            $patched = [ordered]@{ vault = $existing['vault']; default_scope = $existing['default_scope'] } | ConvertTo-Json
-            Set-Content -Path $Path -Value $patched -Encoding utf8NoBOM -NoNewline
-            Write-Ok "memory-kit.json patche : default_scope=$DefaultScope ajoute"
+            $patched = $true
+        }
+        if (-not $existing.ContainsKey('language')) {
+            $existing['language'] = $Language
+            $patched = $true
+        }
+        if ($patched) {
+            $merged = [ordered]@{
+                vault         = $existing['vault']
+                default_scope = $existing['default_scope']
+                language      = $existing['language']
+            } | ConvertTo-Json
+            Set-Content -Path $Path -Value $merged -Encoding utf8NoBOM -NoNewline
+            Write-Ok "memory-kit.json patche : default_scope=$($existing['default_scope']), language=$($existing['language'])"
         } else {
             Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
         }
         return
     }
     # Creation ou ecrasement complet.
-    $configData = [ordered]@{ vault = $Vault; default_scope = $DefaultScope } | ConvertTo-Json
+    $configData = [ordered]@{
+        vault         = $Vault
+        default_scope = $DefaultScope
+        language      = $Language
+    } | ConvertTo-Json
     Set-Content -Path $Path -Value $configData -Encoding utf8NoBOM -NoNewline
-    Write-Ok "memory-kit.json -> vault = $Vault, default_scope = $DefaultScope"
+    Write-Ok "memory-kit.json -> vault = $Vault, default_scope = $DefaultScope, language = $Language"
+}
+
+# ============================================================
+# Resolution de la langue conversationnelle
+# ============================================================
+# Priorite :
+#   1. -Language explicite (validee dans param block)
+#   2. Detection depuis $PSCulture (ex: "fr-FR" -> "fr")
+#   3. Prompt interactif si shell interactif et premiere install
+#   4. Fallback : "en"
+
+function Resolve-Language {
+    param([string]$Explicit)
+
+    $supported = @('en','fr','es','de','ru')
+
+    if ($Explicit) {
+        return $Explicit
+    }
+
+    # Auto-detection depuis culture systeme
+    $cultureCode = ($PSCulture -split '-')[0].ToLowerInvariant()
+    $detected = if ($supported -contains $cultureCode) { $cultureCode } else { 'en' }
+
+    # Si shell interactif (Host.UI present + pas redirige), proposer choix
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        Write-Host ''
+        Write-Step "Conversational language for the LLM (the vault structure stays English)"
+        Write-Host "  Supported: $($supported -join ', ')" -ForegroundColor DarkGray
+        $prompt = Read-Host "  Choose language [$detected]"
+        if ($prompt) {
+            $prompt = $prompt.Trim().ToLowerInvariant()
+            if ($supported -contains $prompt) {
+                return $prompt
+            } else {
+                Write-Warn2 "Unknown language '$prompt', falling back to '$detected'"
+            }
+        }
+    }
+    return $detected
 }
 
 # ============================================================
@@ -296,7 +355,7 @@ function Deploy-ClaudeCode {
     }
 
     # memory-kit.json
-    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Force:$Force
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Language $script:Language -Force:$Force
 
     # Bloc MEMORY-KIT dans CLAUDE.md utilisateur (idempotent)
     $claudeMdTarget = Join-Path $ConfigDir 'CLAUDE.md'
@@ -441,7 +500,7 @@ function Deploy-GeminiCli {
     }
 
     # memory-kit.json au niveau utilisateur
-    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Force:$Force
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Language $script:Language -Force:$Force
 
     # Activer l'extension dans extension-enablement.json (idempotent)
     $enablementFile = Join-Path $extensionsDir 'extension-enablement.json'
@@ -554,7 +613,7 @@ function Deploy-Codex {
     }
 
     # memory-kit.json au niveau utilisateur
-    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Force:$Force
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Language $script:Language -Force:$Force
 
     return $true
 }
@@ -704,6 +763,10 @@ if (-not (Test-Path $VaultPath)) {
 }
 
 Write-Step "Vault memoire : $VaultPath"
+
+# Resolution de la langue (param explicite, detection systeme, ou prompt interactif)
+$script:Language = Resolve-Language -Explicit $Language
+Write-Step "Langue conversationnelle : $script:Language"
 
 # ============================================================
 # 2. Detection des CLI IA

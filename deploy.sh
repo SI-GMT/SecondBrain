@@ -29,6 +29,7 @@ set -euo pipefail
 # ============================================================
 
 VAULT_PATH=""
+LANGUAGE=""
 FORCE=false
 
 while [[ $# -gt 0 ]]; do
@@ -37,14 +38,19 @@ while [[ $# -gt 0 ]]; do
             VAULT_PATH="$2"
             shift 2
             ;;
+        --language)
+            LANGUAGE="$2"
+            shift 2
+            ;;
         --force)
             FORCE=true
             shift
             ;;
         -h|--help)
-            echo "Usage : $0 [--vault-path <chemin>] [--force]"
+            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force]"
             echo ""
             echo "  --vault-path  Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
+            echo "  --language    Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
             echo "  --force       Ecrase memory-kit.json meme s'il existe deja"
             exit 0
             ;;
@@ -125,7 +131,8 @@ PYEOF
 write_memory_kit_json() {
     local path="$1"
     local vault="$2"
-    local default_scope="${3:-pro}"
+    local default_scope="${3:-work}"
+    local language="${4:-en}"
     local force_flag="$FORCE"
 
     if ! command -v python3 &>/dev/null; then
@@ -134,19 +141,19 @@ write_memory_kit_json() {
             _gray "memory-kit.json preserve (utiliser --force pour ecraser ; python3 absent, patch silencieux indisponible)"
             return 0
         fi
-        printf '{\n  "vault": "%s",\n  "default_scope": "%s"\n}' "$vault" "$default_scope" > "$path"
-        _green "memory-kit.json -> vault = $vault, default_scope = $default_scope"
+        printf '{\n  "vault": "%s",\n  "default_scope": "%s",\n  "language": "%s"\n}' "$vault" "$default_scope" "$language" > "$path"
+        _green "memory-kit.json -> vault = $vault, default_scope = $default_scope, language = $language"
         return 0
     fi
 
     local result
     local _tmpout
     _tmpout="$(mktemp)"
-    python3 - "$path" "$vault" "$default_scope" "$force_flag" > "$_tmpout" << 'PYEOF'
+    python3 - "$path" "$vault" "$default_scope" "$language" "$force_flag" > "$_tmpout" << 'PYEOF'
 import json, sys
 from pathlib import Path
 
-path, vault, default_scope, force_str = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+path, vault, default_scope, language, force_str = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 force = force_str == "true"
 p = Path(path)
 
@@ -156,28 +163,39 @@ if p.exists() and not force:
     except Exception as e:
         print(f"ERR|{e}")
         sys.exit(0)
+    patched_fields = []
     if 'default_scope' not in existing:
         existing['default_scope'] = default_scope
-        p.write_text(json.dumps(existing, indent=2), encoding='utf-8')
-        print(f"PATCHED|{default_scope}")
+        patched_fields.append(f"default_scope={default_scope}")
+    if 'language' not in existing:
+        existing['language'] = language
+        patched_fields.append(f"language={language}")
+    if patched_fields:
+        merged = {
+            'vault': existing.get('vault', vault),
+            'default_scope': existing['default_scope'],
+            'language': existing['language'],
+        }
+        p.write_text(json.dumps(merged, indent=2), encoding='utf-8')
+        print("PATCHED|" + ",".join(patched_fields))
     else:
         print("SKIP")
     sys.exit(0)
 
-# Creation ou ecrasement complet (ordre des cles preserve : vault d'abord)
-data = {'vault': vault, 'default_scope': default_scope}
+# Creation ou ecrasement complet (ordre des cles preserve)
+data = {'vault': vault, 'default_scope': default_scope, 'language': language}
 p.write_text(json.dumps(data, indent=2), encoding='utf-8')
-print(f"WRITTEN|{vault}|{default_scope}")
+print(f"WRITTEN|{vault}|{default_scope}|{language}")
 PYEOF
     result="$(cat "$_tmpout")"
     rm -f "$_tmpout"
 
     case "$result" in
         WRITTEN\|*)
-            _green "memory-kit.json -> vault = $vault, default_scope = $default_scope"
+            _green "memory-kit.json -> vault = $vault, default_scope = $default_scope, language = $language"
             ;;
         PATCHED\|*)
-            _green "memory-kit.json patche : default_scope=$default_scope ajoute"
+            _green "memory-kit.json patche : ${result#PATCHED|}"
             ;;
         SKIP)
             _gray "memory-kit.json preserve (utiliser --force pour ecraser)"
@@ -186,6 +204,47 @@ PYEOF
             _yellow "memory-kit.json existant illisible (${result#ERR|})"
             ;;
     esac
+}
+
+# ============================================================
+# Resolution de la langue conversationnelle
+# ============================================================
+# Priorite : --language > $LANG/$LC_ALL > prompt interactif > "en"
+resolve_language() {
+    local explicit="$1"
+    local supported=("en" "fr" "es" "de" "ru")
+    if [[ -n "$explicit" ]]; then
+        echo "$explicit"
+        return 0
+    fi
+    # Detection systeme
+    local raw="${LC_ALL:-${LANG:-en}}"
+    local code="${raw:0:2}"
+    code="${code,,}"
+    local detected="en"
+    for s in "${supported[@]}"; do
+        [[ "$s" == "$code" ]] && detected="$s" && break
+    done
+    # Prompt si shell interactif
+    if [[ -t 0 && -t 1 ]]; then
+        echo "" >&2
+        _cyan "Conversational language for the LLM (the vault structure stays English)" >&2
+        printf '\033[0;90m  Supported: %s\033[0m\n' "${supported[*]}" >&2
+        printf '  Choose language [%s]: ' "$detected" >&2
+        local input
+        read -r input
+        if [[ -n "$input" ]]; then
+            input="${input,,}"
+            for s in "${supported[@]}"; do
+                if [[ "$s" == "$input" ]]; then
+                    echo "$input"
+                    return 0
+                fi
+            done
+            _yellow "Unknown language '$input', falling back to '$detected'" >&2
+        fi
+    fi
+    echo "$detected"
 }
 
 # ============================================================
@@ -374,7 +433,7 @@ deploy_claude_code() {
     done
 
     # memory-kit.json
-    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path"
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "work" "$LANGUAGE"
 
     # Bloc MEMORY-KIT dans CLAUDE.md utilisateur (idempotent)
     local claude_md_target="$config_dir/CLAUDE.md"
@@ -538,7 +597,7 @@ deploy_gemini_cli() {
     done
 
     # memory-kit.json au niveau utilisateur
-    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path"
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "work" "$LANGUAGE"
 
     # Activer l'extension dans extension-enablement.json (idempotent)
     local enablement_file="$config_dir/extensions/extension-enablement.json"
@@ -660,7 +719,7 @@ deploy_codex() {
     fi
 
     # memory-kit.json au niveau utilisateur
-    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path"
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "work" "$LANGUAGE"
 
     return 0
 }
@@ -849,6 +908,10 @@ if [[ ! -d "$VAULT_PATH" ]]; then
 fi
 
 _cyan "Vault memoire : $VAULT_PATH"
+
+# Resolution de la langue conversationnelle (param explicite, detection systeme, ou prompt interactif)
+LANGUAGE="$(resolve_language "$LANGUAGE")"
+_cyan "Langue conversationnelle : $LANGUAGE"
 
 # ============================================================
 # 2. Detection des CLI IA
