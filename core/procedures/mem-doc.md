@@ -15,9 +15,9 @@ Arguments:
 - `--title "{text}"` (optional): short title for the archive.
 - `--no-confirm`, `--dry-run`: passed through to the router.
 
-## Vault path resolution
+## Vault and repo path resolution
 
-Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
+Read {{CONFIG_FILE}} and extract `vault`, `default_scope` and `kit_repo`. If `vault` is missing, standard error message and stop. If `kit_repo` is missing (config written by an older install), fall back to looking for the kit by walking up from CWD until a directory containing `deploy.ps1` and `core/procedures/` is found; if not found, ask the user to re-run `deploy.ps1` / `deploy.sh` to refresh the config.
 
 ## Procedure
 
@@ -26,12 +26,21 @@ Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standa
 - Verify that `{path}` exists and is a file (not a directory).
 - Compute the size in bytes.
 - If > 50 MB, ask for confirmation.
-- Determine the type via extension:
-  - `.md`, `.txt` → native text.
-  - `.pdf` → extraction via native LLM tool (in v0.5.1: `scripts/doc-readers/read_pdf.py`).
-  - `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` → LLM vision description.
-  - `.docx`, `.pptx`, `.xlsx`, `.odt`, `.html`, `.htm` → v0.5.1 (Python doc-readers).
-  - Other → try UTF-8, otherwise stop with explicit message.
+- Determine the extraction strategy via extension:
+
+  | Extension | Strategy | Reader script |
+  |---|---|---|
+  | `.md`, `.txt`, `.json` | native text (read directly) | — |
+  | `.pdf` | Python reader, fallback to native LLM if scanned | `read_pdf.py` |
+  | `.docx` | Python reader | `read_docx.py` |
+  | `.pptx` | Python reader | `read_pptx.py` |
+  | `.xlsx` | Python reader | `read_xlsx.py` |
+  | `.csv` | Python reader | `read_csv.py` |
+  | `.html`, `.htm` | Python reader | `read_html.py` |
+  | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | LLM vision description | — |
+  | other | try UTF-8, otherwise stop with explicit message | — |
+
+- Reader scripts live in `{KIT_REPO}/scripts/doc-readers/` and declare their dependencies via PEP 723 inline metadata; they are invoked via `uv run` (no virtual environment management required). `uv` is a hard prerequisite of `/mem-doc` for non-native formats.
 
 ### 2. Compute the SHA-256 hash and detect re-ingestion
 
@@ -48,9 +57,26 @@ Create `{VAULT}/99-meta/sources/.gitignore` on first use with the exclusion patt
 
 ### 4. Extract content and pre-format
 
-Extract the textual content of the file (depending on type). Pre-format for the router:
+Extract the textual content of the file according to the strategy chosen at step 1:
 
-- The content is passed as-is.
+- **Native text** (`.md`, `.txt`, `.json`) → read the file directly.
+- **Image** → use the LLM's native vision capability to produce a structured description.
+- **Python reader** → invoke the reader via `uv run`, capture stdout (Markdown), check exit code:
+  - `0` → success, use stdout content.
+  - `1` → error, abort with the stderr message.
+  - `2` → empty extraction. For PDFs specifically, this means the document is likely scanned; fall back to the LLM's native PDF reading. For other formats, abort with a clear message ("file appears empty").
+
+Invocation pattern:
+
+```
+uv run {KIT_REPO}/scripts/doc-readers/{reader}.py "{path}"
+```
+
+`{KIT_REPO}` resolves to the repository where the kit was cloned (the same path that contains `deploy.ps1` / `deploy.sh`). On a deployed install, the readers are accessible from the repo clone — `/mem-doc` does not vendor them into `~/.claude/`.
+
+Pre-format for the router:
+
+- The extracted Markdown is passed as-is.
 - If the nature is ambiguous, the router will decide the zone.
 - If the user passed `--zone X`, the router forces the zone.
 

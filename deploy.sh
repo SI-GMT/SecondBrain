@@ -131,8 +131,9 @@ PYEOF
 write_memory_kit_json() {
     local path="$1"
     local vault="$2"
-    local default_scope="${3:-work}"
-    local language="${4:-en}"
+    local kit_repo="$3"
+    local default_scope="${4:-work}"
+    local language="${5:-en}"
     local force_flag="$FORCE"
 
     if ! command -v python3 &>/dev/null; then
@@ -141,19 +142,19 @@ write_memory_kit_json() {
             _gray "memory-kit.json preserve (utiliser --force pour ecraser ; python3 absent, patch silencieux indisponible)"
             return 0
         fi
-        printf '{\n  "vault": "%s",\n  "default_scope": "%s",\n  "language": "%s"\n}' "$vault" "$default_scope" "$language" > "$path"
-        _green "memory-kit.json -> vault = $vault, default_scope = $default_scope, language = $language"
+        printf '{\n  "vault": "%s",\n  "default_scope": "%s",\n  "language": "%s",\n  "kit_repo": "%s"\n}' "$vault" "$default_scope" "$language" "$kit_repo" > "$path"
+        _green "memory-kit.json -> vault = $vault, default_scope = $default_scope, language = $language, kit_repo = $kit_repo"
         return 0
     fi
 
     local result
     local _tmpout
     _tmpout="$(mktemp)"
-    python3 - "$path" "$vault" "$default_scope" "$language" "$force_flag" > "$_tmpout" << 'PYEOF'
+    python3 - "$path" "$vault" "$default_scope" "$language" "$kit_repo" "$force_flag" > "$_tmpout" << 'PYEOF'
 import json, sys
 from pathlib import Path
 
-path, vault, default_scope, language, force_str = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+path, vault, default_scope, language, kit_repo, force_str = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
 force = force_str == "true"
 p = Path(path)
 
@@ -170,11 +171,15 @@ if p.exists() and not force:
     if 'language' not in existing:
         existing['language'] = language
         patched_fields.append(f"language={language}")
+    if 'kit_repo' not in existing:
+        existing['kit_repo'] = kit_repo
+        patched_fields.append(f"kit_repo={kit_repo}")
     if patched_fields:
         merged = {
             'vault': existing.get('vault', vault),
             'default_scope': existing['default_scope'],
             'language': existing['language'],
+            'kit_repo': existing['kit_repo'],
         }
         p.write_text(json.dumps(merged, indent=2), encoding='utf-8')
         print("PATCHED|" + ",".join(patched_fields))
@@ -183,16 +188,16 @@ if p.exists() and not force:
     sys.exit(0)
 
 # Creation ou ecrasement complet (ordre des cles preserve)
-data = {'vault': vault, 'default_scope': default_scope, 'language': language}
+data = {'vault': vault, 'default_scope': default_scope, 'language': language, 'kit_repo': kit_repo}
 p.write_text(json.dumps(data, indent=2), encoding='utf-8')
-print(f"WRITTEN|{vault}|{default_scope}|{language}")
+print(f"WRITTEN|{vault}|{default_scope}|{language}|{kit_repo}")
 PYEOF
     result="$(cat "$_tmpout")"
     rm -f "$_tmpout"
 
     case "$result" in
         WRITTEN\|*)
-            _green "memory-kit.json -> vault = $vault, default_scope = $default_scope, language = $language"
+            _green "memory-kit.json -> vault = $vault, default_scope = $default_scope, language = $language, kit_repo = $kit_repo"
             ;;
         PATCHED\|*)
             _green "memory-kit.json patche : ${result#PATCHED|}"
@@ -435,7 +440,7 @@ deploy_claude_code() {
     done
 
     # memory-kit.json
-    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "work" "$LANGUAGE"
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
 
     # Bloc MEMORY-KIT dans CLAUDE.md utilisateur (idempotent)
     local claude_md_target="$config_dir/CLAUDE.md"
@@ -599,7 +604,7 @@ deploy_gemini_cli() {
     done
 
     # memory-kit.json au niveau utilisateur
-    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "work" "$LANGUAGE"
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
 
     # Activer l'extension dans extension-enablement.json (idempotent)
     local enablement_file="$config_dir/extensions/extension-enablement.json"
@@ -721,7 +726,7 @@ deploy_codex() {
     fi
 
     # memory-kit.json au niveau utilisateur
-    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "work" "$LANGUAGE"
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
 
     return 0
 }

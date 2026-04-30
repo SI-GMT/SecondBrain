@@ -66,13 +66,14 @@ function Write-MemoryKitJson {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][string]$Vault,
+        [Parameter(Mandatory=$true)][string]$KitRepo,
         [string]$DefaultScope = 'work',
         [string]$Language = 'en',
         [switch]$Force
     )
     $exists = Test-Path $Path
     if ($exists -and -not $Force) {
-        # Patch silencieux : ajoute les champs manquants (default_scope, language) sans toucher au reste.
+        # Patch silencieux : ajoute les champs manquants (default_scope, language, kit_repo) sans toucher au reste.
         try {
             $existing = Get-Content -Path $Path -Raw | ConvertFrom-Json -AsHashtable
         } catch {
@@ -88,14 +89,19 @@ function Write-MemoryKitJson {
             $existing['language'] = $Language
             $patched = $true
         }
+        if (-not $existing.ContainsKey('kit_repo')) {
+            $existing['kit_repo'] = $KitRepo
+            $patched = $true
+        }
         if ($patched) {
             $merged = [ordered]@{
                 vault         = $existing['vault']
                 default_scope = $existing['default_scope']
                 language      = $existing['language']
+                kit_repo      = $existing['kit_repo']
             } | ConvertTo-Json
             Set-Content -Path $Path -Value $merged -Encoding utf8NoBOM -NoNewline
-            Write-Ok "memory-kit.json patche : default_scope=$($existing['default_scope']), language=$($existing['language'])"
+            Write-Ok "memory-kit.json patche : default_scope=$($existing['default_scope']), language=$($existing['language']), kit_repo=$($existing['kit_repo'])"
         } else {
             Write-Skip "memory-kit.json preserve (utiliser -Force pour ecraser)"
         }
@@ -106,9 +112,10 @@ function Write-MemoryKitJson {
         vault         = $Vault
         default_scope = $DefaultScope
         language      = $Language
+        kit_repo      = $KitRepo
     } | ConvertTo-Json
     Set-Content -Path $Path -Value $configData -Encoding utf8NoBOM -NoNewline
-    Write-Ok "memory-kit.json -> vault = $Vault, default_scope = $DefaultScope, language = $Language"
+    Write-Ok "memory-kit.json -> vault = $Vault, default_scope = $DefaultScope, language = $Language, kit_repo = $KitRepo"
 }
 
 # ============================================================
@@ -357,7 +364,7 @@ function Deploy-ClaudeCode {
     }
 
     # memory-kit.json
-    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Language $script:Language -Force:$Force
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
 
     # Bloc MEMORY-KIT dans CLAUDE.md utilisateur (idempotent)
     $claudeMdTarget = Join-Path $ConfigDir 'CLAUDE.md'
@@ -502,7 +509,7 @@ function Deploy-GeminiCli {
     }
 
     # memory-kit.json au niveau utilisateur
-    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Language $script:Language -Force:$Force
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
 
     # Activer l'extension dans extension-enablement.json (idempotent)
     $enablementFile = Join-Path $extensionsDir 'extension-enablement.json'
@@ -615,7 +622,7 @@ function Deploy-Codex {
     }
 
     # memory-kit.json au niveau utilisateur
-    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -Language $script:Language -Force:$Force
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
 
     return $true
 }
