@@ -14,6 +14,13 @@ $root = Split-Path -Parent $PSScriptRoot
 function Write-Ok([string]$msg) { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Step([string]$msg) { Write-Host $msg -ForegroundColor Cyan }
 
+# YAML double-quoted scalar — robust against ':' in descriptions and embedded
+# quotes. Backslash and double-quote are escaped per YAML spec.
+function Format-YamlDouble([string]$s) {
+    $escaped = $s -replace '\\', '\\' -replace '"', '\"'
+    return "`"$escaped`""
+}
+
 # v0.5 skill definitions
 $skillsV05 = [ordered]@{
     'mem-archive' = @{
@@ -123,10 +130,11 @@ foreach ($name in $skillsV05.Keys) {
     $desc = $skillsV05[$name].Description
     $argsTxt = $skillsV05[$name].ArgsText
     $descShort = $desc.Split('.')[0]
+    $descYaml = Format-YamlDouble $desc
 
     # Claude Code skill
     $p1 = Join-Path $root "adapters\claude-code\skills\$name.template.md"
-    $c1 = "---`nname: $name`ndescription: $desc`n---`n`n{{PROCEDURE}}`n"
+    $c1 = "---`nname: $name`ndescription: $descYaml`n---`n`n{{PROCEDURE}}`n"
     Set-Content -Path $p1 -Value $c1 -Encoding utf8NoBOM -NoNewline
     Write-Ok "Claude skill   : $name.template.md"
 
@@ -145,7 +153,7 @@ foreach ($name in $skillsV05.Keys) {
 
     # Codex prompt
     $p4 = Join-Path $root "adapters\codex\prompts\$name.template.md"
-    $c4 = "---`ndescription: $desc`n---`n`n{{PROCEDURE}}`n`n## User input`n`n``````text`n`$ARGUMENTS`n```````n"
+    $c4 = "---`ndescription: $descYaml`n---`n`n{{PROCEDURE}}`n`n## User input`n`n``````text`n`$ARGUMENTS`n```````n"
     Set-Content -Path $p4 -Value $c4 -Encoding utf8NoBOM -NoNewline
     Write-Ok "Codex prompt   : $name.template.md"
 
@@ -153,7 +161,7 @@ foreach ($name in $skillsV05.Keys) {
     $d5 = Join-Path $root "adapters\codex\skills\$name"
     if (-not (Test-Path $d5)) { New-Item -ItemType Directory -Path $d5 -Force | Out-Null }
     $p5 = Join-Path $d5 "SKILL.md.template"
-    $c5 = "---`nname: $name`ndescription: $desc`n---`n`n{{PROCEDURE}}`n"
+    $c5 = "---`nname: $name`ndescription: $descYaml`n---`n`n{{PROCEDURE}}`n"
     Set-Content -Path $p5 -Value $c5 -Encoding utf8NoBOM -NoNewline
     Write-Ok "Codex skill    : $name/SKILL.md.template"
 
@@ -161,7 +169,7 @@ foreach ($name in $skillsV05.Keys) {
     $d6 = Join-Path $root "adapters\mistral-vibe\skills\$name"
     if (-not (Test-Path $d6)) { New-Item -ItemType Directory -Path $d6 -Force | Out-Null }
     $p6 = Join-Path $d6 "SKILL.md.template"
-    $c6 = "---`nname: $name`ndescription: $desc`nuser-invocable: true`n---`n`n{{PROCEDURE}}`n"
+    $c6 = "---`nname: $name`ndescription: $descYaml`nuser-invocable: true`n---`n`n{{PROCEDURE}}`n"
     Set-Content -Path $p6 -Value $c6 -Encoding utf8NoBOM -NoNewline
     Write-Ok "Vibe skill     : $name/SKILL.md.template"
 }
