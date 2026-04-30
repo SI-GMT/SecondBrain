@@ -11,6 +11,8 @@
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
+> **v0.6.0** — Doc-readers Python multi-format pour `/mem-doc` : ingestion de `.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html` en plus du texte natif et des images. Convention PEP 723 inline metadata via `uv run` — pas de venv ni `requirements.txt` à gérer. Stratégie option C pour PDF : extraction Python par défaut, fallback automatique vers la lecture vision native du LLM si le PDF est scanné. Champ `kit_repo` ajouté à `memory-kit.json` pour résoudre l'emplacement des readers.
+>
 > **v0.5.4** — Refonte brain-centric (9 zones mémorielles), schéma 100 % anglais (folders, frontmatter, tags), instructions LLM en anglais (efficacité maximale), conversation dans la langue native de l'utilisateur (EN/FR/ES/DE/RU bundle, sélection à l'install). Invariant **zero orphan atom** : tout fichier persisté carries au moins un lien (croisés `context.md` ↔ `history.md`, frontmatter `project:` + `context_origin` pour les atomes transverses). Tooling : migration FR→EN, régénération de l'index, enforcement linking rétroactif.
 
 ---
@@ -25,6 +27,7 @@ SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fage
 - [Langues supportées](#langues-supportées)
 - [Performances](#performances)
 - [Multi-projets](#multi-projets)
+- [Outils de maintenance](#outils-de-maintenance)
 - [Feuille de route](#feuille-de-route)
 - [Désinstallation](#désinstallation)
 - [Licence et crédits](#licence-et-crédits)
@@ -77,6 +80,7 @@ Toutes les **instructions destinées au LLM** (procédures, frontmatter, tags, v
 - **PowerShell 7+** (`pwsh`) sur Windows, **ou** **bash** sur macOS/Linux/git-bash.
 - **Au moins une CLI supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/` ou `~/.vibe/`).
 - **Obsidian** (optionnel) — pour visualiser le vault sous forme de graphe.
+- **`uv`** (optionnel) — requis uniquement pour `/mem-doc` sur les formats non-natifs (`.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html`). Voir [Formats supportés par `/mem-doc`](#formats-supportés-par-mem-doc). Installation : <https://docs.astral.sh/uv/>.
 
 ### Déploiement
 
@@ -215,6 +219,21 @@ Toutes les commandes sont préfixées `mem-*` pour éviter les collisions avec l
 | `/mem-principle` | Principe / heuristique / ligne rouge | Insère dans `40-principles/` |
 | `/mem-goal` | Objectif (intention future) | Insère dans `50-goals/` (horizon court/moyen/long détecté) |
 | `/mem-person` | Fiche personne | Insère dans `60-people/` (sensitive=true par défaut) |
+
+### Formats supportés par `/mem-doc`
+
+| Extension | Stratégie | Dépendance Python |
+|---|---|---|
+| `.md`, `.txt`, `.json` | Lecture native | — |
+| `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | Description par vision LLM native | — |
+| `.pdf` | `read_pdf.py` ; fallback automatique vers la vision LLM si le PDF est scanné | `pypdf` |
+| `.docx` | `read_docx.py` | `python-docx` |
+| `.pptx` | `read_pptx.py` | `python-pptx` |
+| `.xlsx` | `read_xlsx.py` (clip à 200 lignes × 30 colonnes par feuille) | `openpyxl` |
+| `.csv` | `read_csv.py` (auto-détection du délimiteur) | stdlib |
+| `.html`, `.htm` | `read_html.py` (extraction texte + tables, anti-noise script/style/nav) | `beautifulsoup4` + `lxml` |
+
+Les readers vivent dans `scripts/doc-readers/`. Chacun déclare ses dépendances via [PEP 723](https://peps.python.org/pep-0723/) inline metadata et est invoqué par `uv run` — `uv` résout et installe les dépendances à la volée, sans venv ni `requirements.txt`. Les fichiers texte natifs et images n'ont pas besoin de `uv`.
 
 ### Gestion du vault
 
