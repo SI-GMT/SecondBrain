@@ -1,5 +1,5 @@
 Synthesize the last N archives of a project — major arcs, structural decisions, drift of next steps, current state.
 
-Required: project slug. Optional second argument: N (number of archives to include, default 5).
+Required: project slug. Optional second argument: N (number of archives to include, default 5). Options: --zone X, --scope personal|work|all, --since YYYY-MM-DD.
 
 $ARGUMENTS

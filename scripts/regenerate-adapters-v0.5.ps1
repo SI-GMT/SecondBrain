@@ -56,12 +56,12 @@ $skillsV05 = [ordered]@{
         ArgsText = "Required: Confluence URL (page or space). Options: --depth N, --skip-children, --since YYYY-MM-DD, --skip-jira, --project {slug}, --dry-run, --no-confirm."
     }
     'mem-search' = @{
-        Description = "Full-text search in the memory vault (archives, contexts, histories, index). Returns matches with 2 lines of context, grouped by file, sorted recent-archives-first. TRIGGER via /mem-search {query} or natural language — 'search memory for X', 'find archives that mention Y', 'where did we talk about Z?'. Excludes .obsidian/, *.canvas, *.excalidraw.md, *.base. Read-only."
-        ArgsText = "Required: search query. Options: --zone X (limit to one zone), --project {slug} (limit to one project), --limit N, --case-sensitive."
+        Description = "Full-text search in the memory vault (archives, contexts, histories, index). Returns matches with 2 lines of context, grouped by file, sorted recent-archives-first. TRIGGER via /mem-search {query} or natural language — 'search memory for X', 'find archives that mention Y', 'where did we talk about Z?'. Excludes .obsidian/, *.canvas, *.excalidraw.md, *.base. Read-only. v0.7.2 EXTENDED FILTERS — --source archeo-context|archeo-stack|archeo-git|lived|doc|manual|archeo-* (wildcard), --branch {name}, --extracted-category {value}, --detected-layer {value}, --author {email-or-name} for fine-grained queries on the archeo-enriched vault."
+        ArgsText = "Required: search query. Options: --zone X, --scope personal|work|all, --kind project|domain, --modality left|right, --project {slug}, --domain {slug}, --type {value}, --source {value-or-archeo-*}, --branch {name}, --extracted-category {value}, --detected-layer {value}, --author {string}, --limit N, --case-sensitive."
     }
     'mem-digest' = @{
-        Description = "Synthesize the last N archives of a project — major arcs, structural decisions, drift of next steps, current state. Useful when a project has many sessions and you want the through-line without rereading everything. Read-only, writes nothing to the vault. TRIGGER via /mem-digest {project} [N] or natural language — 'summarize the last N sessions of X', 'do a digest of X', 'give me the through-line of X'. Default N=5."
-        ArgsText = "Required: project slug. Optional second argument: N (number of archives to include, default 5)."
+        Description = "Synthesize the last N archives of a project — major arcs, structural decisions, drift of next steps, current state. Useful when a project has many sessions and you want the through-line without rereading everything. Read-only, writes nothing to the vault. TRIGGER via /mem-digest {project} [N] or natural language — 'summarize the last N sessions of X', 'do a digest of X', 'give me the through-line of X'. Default N=5. v0.7.2 — separates FOUNDATIONS (stable stature: stack, archeo-context principles, archeo-stack architecture) from SESSIONS (lived archives + archeo-git) so the project's frame and its trajectory are surfaced distinctly instead of being collapsed into a single timeline."
+        ArgsText = "Required: project slug. Optional second argument: N (number of archives to include, default 5). Options: --zone X, --scope personal|work|all, --since YYYY-MM-DD."
     }
     'mem-rollback-archive' = @{
         Description = "Cancel the last archive of a project (or of the global vault if no project specified). Deletes the archive file, removes the corresponding line from history.md and from index.md. DOES NOT RESTORE context.md — warn the user and suggest /mem-recall to regenerate a context from the remaining archives. TRIGGER via /mem-rollback-archive [project] or natural language — 'cancel the last archive', 'forget the last session', 'rollback the archive of X'."
@@ -72,7 +72,7 @@ $skillsV05 = [ordered]@{
         ArgsText = "Content to ingest. The router decides where it goes. Options: --scope personal|work, --zone X (force the zone), --project/--domain {slug} (force attachment), --no-confirm, --dry-run."
     }
     'mem-list' = @{
-        Description = "List vault projects and domains with their synthetic state. Renamed from mem-list-projects in v0.5 (now handles BOTH projects and domains). Can also list a zone's contents via --zone X."
+        Description = "List vault projects and domains with their synthetic state. Renamed from mem-list-projects in v0.5 (now handles BOTH projects and domains). Can also list a zone's contents via --zone X. v0.7.2 — each project line is enriched with archeo coverage glyphs: T (main topology present), B{N} (N branch topologies known), [{C}c {S}s {G}g] (counts of archeo-context/stack/git atoms). With --detail, expands to a full per-project breakdown including repo_path, workspace_member, and per-source atom counts."
         ArgsText = "No required argument. Options: --kind project|domain|all, --scope personal|work|all, --zone X, --detail."
     }
     'mem-rename' = @{
