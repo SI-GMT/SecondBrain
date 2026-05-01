@@ -14,8 +14,13 @@ Recognized options:
 - `--project {slug}`: filters by attached project.
 - `--domain {slug}`: filters by attached domain.
 - `--type {value}`: filters by note type (e.g., `--type principle`).
-- `--source {value}`: filters by source (`lived|doc|archeo-git|archeo-atlassian|manual`).
+- `--source {value}`: filters by source (`lived|doc|archeo-context|archeo-stack|archeo-git|archeo-atlassian|manual`). Wildcard `archeo-*` matches any of the four archeo sources (v0.7.2).
+- `--branch {name}`: filters by branch (frontmatter `branch:` field — only relevant for archeo-* atoms produced in branch-first mode, v0.7.2).
+- `--extracted-category {value}`: filters archeo-context atoms by `extracted_category` (`workflow|sync|multi-tenant|security|adr|goal|other`, v0.7.2).
+- `--detected-layer {value}`: filters archeo-stack atoms by `detected_layer` (`frontend|backend|db|ci|infra|tests|tooling|other|ambient`, v0.7.2).
+- `--author {email-or-name}`: filters archeo-git atoms by `author_email` or `author_name` (v0.7.2). Substring match, case-insensitive.
 - `--limit N`: max number of matches (default 50).
+- `--case-sensitive`: opt-in for case-sensitive search (default is case-insensitive).
 
 ## Vault path resolution
 
@@ -78,7 +83,11 @@ For each matching file, read its frontmatter and apply the filters:
 - `--project`: keep only files with `project: {slug}` or tag `project/{slug}`.
 - `--domain`: keep only files with `domain: {slug}` or tag `domain/{slug}`.
 - `--type`: keep only files with `type: {value}`.
-- `--source`: keep only files with `source: {value}`.
+- `--source`: keep only files with `source: {value}`. Wildcard `archeo-*` matches any of `archeo-context | archeo-stack | archeo-git | archeo-atlassian`.
+- `--branch`: keep only files with `branch: {value}` (v0.7.2 — non-empty value match, useful to find atoms produced on a specific feature branch).
+- `--extracted-category`: keep only archeo-context atoms with `extracted_category: {value}` (v0.7.2).
+- `--detected-layer`: keep only archeo-stack atoms with `detected_layer: {value}` (v0.7.2).
+- `--author`: keep only files where `author_email` OR `author_name` contains the substring (case-insensitive, v0.7.2).
 
 ### 5. Sort and group
 

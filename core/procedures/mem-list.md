@@ -34,6 +34,13 @@ For each slug, read its `context.md` to retrieve:
 - `phase` (frontmatter field or first line of the State section).
 - `last-session` (frontmatter).
 - Counter of archives in `archives/`.
+- `repo_path` and `workspace_member` if present (v0.7.x signals).
+
+Then enrich with **archeo coverage** (v0.7.2) by checking:
+
+- Topology presence: `{VAULT}/99-meta/repo-topology/{slug}.md` → 1 if exists, 0 otherwise.
+- Branch topologies: count files in `{VAULT}/99-meta/repo-topology/{slug}-branches/*.md`.
+- Per-source archeo atom counts: grep across `40-principles/`, `50-goals/`, `20-knowledge/` for atoms carrying `project: {slug}` AND `source: archeo-context|archeo-stack|archeo-git`. Group by source.
 
 ### 2. Display the inventory
 
@@ -43,13 +50,21 @@ Base format:
 ## SecondBrain vault — Inventory
 
 ### Projects ({N}) — finite vocation
-- **{slug}** ({scope}) — phase: {phase} — {N} archive(s) — last: {date}
+- **{slug}** ({scope}) — phase: {phase} — {N} archive(s) — last: {date} — archeo: {topology-flag}{branches-flag}{atoms-counts}
 - ...
 
 ### Domains ({N}) — permanent
 - **{slug}** ({scope}) — phase: {phase} — {N} archive(s) — last: {date}
 - ...
 ```
+
+The archeo annotation on the project line uses compact glyphs:
+
+- `T` if main topology present, `-` otherwise.
+- `B{N}` if N branch topologies known (omitted if 0).
+- `[{C}c {S}s {G}g]` for atom counts: `C` archeo-context, `S` archeo-stack, `G` archeo-git. Omitted entirely if all zero.
+
+Example: `archeo: T B2 [7c 4s 13g]` means main topology present, 2 branches tracked, 7 archeo-context + 4 archeo-stack + 13 archeo-git atoms.
 
 If `--detail`:
 
@@ -61,6 +76,14 @@ If `--detail`:
   Open goals: {N}
   Linked people: {N}
   Last session: {date}
+  Repo: {repo_path or "—"}
+  Workspace member: {workspace_member or "standalone"}
+  Archeo coverage:
+    Main topology: {present|absent}
+    Branch topologies: {N} ({list of branch names if any})
+    archeo-context: {N} atom(s)
+    archeo-stack:   {N} atom(s) (incl. {N} ambient)
+    archeo-git:     {N} archive(s) ({split: standard / branch-first if applicable})
 ```
 
 ## Procedure — zone list mode (`--zone X`)

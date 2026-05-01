@@ -10,6 +10,23 @@ Every file in the vault outside `00-inbox/` and `99-meta/` carries the **6 unive
 | `collective` | bool | yes (default `false`) | Promotion flag toward CollectiveBrain. Not read by SecondBrain v0.5.0. |
 | `modality` | enum | yes | `left` or `right`. Default `left`. `right` for schemas, Excalidraw, metaphors, moodboards. |
 | `tags` | list | yes | Obsidian tags. Must **redundantly mirror the frontmatter fields** to enable the graph view (Obsidian indexes tags, not fields). |
+| `display` | string | recommended (v0.7.2) | Label shown in Obsidian's graph and file-explorer when the **Front Matter Title** community plugin is active. Disambiguates homonymous nodes (every project has its `context.md`, every project has its `history.md` — without `display`, the graph view shows N nodes labelled `context` and N labelled `history`, undistinguishable). Conventions per kind below. |
+
+### `display` — recommended conventions per kind
+
+| File kind | Convention | Example |
+|---|---|---|
+| `context.md` | `"{slug} — context"` | `"secondbrain — context"` |
+| `history.md` | `"{slug} — history"` | `"secondbrain — history"` |
+| Archives `archives/{date}-*.md` | `"{slug} — {date} {short-subject}"` | `"secondbrain — 2026-05-01 v0.7.1 livré"` |
+| Topology main `99-meta/repo-topology/{slug}.md` | `"{slug} — topology"` | `"secondbrain — topology"` |
+| Topology branch `99-meta/repo-topology/{slug}-branches/{branch-san}.md` | `"{slug} — topology ({branch})"` | `"acme-web — topology (feature/oauth)"` |
+| Transverse atoms (`40-principles/`, `20-knowledge/`, `50-goals/`, `60-people/`) | `"{kind-suffix}: {short-title}"` where `kind-suffix` is `principle` / `knowledge` / `goal` / `person` | `"principle: source-of-truth-derived-aggregates"` |
+| `index.md` (vault root) | `"vault index"` | `"vault index"` |
+
+The `display` value is a string that will be picked up by Obsidian's Front Matter Title plugin. If the plugin is not installed, the field is silently ignored and Obsidian falls back to filename-based labels — so `display` is **never harmful** even when the plugin is absent. This makes it safe to add unconditionally.
+
+For atoms produced by skills that already know the structure (router, mem-archive, mem-archeo*), `display` should be set at write time. For pre-v0.7.2 vaults, `scripts/inject-display-frontmatter.py` retroactively injects it.
 
 ### Invariants to check at write time
 

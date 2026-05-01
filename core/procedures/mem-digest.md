@@ -45,6 +45,17 @@ For each archive: read the content and extract **Summary**, **Decisions**, **Nex
 
 For each selected archive, follow the `derived_atoms` field of the frontmatter. List the principles, goals, knowledge derived from the archives — they enrich the synthesis.
 
+### 5.5. Load the project foundations (v0.7.2)
+
+In addition to derived atoms born in lived sessions, load the **foundations** — atoms that frame the project but were not produced by sessions:
+
+- `{VAULT}/99-meta/repo-topology/{slug}.md` (main topology) — gives the resolved stack, conventions, archeo coverage counts.
+- Atoms with `project: {slug}` AND `source: archeo-context` — principles, goals, knowledge ADR extracted from the project's documentation.
+- Atoms with `project: {slug}` AND `source: archeo-stack` — resolved layers (frontend, backend, db, ci, infra, ...).
+- Branch topologies in `{VAULT}/99-meta/repo-topology/{slug}-branches/*.md` if any.
+
+These are **not** session events — they are the **stature** of the project. Treat them separately in the synthesis (cf. step 7 format).
+
 ### 6. Synthesize
 
 Produce a structured synthesis:
@@ -64,13 +75,22 @@ Format:
 
 Period: {start date} → {end date}
 
-### Major arcs
+### Foundations (stable stature)
+
+**Stack** : {one-line synthesis from main topology, or "not yet captured"}
+**Conventions** : {N detected — comma-separated short list}
+**archeo-context** : {N atom(s)} — {1-line summary of the dominant categories: e.g. "3 security red-lines, 2 ADR, 1 workflow heuristic"}
+**archeo-stack** : {N atom(s)} — {1-line: e.g. "frontend Next.js 14, backend FastAPI, db Postgres+Supabase"}
+**Workspace member** : {workspace_member or "standalone"}
+**Branch topologies** : {N — list if any}
+
+### Major arcs (sessions)
 - ...
 
-### Structuring decisions
+### Structuring decisions (sessions)
 - ...
 
-### Derived atoms ({N})
+### Derived atoms born in sessions ({N})
 - [{type}] {title} → [[link]]
 
 ### Evolution of next steps
@@ -79,8 +99,10 @@ Period: {start date} → {end date}
 - Postponed / abandoned: ...
 
 ### Final state
-{synthetic snapshot}
+{synthetic snapshot — combine foundations + last session state}
 ```
+
+The **Foundations** section is the v0.7.2 fix: it captures what's **stable** about the project (its stature, its frame) — the stack, the architectural decisions, the conventions. The **session-derived** sections capture what's **moving** (decisions, deliverables, drift). The split is essential because sessions evolve fast while foundations are slow-moving — mixing them flattens the temporal signal.
 
 ## Procedure — zone mode (`--zone X`)
 
