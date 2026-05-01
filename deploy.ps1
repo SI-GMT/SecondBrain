@@ -37,7 +37,9 @@ param(
     [string]$VaultPath,
     [ValidateSet('en','fr','es','de','ru','')]
     [string]$Language = '',
-    [switch]$Force
+    [switch]$Force,
+    [switch]$SkipObsidianStyle,
+    [switch]$ForceObsidianStyle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -156,6 +158,99 @@ function Resolve-Language {
         }
     }
     return $detected
+}
+
+# ============================================================
+# Bridge Deploy-ObsidianStyle (v0.7.2)
+# ============================================================
+# Copie les configs canoniques de adapters/obsidian-style/ vers
+# {vault}/.obsidian/ avec backup horodate avant ecrasement. Refuse si
+# Obsidian est ouvert (sauf -ForceObsidianStyle). Idempotent : skip si
+# contenu identique. Respecte le marker "_secondbrain_canonical" pour
+# distinguer fichier kit vs personnalisation utilisateur.
+
+function Test-ObsidianRunning {
+    param([Parameter(Mandatory=$true)][string]$VaultPath)
+    # Detection 1 : processus Obsidian
+    $procs = Get-Process -Name 'Obsidian' -ErrorAction SilentlyContinue
+    if ($procs) { return $true }
+    # Detection 2 : workspace.json modifie dans les 60 dernieres secondes
+    $workspaceFile = Join-Path $VaultPath '.obsidian\workspace.json'
+    if (Test-Path $workspaceFile) {
+        $mtime = (Get-Item $workspaceFile).LastWriteTime
+        if ((Get-Date) - $mtime -lt [TimeSpan]::FromSeconds(60)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-CanonicalMarker {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (-not (Test-Path $Path)) { return $false }
+    try {
+        $content = Get-Content -Path $Path -Raw -Encoding utf8
+        return ($content -match '"_secondbrain_canonical"\s*:')
+    } catch {
+        return $false
+    }
+}
+
+function Deploy-ObsidianStyle {
+    param(
+        [Parameter(Mandatory=$true)][string]$KitRoot,
+        [Parameter(Mandatory=$true)][string]$VaultPath,
+        [switch]$Force
+    )
+    $sourceDir = Join-Path $KitRoot 'adapters\obsidian-style'
+    if (-not (Test-Path $sourceDir)) {
+        Write-Skip "Adapter obsidian-style absent du kit (skip silencieux)"
+        return
+    }
+
+    Write-Step "> Deploiement : Obsidian style (graph palette + assets canoniques)"
+
+    $obsidianDir = Join-Path $VaultPath '.obsidian'
+    if (-not (Test-Path $obsidianDir)) {
+        Write-Skip "$obsidianDir absent — Obsidian n'a pas encore ouvert ce vault. Skip."
+        return
+    }
+
+    if ((Test-ObsidianRunning -VaultPath $VaultPath) -and -not $Force) {
+        Write-Warn2 "Obsidian semble ouvert ou actif sur $VaultPath. Skip pour eviter une corruption."
+        Write-Info "Fermer Obsidian puis relancer, ou passer -ForceObsidianStyle pour bypass."
+        return
+    }
+
+    $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
+    Get-ChildItem -Path $sourceDir -Filter '*.json' | ForEach-Object {
+        $srcContent = Get-Content -Path $_.FullName -Raw -Encoding utf8
+        $targetPath = Join-Path $obsidianDir $_.Name
+
+        if (-not (Test-Path $targetPath)) {
+            Set-Content -Path $targetPath -Value $srcContent -Encoding utf8NoBOM -NoNewline
+            Write-Ok "Ecrit (nouveau) : .obsidian/$($_.Name)"
+            return
+        }
+
+        $targetContent = Get-Content -Path $targetPath -Raw -Encoding utf8
+        if ($srcContent -eq $targetContent) {
+            Write-Skip ".obsidian/$($_.Name) — identique a la version canonique"
+            return
+        }
+
+        # Cible existe et differe : backup si elle porte le marker canonique,
+        # sinon on respecte la personnalisation utilisateur (skip).
+        if (Test-CanonicalMarker -Path $targetPath) {
+            $backupPath = "$targetPath.bak-pre-style-$stamp"
+            Copy-Item -Path $targetPath -Destination $backupPath
+            Set-Content -Path $targetPath -Value $srcContent -Encoding utf8NoBOM -NoNewline
+            Write-Ok "Mis a jour : .obsidian/$($_.Name) (backup -> $($_.Name).bak-pre-style-$stamp)"
+        } else {
+            Write-Skip ".obsidian/$($_.Name) — personnalise par l'utilisateur (pas de marker canonique). Pas touche."
+            Write-Info "  Pour reapppliquer la version canonique, supprimer manuellement la cible et relancer."
+        }
+    }
 }
 
 # ============================================================
@@ -919,6 +1014,15 @@ if (-not (Test-Path $episodesDir)) {
     }
 } else {
     Write-Skip "Vault deja peuple (10-episodes/ present), scaffold ignore"
+}
+
+# ============================================================
+# 6.5. Deploy-ObsidianStyle (v0.7.2, opt-out via -SkipObsidianStyle)
+# ============================================================
+
+if (-not $SkipObsidianStyle) {
+    Write-Host ''
+    Deploy-ObsidianStyle -KitRoot $KitRoot -VaultPath $VaultPath -Force:$ForceObsidianStyle
 }
 
 # ============================================================

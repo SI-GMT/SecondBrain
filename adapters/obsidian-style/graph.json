@@ -1,0 +1,33 @@
+{
+  "_secondbrain_canonical": "v0.7.2",
+  "collapse-filter": true,
+  "search": "",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    { "query": "tag:#zone/episodes",   "color": { "a": 1, "rgb": 4286945 } },
+    { "query": "tag:#zone/knowledge",  "color": { "a": 1, "rgb": 4684507 } },
+    { "query": "tag:#zone/procedures", "color": { "a": 1, "rgb": 6730490 } },
+    { "query": "tag:#zone/principles", "color": { "a": 1, "rgb": 14704411 } },
+    { "query": "tag:#zone/goals",      "color": { "a": 1, "rgb": 14716160 } },
+    { "query": "tag:#zone/people",     "color": { "a": 1, "rgb": 14706230 } },
+    { "query": "tag:#zone/cognition",  "color": { "a": 1, "rgb": 12089466 } },
+    { "query": "tag:#zone/meta",       "color": { "a": 1, "rgb": 9408399 } },
+    { "query": "tag:#zone/inbox",      "color": { "a": 1, "rgb": 13421772 } }
+  ],
+  "collapse-display": false,
+  "showArrow": false,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": true,
+  "centerStrength": 0.5,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 1,
+  "close": true
+}

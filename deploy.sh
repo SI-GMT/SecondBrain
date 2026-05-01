@@ -31,6 +31,8 @@ set -euo pipefail
 VAULT_PATH=""
 LANGUAGE=""
 FORCE=false
+SKIP_OBSIDIAN_STYLE=false
+FORCE_OBSIDIAN_STYLE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -46,12 +48,22 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
+        --skip-obsidian-style)
+            SKIP_OBSIDIAN_STYLE=true
+            shift
+            ;;
+        --force-obsidian-style)
+            FORCE_OBSIDIAN_STYLE=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force]"
+            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style]"
             echo ""
-            echo "  --vault-path  Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
-            echo "  --language    Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
-            echo "  --force       Ecrase memory-kit.json meme s'il existe deja"
+            echo "  --vault-path             Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
+            echo "  --language               Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
+            echo "  --force                  Ecrase memory-kit.json meme s'il existe deja"
+            echo "  --skip-obsidian-style    Ne deploie pas les configs canoniques Obsidian (graph palette)"
+            echo "  --force-obsidian-style   Force le deploy Obsidian style meme si Obsidian semble ouvert"
             exit 0
             ;;
         *)
@@ -1022,6 +1034,92 @@ if [[ ! -d "$VAULT_PATH/10-episodes" ]]; then
     fi
 else
     _gray "Vault deja peuple (10-episodes/ present), scaffold ignore"
+fi
+
+# ============================================================
+# 6.5. Deploy-ObsidianStyle (v0.7.2, opt-out via --skip-obsidian-style)
+# ============================================================
+# Copie les configs canoniques de adapters/obsidian-style/ vers
+# {vault}/.obsidian/ avec backup horodate avant ecrasement. Refuse si
+# Obsidian est ouvert (sauf --force-obsidian-style). Idempotent.
+
+deploy_obsidian_style() {
+    local kit_root="$1"
+    local vault_path="$2"
+    local force_flag="$3"   # "true" or "false"
+
+    local source_dir="$kit_root/adapters/obsidian-style"
+    if [[ ! -d "$source_dir" ]]; then
+        _gray "Adapter obsidian-style absent du kit (skip silencieux)"
+        return 0
+    fi
+
+    _cyan "> Deploiement : Obsidian style (graph palette + assets canoniques)"
+
+    local obsidian_dir="$vault_path/.obsidian"
+    if [[ ! -d "$obsidian_dir" ]]; then
+        _gray "$obsidian_dir absent — Obsidian n'a pas encore ouvert ce vault. Skip."
+        return 0
+    fi
+
+    # Detection Obsidian ouvert
+    local is_running=false
+    if pgrep -x "Obsidian" &>/dev/null || pgrep -f "/obsidian" &>/dev/null; then
+        is_running=true
+    fi
+    local workspace_file="$obsidian_dir/workspace.json"
+    if [[ -f "$workspace_file" ]]; then
+        local now mtime diff
+        now=$(date +%s)
+        if mtime=$(stat -c %Y "$workspace_file" 2>/dev/null || stat -f %m "$workspace_file" 2>/dev/null); then
+            diff=$((now - mtime))
+            if [[ "$diff" -lt 60 ]]; then
+                is_running=true
+            fi
+        fi
+    fi
+
+    if [[ "$is_running" == "true" && "$force_flag" != "true" ]]; then
+        _yellow "Obsidian semble ouvert ou actif sur $vault_path. Skip pour eviter une corruption."
+        echo "  [i]  Fermer Obsidian puis relancer, ou passer --force-obsidian-style pour bypass."
+        return 0
+    fi
+
+    local stamp
+    stamp=$(date +%Y-%m-%d-%H%M%S)
+    local f
+    for f in "$source_dir"/*.json; do
+        [[ -e "$f" ]] || continue
+        local fname
+        fname=$(basename "$f")
+        local target="$obsidian_dir/$fname"
+        local src_content target_content
+        src_content=$(cat "$f")
+        if [[ ! -e "$target" ]]; then
+            printf '%s' "$src_content" > "$target"
+            _green "Ecrit (nouveau) : .obsidian/$fname"
+            continue
+        fi
+        target_content=$(cat "$target")
+        if [[ "$src_content" == "$target_content" ]]; then
+            _gray ".obsidian/$fname — identique a la version canonique"
+            continue
+        fi
+        # Cible existe et differe : marker canonique present -> backup + ecrase, sinon skip (personnalisation user)
+        if grep -q '"_secondbrain_canonical"\s*:' "$target" 2>/dev/null; then
+            cp "$target" "$target.bak-pre-style-$stamp"
+            printf '%s' "$src_content" > "$target"
+            _green "Mis a jour : .obsidian/$fname (backup -> $fname.bak-pre-style-$stamp)"
+        else
+            _gray ".obsidian/$fname — personnalise par l'utilisateur (pas de marker canonique). Pas touche."
+            echo "  [i]    Pour reapppliquer la version canonique, supprimer manuellement la cible et relancer."
+        fi
+    done
+}
+
+if [[ "$SKIP_OBSIDIAN_STYLE" != "true" ]]; then
+    echo ""
+    deploy_obsidian_style "$KIT_ROOT" "$VAULT_PATH" "${FORCE_OBSIDIAN_STYLE:-false}"
 fi
 
 # ============================================================
