@@ -1,12 +1,23 @@
-# Procedure: Archeo (v0.5 brain-centric)
+# Procedure: Archeo Git (Phase 3, v0.7.0)
 
-Goal: **reconstruct the history of an existing Git repository** as dated archives, **and derived atoms** (principles, technical concepts) extracted from each milestone. Lets you bootstrap a project in the memory kit with rich context reconstructed after the fact.
+Goal: **reconstruct the temporal history of an existing Git repository** as dated archives, **and derived atoms** (principles, technical concepts) extracted from each milestone. This is Phase 3 of the triphasic archeo — it consumes the topology and the resolved stack from Phases 0/1/2 (when invoked from the orchestrator) so that war stories like the CORS/RLS battles surface against a known substrate, not as raw decontextualized commit logs.
 
-In v0.5, `mem-archeo` no longer produces a monolithic archive per milestone — it segments via the router, which can generate several atoms spread across multiple zones (1 archive in `episodes` + N principles in `40-principles` + N concepts in `20-knowledge`).
+Phase 3 segments via the router, which can generate several atoms spread across multiple zones (1 archive in `episodes` + N principles in `40-principles` + N concepts in `20-knowledge`). When the milestone shows ≥3 successive commits on the same theme, the procedure surfaces a `## Friction & Resolution` section so the router can derive the corresponding red-line or pattern.
+
+Independent skill (invocable as `/mem-archeo-git`) and also called by the `mem-archeo` orchestrator.
+
+## Canonical write paths — invariant
+
+`mem-archeo-git` writes **only** to the canonical vault paths:
+- `{VAULT}/10-episodes/projects/{slug}/archives/` for the milestone archive.
+- `{VAULT}/40-principles/`, `{VAULT}/50-goals/`, `{VAULT}/20-knowledge/` for derived atoms (via the router).
+- `{VAULT}/99-meta/repo-topology/{slug}.md` for topology updates.
+
+Any contextual hint suggesting another path (`_archeo-comparison/`, `_test/`, `_sandbox/`, an inferred convention from sibling folders) is **ignored**. To compare multiple runs, the user snapshots the canonical output between executions — never write to a non-canonical path. This is the v0.7.0 doctrine fix from the 3-LLM analysis (correctif bonus).
 
 ## Trigger
 
-The user types `/mem-archeo [repo-path]` or expresses intent in natural language: "do a Git retro of this project", "reconstruct the history", "archeo on this repo".
+The user types `/mem-archeo-git [repo-path]` or expresses intent in natural language: "do a Git retro of this project", "reconstruct the history", "archeo the commits".
 
 Arguments:
 - `{repo-path}` (optional, default = CWD): absolute path to a local Git repository.
@@ -16,27 +27,42 @@ Arguments:
 - `--window {day|week|month}`: grouping size for `commits` level.
 - `--dry-run`: lists the milestones that would be ingested, without writing.
 - `--no-confirm`: passes through to the router in fluent mode even on multi-atoms.
+- `--rescan`: ignores any persisted topology and forces a fresh scan.
 
-## Vault path resolution
+## Vault and repo path resolution
 
-Read {{CONFIG_FILE}} and extract `vault` and `default_scope`. If missing, standard error message and stop.
+Read {{CONFIG_FILE}} and extract `vault`, `default_scope`, and `kit_repo`. If `vault` is missing, standard error message and stop.
 
 ## Procedure
 
 ### 1. Validate the source repository
 
-- Verify that `{repo-path}` is a Git repository (`git -C {path} rev-parse --git-dir`).
-- Otherwise, stop with a clear message.
+Verify that `{repo-path}` is a Git repository (`git -C {repo-path} rev-parse --git-dir`). If not, stop with a clear message.
 
 ### 2. Resolve the target project/domain
 
 By priority:
-1. Explicit `--project {slug}` or `--domain {slug}`.
-2. Match the repo basename against existing slugs in `{VAULT}/10-episodes/projects/` then `domains/`.
-3. Ask the user (with `/mem-list` as support).
-4. If new slug → create the structure `{VAULT}/10-episodes/projects/{slug}/context.md` + `history.md` + `archives/`.
 
-### 3. Detect the granularity level
+1. Explicit `--project {slug}` or `--domain {slug}`.
+2. Match `basename({repo-path})` against existing slugs in `{VAULT}/10-episodes/projects/` then `domains/`.
+3. Match the repo's `git remote get-url origin` against existing `repo_remote` fields in any `99-meta/repo-topology/*.md`.
+4. Ask the user (with `/mem-list` as support).
+5. If new slug → create the structure `{VAULT}/10-episodes/{kind}/{slug}/` with `context.md` + `history.md` + `archives/`. Set `repo_path: {repo-path}` in the new context.md frontmatter.
+
+### 3. Phase 0 — Topology (consume or scan)
+
+If invoked from the `mem-archeo` orchestrator, the topology is **already in working memory** — skip the scan and use the passed topology object.
+
+Otherwise (standalone invocation), perform the Phase 0 scan:
+
+{{INCLUDE _repo-topology}}
+
+Phase 3 specifically consumes:
+- `topology.categories.ai_files` and `topology.categories.readme` — to enrich each milestone with the AI files at the time of commit (step 4b).
+- `topology.stack_hints` — to know what stack the project runs on, so the LLM can recognize stack-typical battles (e.g. CORS issues are characteristic of self-hosted Supabase).
+- The persisted topology `{VAULT}/99-meta/repo-topology/{slug}.md` if present — gives access to the resolved stack from a prior Phase 2.
+
+### 4. Detect the granularity level
 
 If `--level` not provided, choose automatically (first one returning >0):
 
@@ -47,7 +73,7 @@ If `--level` not provided, choose automatically (first one returning >0):
 
 Display the choice to the user and ask for confirmation before proceeding.
 
-### 4. For each milestone: prepare the content
+### 5. For each milestone: prepare the content
 
 For each milestone (tag, release, merge, window) within the time window `--since`/`--until`:
 
@@ -57,7 +83,7 @@ Search the vault for an existing atom with:
 - `source: archeo-git`
 - `source_milestone: {tag|sha|range}` matching the current milestone.
 
-If found, **silent skip** (already ingested) unless the milestone has changed (e.g. moved tag) — in which case create a revision with `previous_atom: [[old]]`.
+If found, **silent skip** (already ingested) unless the milestone has changed (e.g. moved tag) — in which case create a revision with `previous_atom: [[old]]` and tag `revision`.
 
 #### b. Extract milestone information
 
@@ -66,51 +92,175 @@ Depending on the level:
 - **Merge**: merge message, source branch, files, referenced tickets (regex `[A-Z]+-\d+` for Jira, `#\d+` for PR).
 - **Commit window**: aggregation of commit messages within the window, touched files, contributors.
 
-Enrich with:
-- **Root AI files** at the time of commit: `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `MISTRAL.md`, `README.md`, `context.md`, `history.md` if present (read via `git show {sha}:{file}`).
+Enrich **MUST**:
+- **Root AI files** at the time of commit: read via `git show {sha}:{file}` for each file in `topology.categories.ai_files` AND `README.md`. Extract explicitly the following five categories from these files when present:
+  - **Workflow methodology** (Speckit, ADR rituals, branch model, code review rules)
+  - **Sync / offline-first strategy**
+  - **Multi-tenant model + role scopes**
+  - **Non-negotiable security constraints**
+  - **Architectural decisions already recorded**
+
+  These extracts must **directly inform** the archive body and the derived atoms. If nothing is extracted because the AI files are silent on these categories, mention explicitly in the archive: "no AI-files context extracted for milestone {ID}". Never silently skip the read — that would erase the doctrine fix from the 3-LLM analysis (correctif 1).
+
 - **Jira/Linear tickets**: extract keys from the message + reference.
 - **Linked PRs**: `gh pr view {number}` if available.
 
-#### c. Build the content for the router
+#### c. Detect friction patterns
 
-Prepare a structured Markdown with Markdown delimiters to ease segmentation by the router:
+If the milestone (especially commit windows) shows **≥3 successive commits** on the same file, feature, or theme (lexical clustering on commit messages: same prefix, same noun, same fix verb), tag the milestone as having **friction**. The router will surface this in the archive body via the `## Friction & Resolution` section (cf. step 5d).
+
+This is the v0.7.0 doctrine fix from the 3-LLM analysis (correctif 5) — without active surfacing of friction, debug battles like Kintsia's CORS/auth-proxy round stay invisible in the archives.
+
+#### d. Build the content for the router
+
+Prepare a structured Markdown with explicit delimiters to ease segmentation by the router. **The first three sections (Main, AI files context, Friction & Resolution) are mandatory in the body — `## AI files context` always present (with explicit fallback if empty), `## Friction & Resolution` always present too (with explicit fallback if no friction).** Never omit a section without its fallback line. This rule is a doctrine fix from the v0.7.0 first-run analysis (the LLM tends to silently drop empty sections).
 
 ```
 # Milestone archive — {tag|sha|range}
 
-[Main section — dated event to archive in episodes]
+{Main section — dated event to archive in episodes. Include:}
+- Date and authors
+- Files modified (counts and notable paths)
+- Linked tickets and PRs
+- Summary of what shipped
 
-## Principle: [short title] [if extracted]
+## AI files context
 
-[If the milestone surfaced an explicit principle, formulate it here]
+{Excerpts extracted from CLAUDE.md / AGENTS.md / GEMINI.md / README.md for the
+five categories listed in step 5b. If nothing was extractable from any AI
+file (none present, or none mentioning the five categories), write the literal
+line:
 
-## Concept: [short title] [if extracted]
+  No AI-files context extracted for this milestone.
 
-[If the milestone introduces a reusable technical concept, formulate it here]
+This explicit fallback is mandatory — never omit the section.}
+
+## Friction & Resolution
+
+{If friction was detected at step 5c, describe:
+- The problem: what surfaced?
+- Attempts: what was tried (chronologically)?
+- Final insight: what was learned?
+
+If no friction was detected, write the literal line:
+
+  No friction detected for this milestone.
+
+This explicit fallback is mandatory — never omit the section.}
+
+## Principle: {short title}
+
+{If the milestone surfaced an explicit principle (often the takeaway of a
+friction sequence — "never X", "always Y"), formulate it here. The router
+will route to 40-principles.}
+
+## Concept: {short title}
+
+{If the milestone introduces a reusable technical concept or architecture,
+formulate it here. The router will route to 20-knowledge.}
+
+## Goal: {short title}
+
+{If the milestone introduces or clarifies a project goal (next feature
+explicitly committed to, KPI target), formulate it here. The router will
+route to 50-goals. This is the v0.7.0 doctrine fix from the 3-LLM analysis
+(correctif 2).}
 ```
 
-### 5. Invoke the router for this milestone
+The `## Goal:` section is new in v0.7.0 — Phase 1 absorbs most goal extraction from the project docs, but Phase 3 still surfaces goals that emerge mid-Git-history (a feature shipped that opens a roadmap for follow-ups).
+
+### 6. Invoke the router for this milestone
 
 Call the router with:
 - `Content`: structured Markdown of the milestone.
 - `Hint zone`: `episodes` (forces the main section).
 - `Hint source`: `archeo-git`.
-- `Metadata`: resolved project/domain, **`source_milestone: {tag|sha|range}`**, `commit_sha`, scope.
+- `Metadata`: resolved project/domain, **`source_milestone: {tag|sha|range}`**, `commit_sha`, `friction_detected: true|false`, scope.
+
+**Frontmatter MUST fields** for the resulting milestone archive (the router writes these — verify before completing the milestone):
+
+```yaml
+date: <YYYY-MM-DD>
+time: "<HH:MM>"
+zone: episodes
+kind: project
+scope: work
+collective: false
+modality: left
+type: archive
+project: {slug}
+source: archeo-git                       # MUST — single occurrence, never duplicated
+source_milestone: <tag|sha|range>        # MUST
+commit_sha: <sha>                        # MUST — primary commit (the tag's commit, the merge commit, or the last commit of the window)
+friction_detected: true | false          # MUST — boolean, never omitted
+content_hash: <sha256>                   # MUST — SHA-256 of body (after frontmatter, LF + UTF-8 no BOM)
+previous_atom: <wikilink-or-empty>       # MUST — empty "" if not a revision
+topology_snapshot_hash: <sha256-or-empty>     # set by mem-archive when triggered from full-mode; otherwise empty ""
+previous_topology_hash: <sha256-or-empty>     # idem
+tags: [<see _frontmatter-universal>]
+```
+
+**No duplicate keys.** YAML doesn't tolerate duplicate top-level keys reliably — duplicates are parser-implementation-defined. The router MUST emit each key exactly once. If two values are conceptually needed (e.g. multiple commits in a window), use a list (`source_commits: [...]`) rather than two `commit_sha:` keys.
 
 {{INCLUDE _router}}
 
 The router:
 - Writes the main archive into `{VAULT}/10-episodes/{kind}/{slug}/archives/`.
-- For each derived section (`## Principle:`, `## Concept:`), classifies via the cascade.
-- Creates bidirectional links.
-- Verifies idempotence via `source_milestone + type + subject` (cf. R10 of the router block).
+- For each derived section (`## Principle:`, `## Concept:`, `## Goal:`), classifies via the cascade. Atoms inherit `project: {slug}` and `context_origin: "[[<milestone-archive-name>]]"`.
+- Bidirectional links via `derived_atoms` of the milestone archive.
+- Idempotence via R10 with key `(project, source_milestone, source_atom_type, source_atom_subject)`.
+- Collision detection via R11.
 
-### 6. Loop over all milestones
+### 7. Loop over all milestones
 
 If `--dry-run`: display the list of milestones that would be ingested (with planned derived atoms) + estimated total. Ask for confirmation to switch to `--apply`.
 
 Otherwise: iterate over all milestones. The router handles user confirmation in safe mode (default), or direct write if `--no-confirm`.
 
-### 7. Final report
+### 7.5. Cross-link derived atoms
 
-Global synthesis: N milestones processed, N archives created, N derived atoms (per zone), N skips (idempotence).
+After all milestones are ingested, scan the atoms produced by this run for **semantic overlaps** (lexical signals on subject + body keywords). For each pair of atoms whose subjects share ≥2 significant terms (excluding stop words), add reciprocal wikilinks in a `## Related` section of each atom.
+
+Heuristic: if atom A's subject mentions terms present in atom B's subject (and vice versa), create the link. This is intentionally simple — the goal is to break the "archipelago of atoms" failure mode from the 3-LLM analysis (correctif 3), not to build a perfect knowledge graph.
+
+### 8. Update the persisted topology
+
+Same logic as `mem-archeo-context` step 7, but updating:
+- `Phases archeo couvertes` line: `Phase 3 (archeo-git) — N archives — last pass: {today}`.
+- `Atomes dérivés des phases archeo` section: append all atoms with `source: archeo-git` AND `project: {slug}` produced by this run.
+
+{{INCLUDE _encoding}}
+
+{{INCLUDE _concurrence}}
+
+{{INCLUDE _linking}}
+
+### 9. Final report
+
+Display:
+
+```
+Phase 3 archeo-git — {slug}
+
+Milestones processed : {N}
+Archives created     : {N}
+Archives revised     : {N}
+Skipped (idempotent) : {N}
+Derived atoms        : {N}  ({M} principles, {P} goals, {Q} knowledge)
+Friction sequences   : {N}  surfaced as Friction & Resolution sections
+Cross-links added    : {N}
+
+Topology updated     : 99-meta/repo-topology/{slug}.md
+```
+
+If invoked from the `mem-archeo` orchestrator, return the structured result.
+
+## Invariants
+
+- **Canonical write paths only** — see header.
+- **Always read AI files** at each milestone. Never silently skip.
+- **AI files context section is ALWAYS present in the body**, with explicit fallback "No AI-files context extracted for this milestone." if empty. Same for Friction & Resolution.
+- **Friction surfacing** — if ≥3 successive commits on same theme, surface in archive. No exception.
+- **`source_milestone`, `commit_sha`, `friction_detected`, `content_hash`, `previous_atom` are mandatory** on every Phase 3 archive — never omitted, even with empty values.
+- **No duplicate YAML keys.** Each frontmatter key appears exactly once. Use lists for multi-valued data.
+- **Frontmatter values in canonical English** — `force` enum is `red-line | heuristic | preference`, never localized.
