@@ -1088,33 +1088,39 @@ deploy_obsidian_style() {
     local stamp
     stamp=$(date +%Y-%m-%d-%H%M%S)
     local f
-    for f in "$source_dir"/*.json; do
-        [[ -e "$f" ]] || continue
+    # v0.7.3 : recurse dans les sous-dossiers (ex: plugins/obsidian-front-matter-title-plugin/data.json)
+    # pour pouvoir patcher les configs des plugins community sans casser la convention "miroir".
+    while IFS= read -r -d '' f; do
+        local rel_path
+        rel_path="${f#$source_dir/}"
+        local target="$obsidian_dir/$rel_path"
+        local target_parent
+        target_parent="$(dirname "$target")"
+        mkdir -p "$target_parent"
         local fname
-        fname=$(basename "$f")
-        local target="$obsidian_dir/$fname"
+        fname="$(basename "$f")"
         local src_content target_content
         src_content=$(cat "$f")
         if [[ ! -e "$target" ]]; then
             printf '%s' "$src_content" > "$target"
-            _green "Ecrit (nouveau) : .obsidian/$fname"
+            _green "Ecrit (nouveau) : .obsidian/$rel_path"
             continue
         fi
         target_content=$(cat "$target")
         if [[ "$src_content" == "$target_content" ]]; then
-            _gray ".obsidian/$fname — identique a la version canonique"
+            _gray ".obsidian/$rel_path — identique a la version canonique"
             continue
         fi
         # Cible existe et differe : marker canonique present -> backup + ecrase, sinon skip (personnalisation user)
         if grep -q '"_secondbrain_canonical"\s*:' "$target" 2>/dev/null; then
             cp "$target" "$target.bak-pre-style-$stamp"
             printf '%s' "$src_content" > "$target"
-            _green "Mis a jour : .obsidian/$fname (backup -> $fname.bak-pre-style-$stamp)"
+            _green "Mis a jour : .obsidian/$rel_path (backup -> $fname.bak-pre-style-$stamp)"
         else
-            _gray ".obsidian/$fname — personnalise par l'utilisateur (pas de marker canonique). Pas touche."
+            _gray ".obsidian/$rel_path — personnalise par l'utilisateur (pas de marker canonique). Pas touche."
             echo "  [i]    Pour reapppliquer la version canonique, supprimer manuellement la cible et relancer."
         fi
-    done
+    done < <(find "$source_dir" -type f -name '*.json' -print0)
 }
 
 if [[ "$SKIP_OBSIDIAN_STYLE" != "true" ]]; then

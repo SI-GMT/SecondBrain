@@ -223,19 +223,29 @@ function Deploy-ObsidianStyle {
     }
 
     $stamp = Get-Date -Format 'yyyy-MM-dd-HHmmss'
-    Get-ChildItem -Path $sourceDir -Filter '*.json' | ForEach-Object {
+    # v0.7.3 : recurse dans les sous-dossiers (ex: plugins/obsidian-front-matter-title-plugin/data.json)
+    # pour pouvoir patcher les configs des plugins community sans casser la convention "miroir".
+    Get-ChildItem -Path $sourceDir -Filter '*.json' -Recurse -File | ForEach-Object {
         $srcContent = Get-Content -Path $_.FullName -Raw -Encoding utf8
-        $targetPath = Join-Path $obsidianDir $_.Name
+        $relPath = [System.IO.Path]::GetRelativePath($sourceDir, $_.FullName)
+        $targetPath = Join-Path $obsidianDir $relPath
+        $targetParent = Split-Path -Parent $targetPath
+
+        if (-not (Test-Path $targetParent)) {
+            New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+        }
+
+        $relDisplay = $relPath -replace '\\', '/'
 
         if (-not (Test-Path $targetPath)) {
             Set-Content -Path $targetPath -Value $srcContent -Encoding utf8NoBOM -NoNewline
-            Write-Ok "Ecrit (nouveau) : .obsidian/$($_.Name)"
+            Write-Ok "Ecrit (nouveau) : .obsidian/$relDisplay"
             return
         }
 
         $targetContent = Get-Content -Path $targetPath -Raw -Encoding utf8
         if ($srcContent -eq $targetContent) {
-            Write-Skip ".obsidian/$($_.Name) — identique a la version canonique"
+            Write-Skip ".obsidian/$relDisplay — identique a la version canonique"
             return
         }
 
@@ -245,9 +255,9 @@ function Deploy-ObsidianStyle {
             $backupPath = "$targetPath.bak-pre-style-$stamp"
             Copy-Item -Path $targetPath -Destination $backupPath
             Set-Content -Path $targetPath -Value $srcContent -Encoding utf8NoBOM -NoNewline
-            Write-Ok "Mis a jour : .obsidian/$($_.Name) (backup -> $($_.Name).bak-pre-style-$stamp)"
+            Write-Ok "Mis a jour : .obsidian/$relDisplay (backup -> $($_.Name).bak-pre-style-$stamp)"
         } else {
-            Write-Skip ".obsidian/$($_.Name) — personnalise par l'utilisateur (pas de marker canonique). Pas touche."
+            Write-Skip ".obsidian/$relDisplay — personnalise par l'utilisateur (pas de marker canonique). Pas touche."
             Write-Info "  Pour reapppliquer la version canonique, supprimer manuellement la cible et relancer."
         }
     }
