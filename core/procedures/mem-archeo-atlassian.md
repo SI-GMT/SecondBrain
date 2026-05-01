@@ -103,6 +103,26 @@ Call the router with:
 - `Hint source`: `archeo-atlassian`.
 - `Metadata`: project/domain, **`confluence_page_id`**, **`confluence_updated`**, `confluence_url`, `space_key`, `jira_keys: [...]`.
 
+#### Frontmatter quoting requirements (v0.7.3.1, mandatory)
+
+Some Confluence/Jira fields contain characters that trip strict YAML parsers (PyYAML's `safe_load` and equivalents). These fields MUST be written as YAML double-quoted scalars even when the unquoted form looks fine to the eye:
+
+- **`confluence_page_title`** — Confluence prefixes are routinely written as `[TAG]` (e.g. `[DUST] Configuration et bonnes pratiques`). Unquoted, `[DUST]` opens a YAML flow sequence and breaks the whole frontmatter.
+- **`jira_summary`** / **`jira_title`** — same pattern, ticket prefixes like `[BUG]`, `[FEAT]` are common.
+- **`confluence_url`** / **`jira_url`** — colons inside URLs are fine *only* if the value is wrapped in quotes; quote them anyway for consistency.
+
+Convention to apply at write time:
+
+```yaml
+confluence_page_title: "[DUST] Configuration et bonnes pratiques"
+confluence_url: "https://example.atlassian.net/wiki/spaces/X/pages/123/My+Page"
+jira_summary: "[BUG] Fix the foo on the bar"
+```
+
+Escape any internal `"` as `\"` and any `\` as `\\`. If a value crosses multiple lines, use a YAML block scalar (`|` or `>`) instead of a quoted scalar.
+
+**Rationale**: not quoting these fields produces frontmatter that PyYAML returns as `{}` (parse error swallowed), which then cascades into false-positive findings in `mem-health-scan` (e.g. "missing display" on files that DO carry a display value). The bug is silent and only surfaces when something else tries to parse the frontmatter — exactly the kind of latent dette technique to avoid. See `scripts/migrate-quote-confluence-titles.py` for the one-shot migration that fixes pre-v0.7.3.1 archives.
+
 {{INCLUDE _router}}
 
 ### 6. Loop over all pages

@@ -1,30 +1,42 @@
-# Procedure: Health scan (v0.7.3)
+# Procedure: Health scan (v0.7.3.1)
 
 Goal: audit the vault for hygiene defects without modifying anything. Produces a structured report under `99-meta/health/scan-{ts}.md` that `mem-health-repair` can later consume to apply fixes. Read-only.
 
-Symptoms covered (one section per category in the report):
+## Doctrinal note (v0.7.3.1)
 
-- **stray-zone-md** — empty/trivial `{vault}/{NN-zone}.md` files at the vault root, created by Obsidian when the user clicks a dangling wiki-link target named after a zone (pre-v0.7.3 vault root index linked `[20-knowledge](20-knowledge/)` which Obsidian resolved to a non-existent `20-knowledge` note). Safe to delete.
-- **empty-md-at-root** — empty/trivial `*.md` files at the vault root that are not `index.md`. Same root cause; broader catch.
-- **missing-zone-index** — zones (`00-inbox`, `10-episodes`, etc.) that exist as folders but lack their `{zone}/index.md` hub. Re-asserted by `rebuild-vault-index.py`.
-- **missing-display** — files that should carry a `display:` field per `_frontmatter-universal.md` (any `context.md`, `history.md`, archive, transverse atom, topology, root index) but don't. Backfilled by `scripts/inject-display-frontmatter.py`.
-- **dangling-wikilinks** — `[[X]]` references whose target file is not present anywhere in the vault. Either the target was removed, was never created (prospective wikilink), or was renamed without a sweep.
-- **orphan-atoms** — files in a transverse zone (`40-principles/`, `20-knowledge/`, `50-goals/`, `60-people/`) without a `project:` or `domain:` frontmatter field, AND with no incoming wiki-link from any other vault file. Either reclassified to `00-inbox/` with tag `unlinked-atom` or attached to a project/domain.
-- **missing-archeo-hashes** — atoms with `source: archeo-*` whose frontmatter lacks `content_hash` or (for `repo-topology`) `previous_topology_hash`. Repaired by `scripts/inject-archeo-hashes.py`.
+This procedure **delegates to a versioned Python script** (`{kit_repo}/scripts/mem-health-scan.py`) rather than re-implementing the scan in LLM-orchestrated tool calls every invocation. Rationale: a systematic vault parse (parse YAML for every `*.md`, scan wikilinks, build incoming-link graph) is intrinsically a script job, not LLM-orchestration territory. Re-implementing it ad hoc per session would burn tool-call budget, drift from the spec and skip the unit-test surface. See `core/procedures/_when-to-script.md` for the full doctrinal rule.
+
+The LLM's role here is therefore narrow: resolve the vault path, invoke the script, parse its output, surface the result to the user in their conversational language. **Do not re-implement any of the 8 checks below in tool calls** — the spec lives here for readability and contract stability with `mem-health-repair`, but the *execution* is the script's job.
+
+## Categories audited (8)
+
+| Category | Severity | Description |
+|---|---|---|
+| `malformed-frontmatter` | error | YAML frontmatter that fails to parse — typically unquoted `[TAG]` flow-sequences or stray colons. Detected first to avoid false-positive cascades into other categories. |
+| `stray-zone-md` | warn | Empty `{vault}/{NN-zone}.md` files at vault root, created by Obsidian on click of a dangling wiki-link target named after a zone. |
+| `empty-md-at-root` | warn | Other empty `*.md` at vault root (broader catch). |
+| `missing-zone-index` | warn | Zone folder exists but lacks its `{zone}/index.md` hub. |
+| `missing-display` | info | Frontmatter without `display:` where universal conventions require it (see `_frontmatter-universal.md`). |
+| `dangling-wikilinks` | info | `[[X]]` references whose target is not present anywhere in the vault. |
+| `orphan-atoms` | warn | Transverse atoms with no `project:`/`domain:` and zero incoming wikilinks. |
+| `missing-archeo-hashes` | warn | Atoms with `source: archeo-*` missing `content_hash` (or `previous_topology_hash` for repo-topology files). |
 
 ## Trigger
 
 The user types `/mem-health-scan` or expresses the intent in natural language: "audit my vault", "check the vault health", "scan the memory for issues", "what's broken in memory?", "find orphans in the vault".
 
-Recognized options:
-- `--zones {list}`: restrict the scan to one or more numbered zones (default: all).
-- `--only {category}`: restrict to a single check category (e.g., `--only dangling-wikilinks`).
-- `--quiet`: suppress per-finding output, only print the summary.
-- `--no-write`: do not persist the report file under `99-meta/health/`. Print to stdout only.
+Recognized options (passed through to the script):
+- `--zones {comma-separated list}` — restrict to one or more numbered zones.
+- `--only {category}` — restrict to a single check category.
+- `--quiet` — suppress per-finding stdout, summary only.
+- `--no-write` — do not persist the report file.
+- `--json` — print a JSON summary on stdout instead of plain text (useful for chaining into `mem-health-repair`).
 
-## Vault path resolution
+## Vault path & kit repo resolution
 
-Read {{CONFIG_FILE}} and extract the `vault` field. In what follows, `{VAULT}` denotes this value. Read also the `kit_repo` field — needed to locate the auxiliary Python scripts (`inject-display-frontmatter.py`, `validate-archeo-frontmatter.py`).
+Read {{CONFIG_FILE}} and extract:
+- `vault` → `{VAULT}` in what follows.
+- `kit_repo` → `{KIT}` in what follows. Required to locate `scripts/mem-health-scan.py`.
 
 If the file is absent or unreadable, reply:
 > Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
@@ -33,125 +45,24 @@ Then stop.
 
 ## Procedure
 
-### 1. Resolve the report path and timestamp
+### 1. Invoke the scanner
 
-- Timestamp: ISO-like, `YYYY-MM-DD-HHmmss` (matches the existing archive convention).
-- Report directory: `{VAULT}/99-meta/health/`. Create if missing.
-- Report file: `{VAULT}/99-meta/health/scan-{ts}.md`.
+Run, with the user-provided options forwarded:
 
-### 2. Run the scan checks
-
-For each category below, build a list of findings. Each finding is `(severity, path-relative-to-vault, message, fix-hint)`. Severities: `info`, `warn`, `error`.
-
-#### 2.1 stray-zone-md
-
-For each numbered zone in `[00-inbox, 10-episodes, 20-knowledge, 30-procedures, 40-principles, 50-goals, 60-people, 70-cognition, 99-meta]`, check whether `{VAULT}/{zone}.md` exists. If it does and (a) its size is 0 OR (b) its non-whitespace content is empty → finding `warn` with fix-hint `delete-stray-zone-md`.
-
-#### 2.2 empty-md-at-root
-
-List `{VAULT}/*.md`. For each file other than `index.md` whose non-whitespace content is empty, finding `warn` with fix-hint `delete-empty-root-md`. (Stray-zone-md is a special case caught earlier — do not double-report.)
-
-#### 2.3 missing-zone-index
-
-For each numbered zone whose folder exists, check that `{VAULT}/{zone}/index.md` exists. Otherwise finding `warn` with fix-hint `recreate-zone-index`.
-
-#### 2.4 missing-display
-
-Scan all `*.md` in the vault outside `00-inbox/` and outside `99-meta/` subfolders (except `99-meta/repo-topology/`). For each file, parse the YAML frontmatter and check whether `display` is present and non-empty.
-
-If a file should carry `display:` per `_frontmatter-universal.md` (any `context.md`, `history.md`, archive under `*/archives/*.md`, transverse atom under `40-principles/`, `20-knowledge/`, `50-goals/`, `60-people/`, topology under `99-meta/repo-topology/*.md`, root `index.md`, zone hub `*/index.md`) and lacks the field → finding `info` with fix-hint `inject-display`.
-
-#### 2.5 dangling-wikilinks
-
-Scan all `*.md` outside `.obsidian/` and outside backup files. Extract every `[[X]]` (skip image embeds `![[X]]`, skip code-fenced blocks). For each link target, resolve it against the vault file index (a target may match either a basename without extension, or a relative path). If unresolved, finding `info` with fix-hint `manual-review` (these are often prospective links the user wants to keep).
-
-Skip (do not report) wikilinks that point to:
-- `index` (vault root)
-- A zone hub like `20-knowledge/index` or `99-meta/repo-topology/{slug}` (these are now real files in v0.7.3 — but if for some reason they are missing, the missing-zone-index check above already covers it).
-
-#### 2.6 orphan-atoms
-
-For each `*.md` under `40-principles/`, `20-knowledge/`, `50-goals/`, `60-people/`:
-
-- Parse frontmatter. If neither `project:` nor `domain:` is set, the atom is candidate-orphan.
-- For each candidate, count incoming wiki-links from other vault files (basename match suffices). If the count is zero → finding `warn` with fix-hint `reclassify-to-inbox`.
-
-Atoms attached to a project/domain that no longer exists (folder absent under `10-episodes/projects/{slug}/` or `10-episodes/domains/{slug}/`) → also finding `warn` with fix-hint `reclassify-to-inbox` and message `"orphan because target {project|domain} '{slug}' no longer exists"`.
-
-#### 2.7 missing-archeo-hashes
-
-For each `*.md` whose frontmatter has `source:` starting with `archeo-` (`archeo-context`, `archeo-stack`, `archeo-git`, `archeo-atlassian`):
-
-- If `content_hash` is missing or empty → finding `warn` with fix-hint `inject-archeo-hashes`.
-- For `99-meta/repo-topology/*.md` only, also check `previous_topology_hash` (may be empty string for the first snapshot — that's fine; missing entirely is the bug).
-
-### 3. Emit the report
-
-The report file uses the standard meta-frontmatter:
-
-```yaml
----
-date: {YYYY-MM-DD}
-zone: meta
-type: health-scan
-display: "vault health scan {ts}"
-tags: [zone/meta, type/health-scan]
-scan_timestamp: {ts}
-vault_path: "{VAULT}"
-findings_count_total: {N}
-findings_by_severity:
-  info: {N}
-  warn: {N}
-  error: {N}
-findings_by_category:
-  stray-zone-md: {N}
-  empty-md-at-root: {N}
-  missing-zone-index: {N}
-  missing-display: {N}
-  dangling-wikilinks: {N}
-  orphan-atoms: {N}
-  missing-archeo-hashes: {N}
----
+```
+python {KIT}/scripts/mem-health-scan.py --vault {VAULT} [options]
 ```
 
-Body — one section per category that has at least one finding. Empty categories are omitted entirely.
+The script:
+1. Walks `{VAULT}/**/*.md` (excluding `.obsidian/` and `.trash/`).
+2. Runs each of the 8 checks in dependency order — `malformed-frontmatter` first so that subsequent checks skip files whose frontmatter cannot be parsed (avoids cascading false positives).
+3. Persists the report at `{VAULT}/99-meta/health/scan-{ts}.md` (unless `--no-write`).
+4. Prints a parseable summary on stdout (text by default, JSON with `--json`).
+5. Exit code `1` if any `error`-severity finding, else `0`.
 
-```markdown
-# Vault health scan — {ts}
+### 2. Surface the result to the user
 
-> Read-only audit. Run `/mem-health-repair` to apply the suggested fixes.
-> Linked from [[index|vault index]].
-
-## Summary
-
-- **Total findings**: {N} ({E} errors, {W} warnings, {I} info)
-- **Vault**: `{VAULT}`
-- **Scan started**: {ts}
-- **Scope**: all zones (or `--zones X,Y` if restricted)
-
-## stray-zone-md ({N} finding(s))
-
-| Severity | File | Message | Fix |
-|---|---|---|---|
-| warn | `20-knowledge.md` | empty MD at root, named after zone `20-knowledge` | delete-stray-zone-md |
-| ... | ... | ... | ... |
-
-## empty-md-at-root ({N})
-
-(table)
-
-## missing-zone-index ({N})
-
-(table)
-
-(... etc, one section per category ...)
-```
-
-Atomic write UTF-8 / LF (use `.tmp` + rename).
-
-### 4. Reply to the user
-
-Print a short summary in their conversational language:
+Read the script's stdout. Reply in the user's conversational language with a 4-line summary:
 
 ```
 ✓ Vault health scan completed.
@@ -160,24 +71,11 @@ Print a short summary in their conversational language:
   Top categories : {category-1} ({N1}), {category-2} ({N2}), ...
 
   Report : 99-meta/health/scan-{ts}.md
-
-Run /mem-health-repair to apply the safe fixes (delete stray MDs, create
-missing zone indexes, inject missing display fields, inject missing archeo
-hashes). Orphan atoms and dangling wikilinks require manual review.
 ```
 
-If `--no-write` was passed, replace the "Report" line with `(report not persisted, --no-write was set)`.
+If the script wrote no report (because `--no-write` was passed), replace the "Report" line with `(report not persisted, --no-write was set)`.
 
-## Index linking
-
-Add a top-level entry to `{VAULT}/index.md` under a `## Health` section if any health report exists. Format:
-- `[scan-{ts}](99-meta/health/scan-{ts}.md) — {N} finding(s)`
-
-If a `## Health` section is absent, append it before the first existing section that comes alphabetically after "Health" — or at the end if none. Idempotent: same-day rescans append a new line, do not replace previous ones.
-
-(`rebuild-vault-index.py` does not yet aggregate this section — that's a follow-up. For now the writing skill manages it directly.)
-
-## Empty vault / nothing to report
+If `findings_by_severity.error > 0`, lead the summary with a one-line warning suggesting that `error` findings (most often `malformed-frontmatter`) be addressed before running other vault tooling, since malformed frontmatters break downstream scripts that rely on YAML parsing.
 
 If the scan finds zero issues across all categories:
 
@@ -185,8 +83,29 @@ If the scan finds zero issues across all categories:
 ✓ Vault is clean. No findings.
 ```
 
-Still write the report file (with `findings_count_total: 0` and only the Summary section) so there is a baseline to compare future scans against.
+### 3. Refresh the index
+
+Invoke `python {KIT}/scripts/rebuild-vault-index.py --vault {VAULT}` to update the `## Health` section of `{VAULT}/index.md` with the new report. Optional but recommended — without it the new report is not linked from the root index until the next mutation triggers a rebuild.
+
+## What NOT to do
+
+- **Do not** open and parse `*.md` files in the vault yourself (Glob/Grep/Read in a loop). The script does this — and does it correctly with the `malformed-frontmatter` priority that avoids false positives.
+- **Do not** create an ad-hoc script in `$TEMP/` or anywhere outside `scripts/`. The procedure is doctrinally bound to `{KIT}/scripts/mem-health-scan.py`. If the script is missing, the right reaction is to instruct the user to re-run `deploy.ps1` (or alternatively run from the kit checkout if `kit_repo` points to a stale path).
+- **Do not** re-implement any check in this procedure body. The 8-category table above is a *contract* with `mem-health-repair` and a doc for the user — it is not a re-implementable spec. The single source of truth is `scripts/mem-health-scan.py`.
 
 ## Escape hatch
 
-If any check raises an unexpected error (corrupt frontmatter, encoding issue), log the file path + error in a final `## Scan errors` section of the report and continue with the other checks. Never abort the whole scan because one file fails to parse.
+If the script fails to run (Python missing, PyYAML missing, kit_repo points to a stale path), surface a clear message:
+
+```
+✗ mem-health-scan failed to invoke the scanner.
+
+  Reason : {short reason from stderr}
+
+  Expected: python {KIT}/scripts/mem-health-scan.py --vault {VAULT}
+  Action  : ensure Python and PyYAML are installed, and that
+            kit_repo in {{CONFIG_FILE}} points to a valid kit checkout.
+            Re-run `deploy.ps1` from the kit root if in doubt.
+```
+
+Do not fall back to an in-LLM scan reimplementation. The "no fallback" stance is intentional — silent fallback would mean future calls of this skill silently produce different (likely degraded) results depending on environment quirks, which is exactly the doctrinal failure mode this procedure is meant to prevent.
