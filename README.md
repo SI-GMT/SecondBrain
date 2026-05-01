@@ -11,6 +11,8 @@
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
+> **v0.7.0** — Refonte `mem-archeo` triphasée pour rendre la reconstruction de projet **déterministe inter-LLM**. La cause racine identifiée par l'analyse 3-LLM (`docs/analyses/2026-04-28-mem-archeo-comparatif-3-llm.md`) : un mem-archeo Git-only force chaque LLM à extrapoler différemment le contexte organisationnel et technique manquant. Solution : 3 phases distinctes orchestrées qui partagent un scan topologique unique. Phase 1 `archeo-context` (organisationnel/décisionnel/fonctionnel — AI files, README, docs/, cadrage/, adr/), Phase 2 `archeo-stack` (technique — manifests, infra, CI), Phase 3 `archeo-git` (temporel — la procédure existante, enrichie par 0/1/2). Topologie persistée dans `99-meta/repo-topology/{slug}.md`. Skills `mem-archive` et `mem-recall` alignés (snapshot topologique, lecture au briefing). Router (`_router.md`) durci : R10 idempotence par-source, R11 collisions sémantiques, R4.5 invariants frontmatter (no duplicate keys, enum values en anglais canonique, hashes mandatory). Deux nouveaux scripts : `inject-archeo-hashes.py` (correction rétroactive des hashes/enum), `validate-archeo-frontmatter.py` (lint CI-able).
+>
 > **v0.6.0** — Doc-readers Python multi-format pour `/mem-doc` : ingestion de `.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html` en plus du texte natif et des images. Convention PEP 723 inline metadata via `uv run` — pas de venv ni `requirements.txt` à gérer. Stratégie option C pour PDF : extraction Python par défaut, fallback automatique vers la lecture vision native du LLM si le PDF est scanné. Champ `kit_repo` ajouté à `memory-kit.json` pour résoudre l'emplacement des readers.
 >
 > **v0.5.4** — Refonte brain-centric (9 zones mémorielles), schéma 100 % anglais (folders, frontmatter, tags), instructions LLM en anglais (efficacité maximale), conversation dans la langue native de l'utilisateur (EN/FR/ES/DE/RU bundle, sélection à l'install). Invariant **zero orphan atom** : tout fichier persisté carries au moins un lien (croisés `context.md` ↔ `history.md`, frontmatter `project:` + `context_origin` pour les atomes transverses). Tooling : migration FR→EN, régénération de l'index, enforcement linking rétroactif.
@@ -213,7 +215,10 @@ Toutes les commandes sont préfixées `mem-*` pour éviter les collisions avec l
 |---|---|---|
 | `/mem` | Capture libre, le router classe | Segmente en atomes et route vers la bonne zone (cascade d'heuristiques) |
 | `/mem-doc {chemin}` | Ingérer un document local | 1 fichier (PDF, MD, texte, image, docx) → archive single-shot |
-| `/mem-archeo [repo]` | Reconstituer l'historique Git | N archives datées (1 par tag/release/merge/fenêtre de commits) |
+| `/mem-archeo [repo]` | Archeo triphasée (orchestrateur) | Phase 0 topologie + Phase 1 contexte (`archeo-context`) + Phase 2 stack (`archeo-stack`) + Phase 3 Git (`archeo-git`). Topologie persistée. |
+| `/mem-archeo-context [repo]` | Phase 1 isolée — contexte projet | Lit AI files + README + docs/ + cadrage/ + adr/. Atomes principles/goals/knowledge ADR. Idempotent par `(project, source_doc, extracted_category)`. |
+| `/mem-archeo-stack [repo]` | Phase 2 isolée — stack technique | Résout par layer (frontend/backend/db/ci/infra/tests/tooling). Idempotent par `(project, source_manifest, detected_layer)`. |
+| `/mem-archeo-git [repo]` | Phase 3 isolée — historique Git | Archives datées par tag/release/merge/fenêtre. Surfacage des frictions (≥3 commits successifs même thème). |
 | `/mem-archeo-atlassian {url}` | Rétro Confluence + Jira | 1 archive par page Confluence, enrichies par les tickets Jira liés |
 | `/mem-note` | Note de connaissance | Insère dans `20-knowledge/` |
 | `/mem-principle` | Principe / heuristique / ligne rouge | Insère dans `40-principles/` |
@@ -304,6 +309,8 @@ Scripts Python livrés dans `scripts/` pour les opérations de maintenance ponct
 | `enforce-linking.py` | Appliquer rétroactivement l'invariant **zero orphan atom** sur un vault existant : ajoute la ligne d'intro localisée avec liens croisés dans chaque `context.md` ↔ `history.md`. Idempotent. À utiliser une fois après upgrade vers v0.5.4. |
 | `scaffold-vault.py` | Bootstrap d'un nouveau vault v0.5 vide (9 zones + sous-dossiers + `.gitignore` + `index.md` squelette i18n via `rebuild-vault-index.py`). Idempotent. Appelé automatiquement par `deploy.{sh,ps1}` lors d'une première installation (vault sans `10-episodes/`). |
 | `fix-double-encoding.py` | Correction rétroactive du double-encodage UTF-8→CP1252→UTF-8 sur les fichiers du vault (signature `Ã©`, `â€"`, `Â `). À utiliser uniquement si l'agent a écrit via un shell mal configuré. |
+| `inject-archeo-hashes.py` | Correction rétroactive des frontmatters d'atomes archeo-* et de fichiers topologie produits avant le durcissement v0.7.0 : injecte `content_hash` (SHA-256 du body normalisé), `previous_atom`/`previous_topology_hash` vides, `source_doc_hash`, `friction_detected`. Dédup les top-level keys YAML doublées. Normalise les enum localisées (`force: ligne-rouge` → `red-line`). Pour les archives `archeo-git` sans `commit_sha` : tente `git rev-list -n 1 <tag>` via `--repo-root`. Idempotent. |
+| `validate-archeo-frontmatter.py` | Lint des frontmatters d'atomes archeo-* et de fichiers topologie contre le schéma v0.7.0 (no duplicate keys, MUST fields par source, enum values en anglais canonique). Exit 0 si conforme, 1 sinon — utilisable en CI. |
 
 Exemple de migration FR→EN d'un vault existant :
 
