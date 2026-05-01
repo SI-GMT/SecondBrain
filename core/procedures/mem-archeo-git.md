@@ -22,12 +22,20 @@ The user types `/mem-archeo-git [repo-path]` or expresses intent in natural lang
 Arguments:
 - `{repo-path}` (optional, default = CWD): absolute path to a local Git repository.
 - `--project {slug}`: forces the target project.
-- `--level {tags|releases|merges|commits}`: forces the granularity level.
+- `--level {tags|releases|merges|commits}`: forces the granularity level (standard mode only).
 - `--since YYYY-MM-DD` / `--until YYYY-MM-DD`: time bounds.
-- `--window {day|week|month}`: grouping size for `commits` level.
+- `--window {day|week|month}`: grouping size for `commits` level (standard mode) or `--by-window` (branch-first mode).
 - `--dry-run`: lists the milestones that would be ingested, without writing.
 - `--no-confirm`: passes through to the router in fluent mode even on multi-atoms.
 - `--rescan`: ignores any persisted topology and forces a fresh scan.
+
+**Branch-first mode (v0.7.1)**:
+
+- `--branch-first {branch}`: scope Phase 3 to commits on the branch since divergence with `--branch-base`. The granularity defaults to `--by-author`; `--by-merge` and `--by-window` override.
+- `--branch-base {ref}`: base ref for the divergence calculation (default `main`, fallback `master`).
+- `--by-author` (default in branch-first): granularity is `(author_email, time-window)`. Window defaults to `day`; configurable via `--window`.
+- `--by-merge`: granularity is by merge commit on the branch (relevant for long-lived branches that absorbed sub-features).
+- `--by-window`: granularity is the classic `--window` time grouping (overrides `--by-author`).
 
 ## Vault and repo path resolution
 
@@ -64,6 +72,8 @@ Phase 3 specifically consumes:
 
 ### 4. Detect the granularity level
 
+#### 4.a Standard mode
+
 If `--level` not provided, choose automatically (first one returning >0):
 
 1. **Semver tags** (`v*.*.*`) → 1 archive per tag.
@@ -72,6 +82,20 @@ If `--level` not provided, choose automatically (first one returning >0):
 4. **Commit windows** (week/month) → 1 archive per window.
 
 Display the choice to the user and ask for confirmation before proceeding.
+
+#### 4.b Branch-first mode (v0.7.1)
+
+When `--branch-first {branch}` is set, the granularity is one of:
+
+- **`--by-author`** (default): enumerate commits via `git log --no-merges {branch_base}..{branch} --format="%H|%an|%ae|%aI|%s"`. Group commits by `(author_email, time-window)` where time-window is the day (default) or `--window {week|month}`. Each group becomes one archive.
+- **`--by-merge`**: enumerate merge commits on the branch via `git log --merges {branch_base}..{branch}`. Each merge becomes one archive (the merge represents a sub-feature absorbed into the long-lived branch).
+- **`--by-window`**: enumerate all commits via `git log --no-merges {branch_base}..{branch}`, group by `--window` ({day|week|month}, default `week` in this mode).
+
+Co-Authored-By trailers are extracted via `git log --format="%(trailers:key=Co-authored-by)"` for each commit and aggregated at the group level. They are recorded as **metadata only** in the archive frontmatter (`co_authors: [email1, email2, ...]`), never as a separate archive — the attribution is the `author` of the primary commit.
+
+Useful side-effect: `co_authors` captures LLM attributions when commits carry `Co-Authored-By: Claude Opus ...`, so the archive trail can distinguish human vs LLM contribution to the branch.
+
+Display the chosen granularity, the divergence point (`branch_base_sha` + date), and the resulting archive count to the user. Ask for confirmation before proceeding.
 
 ### 5. For each milestone: prepare the content
 
@@ -148,6 +172,25 @@ If no friction was detected, write the literal line:
 
 This explicit fallback is mandatory — never omit the section.}
 
+## Author signature {only when granularity is --by-author, omit otherwise}
+
+{Only in --by-author mode. Capture the **patterns of this author** observable
+in the milestone's commits. Examples:
+- Style of commit messages (concise vs verbose, conventional commits adherence,
+  language).
+- Recurring focus areas (this author works mostly on src/auth/, src/api/ but
+  not docs/).
+- Methodological signature (TDD discipline visible? small commits? big drops?
+  early vs late refactor in the day?).
+- Co-authorship with LLM tools (presence of "Claude Opus", "Gemini", "Codex"
+  in Co-Authored-By trailers — useful to distinguish human vs AI-paired work).
+
+This section is the value-add of --by-author granularity over --by-window.
+If the author has only 1-2 commits in the window, this section can be one
+line: "Single contribution to {area}, no broader pattern observable in this
+window." Never omit the section in --by-author mode — always add the literal
+fallback if there's nothing to say.}
+
 ## Principle: {short title}
 
 {If the milestone surfaced an explicit principle (often the takeaway of a
@@ -199,6 +242,20 @@ topology_snapshot_hash: <sha256-or-empty>     # set by mem-archive when triggere
 previous_topology_hash: <sha256-or-empty>     # idem
 tags: [<see _frontmatter-universal>]
 ```
+
+**Additional MUST fields in branch-first mode (v0.7.1)** :
+
+```yaml
+branch: <branch-name>                    # MUST in branch-first mode — original branch name (not sanitized)
+branch_base: <ref>                       # MUST — the divergence ref (typically main or master)
+branch_base_sha: <sha>                   # MUST — sha of the merge-base commit
+author_email: <email>                    # MUST when granularity is --by-author
+author_name: <name>                      # MUST when granularity is --by-author
+co_authors: [<email>, ...]               # MUST — list of Co-Authored-By emails aggregated for the group; empty list [] if none
+granularity: by-author | by-merge | by-window    # MUST in branch-first mode
+```
+
+In standard (non-branch-first) mode, these branch-* fields are **set to empty string** for the scalar fields and `[]` for `co_authors`, never omitted — they are part of the canonical schema for `archeo-git` archives in v0.7.1.
 
 **No duplicate keys.** YAML doesn't tolerate duplicate top-level keys reliably — duplicates are parser-implementation-defined. The router MUST emit each key exactly once. If two values are conceptually needed (e.g. multiple commits in a window), use a list (`source_commits: [...]`) rather than two `commit_sha:` keys.
 

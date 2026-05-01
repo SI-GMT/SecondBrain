@@ -95,10 +95,12 @@ Reply format:
 
 **Stack** : {one-line synthesis from topology, or "Not yet captured"}
 **Conventions** : {N items}
+**Workspace member** : {workspace_member name from context.md if set, otherwise "standalone"}
 **Archeo coverage** :
   - context: {N atoms}, last pass {date}
   - stack:   {N atoms}, last pass {date}
   - git:     {N archives}, last pass {date}
+**Branch topologies known** : {N — list wikilinks if N > 0, or "none — only main"}
 
 (If topology absent: "Not yet captured. Suggest: /mem-archeo to populate.")
 

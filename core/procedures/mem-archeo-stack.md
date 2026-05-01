@@ -11,9 +11,11 @@ The user types `/mem-archeo-stack [repo-path]` or expresses intent in natural la
 Arguments:
 - `{repo-path}` (optional, default = CWD): absolute path to a local Git repository.
 - `--project {slug}`: forces the target project.
-- `--depth {N}`: max recursion depth for the topology scan (default 2).
+- `--depth {N}`: max recursion depth for the topology scan (default 2; default 1 in branch-first mode).
 - `--only-layers {list}`: comma-separated subset of `frontend,backend,db,ci,infra,tests,tooling,other`. Default: all detected.
 - `--dry-run`, `--no-confirm`, `--rescan`: as in `mem-archeo-context`.
+- `--branch-first {branch}` (v0.7.1): scope Phase 2 to **manifests modified on the branch** since divergence with `--branch-base`. Layers untouched by the branch are summarized in a single ambient atom that links to the main topology. Atoms produced inherit `branch` field in their frontmatter.
+- `--branch-base {ref}` (v0.7.1): base ref for the divergence calculation (default `main`, fallback `master`).
 
 ## Vault and repo path resolution
 
@@ -43,6 +45,22 @@ Phase 2 specifically consumes:
 - `topology.categories.config`
 - `topology.categories.sources` (for layer-presence inference)
 - `topology.stack_hints` (already filled by Phase 0)
+
+### 3.1. Branch-first scoping (v0.7.1)
+
+When `--branch-first {branch}` is set, the layer resolution at step 4 is **scoped** to manifests modified on the branch:
+
+1. Identify modified manifests on the branch:
+   ```
+   git -C {repo-path} log --no-merges {branch_base}..{branch} --name-only --diff-filter=AM \
+       | grep -E '(package\.json|pyproject\.toml|requirements.*\.txt|Pipfile|Cargo\.toml|go\.mod|composer\.json|Gemfile|pom\.xml|build\.gradle.*|.*\.csproj|mix\.exs|pubspec\.yaml|Dockerfile.*|docker-compose.*\.yml)$' \
+       | sort -u
+   ```
+2. Map each modified manifest to its layer (per the manifest-to-layer rules of step 4).
+3. Resolve **only** the layers whose manifests appear in this set. Layers untouched on the branch are skipped from full resolution.
+4. **Workspaces awareness** : if `topology.branch_focus.touched_workspaces` is non-empty (filled by the orchestrator at Phase 0 augmentation), each touched workspace whose `vault_project` is non-empty is added as a **cross-link** in the ambient atom (see step 5.b).
+
+If no manifest was modified on the branch, Phase 2 in branch-first mode produces only the ambient atom (step 5.b) — no per-layer resolution at all.
 
 ### 4. Resolve the stack by layer
 
@@ -160,11 +178,45 @@ For each layer with non-empty resolution, build one atom:
   detected_techno: <name or list of detected techs>                                       # MUST — string or YAML list
   content_hash: <sha256-of-this-atom-body>                                                # MUST — SHA-256 of body (after frontmatter, LF + UTF-8 no BOM)
   previous_atom: <wikilink-or-empty>                                                      # MUST — empty "" on first write
+  branch: <branch-name-or-empty>                                                          # v0.7.1 — empty "" in standard mode, set in branch-first mode
   project: {slug}
   context_origin: "[[99-meta/repo-topology/{slug}]]"
   ```
 
 A layer with strong convention signals (e.g. `tooling` with strict mypy + pre-commit + commitlint) may produce **two** atoms: one in `20-knowledge/architecture/` describing the stack itself, one in `40-principles/{scope}/conventions/` for the enforced rule (e.g. "All commits must follow Conventional Commits via commitlint enforcement"). The second atom carries `force: heuristic` (English value, never localized — `red-line | heuristic | preference` are the canonical strings).
+
+### 5.b Branch-first ambient atom (v0.7.1)
+
+In branch-first mode, in addition to per-layer atoms (which may be zero if no manifest was modified on the branch), produce **one ambient atom** that captures the global stack context not affected by the branch:
+
+- Subject: "Stack — Ambient context (branch {branch})"
+- Body: a 5-15 line synthesis listing the layers resolved in the **main topology** (or in `topology.stack_hints` if no main topology yet) — frontend X, backend Y, db Z, etc. — with a wikilink to the main topology for the full resolution. Plus, if `topology.branch_focus.touched_workspaces` is non-empty, a `## Cross-workspace context` section listing each touched workspace with its vault project link if any:
+
+  ```markdown
+  ## Cross-workspace context
+
+  This branch touches the following monorepo workspaces:
+  - `@acme/web` (`packages/web`) → [[10-episodes/projects/acme-web/context]] — [[99-meta/repo-topology/acme-web]]
+  - `@acme/api` (`packages/api`) → [[10-episodes/projects/acme-api/context]] — [[99-meta/repo-topology/acme-api]]
+  - `@acme/shared` (`packages/shared`) → no associated vault project (suggest /mem-archeo packages/shared to bootstrap)
+  ```
+
+- Frontmatter (**all MUST**):
+  ```yaml
+  source: archeo-stack
+  source_manifest: ""                                  # empty for ambient atom — by definition not tied to a single manifest
+  detected_layer: ambient                              # special value reserved for ambient atoms
+  detected_techno: <list-from-main-topology-or-empty>
+  content_hash: <sha256>
+  previous_atom: <wikilink-or-empty>
+  branch: {branch-name}                                # MUST when produced in branch-first mode
+  project: {slug}
+  context_origin: "[[99-meta/repo-topology/{slug}-branches/{branch-san}]]"
+  ```
+
+The ambient atom path: `{VAULT}/20-knowledge/architecture/{slug}-branch-{branch-san}-ambient.md` to avoid collision with the per-layer atoms.
+
+**Idempotence for ambient atoms**: clé `(project, branch, detected_layer=ambient)`. Re-running on the same branch with same content → silent skip.
 
 ### 6. Idempotence check
 

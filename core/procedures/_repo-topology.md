@@ -40,6 +40,7 @@ The scan classifies each top-level entry of the repo into one of the categories 
 | `ci` | CI / CD config | `.github/workflows/`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `Jenkinsfile`, `.circleci/`, `.drone.yml` |
 | `infra` | Containers, IaC | `Dockerfile*`, `docker-compose*.yml`, `compose.yml`, `Makefile`, `terraform/`, `pulumi/`, `infrastructure/`, `k8s/`, `helm/`, `kustomize/`, `ansible/` |
 | `manifests` | Package / build manifests | `package.json`, `pyproject.toml`, `requirements*.txt`, `Pipfile`, `Cargo.toml`, `go.mod`, `composer.json`, `Gemfile`, `pom.xml`, `build.gradle*`, `*.csproj`, `mix.exs`, `pubspec.yaml` |
+| `workspaces` | Multi-package / monorepo workspace declarations | `package.json` field `workspaces`, `pnpm-workspace.yaml`, `lerna.json`, `turbo.json`, `nx.json`, `Cargo.toml [workspace]`, `pyproject.toml [tool.uv.workspace]`, multi-module `pom.xml`/`settings.gradle*`, generic `apps/`+`packages/` at root |
 | `lockfiles` | Pinned deps | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `Cargo.lock`, `poetry.lock`, `uv.lock`, `Gemfile.lock`, `composer.lock`, `pubspec.lock` |
 | `git_meta` | Git conventions | `.gitignore`, `.gitattributes`, `.git-blame-ignore-revs`, `.gitmodules` |
 | `editor` | Tooling configs to surface (kept, not excluded) | `.editorconfig`, `.pre-commit-config.yaml`, `.eslintrc*`, `.prettierrc*`, `pyproject.toml` (sections `[tool.*]`), `tsconfig*.json` |
@@ -83,9 +84,47 @@ topology = {
         "backend":  ["Python", "FastAPI"], # detected via pyproject.toml + deps
         "db":       [],
         "lang":     ["typescript", "python"]
-    }
+    },
+
+    "workspaces": [
+        # filled when monorepo signals are detected (npm/pnpm workspaces,
+        # Cargo [workspace], pyproject [tool.uv.workspace], multi-module Maven, etc.)
+        # Each entry describes one workspace package detected in the repo.
+        {
+            "name": "@acme/web",                  # package name as declared in its manifest
+            "path": "packages/web",               # path relative to repo root
+            "manifest": "packages/web/package.json",
+            "vault_project": "acme-web"           # slug of associated vault project, "" if none
+        },
+        # ... one entry per workspace member
+    ]
 }
 ```
+
+### T3.1. Workspace detection rules
+
+When workspaces are detected, the in-memory topology gains a `workspaces` list. The detection follows the stack:
+
+| Stack signal | How to enumerate members |
+|---|---|
+| `package.json` field `workspaces` (string array or object with `packages`) | Parse, expand globs, each match is a member with `name` from its `package.json` |
+| `pnpm-workspace.yaml` | Parse `packages:` list, expand globs |
+| `lerna.json` field `packages` | Same |
+| `turbo.json` / `nx.json` | Same (rare to declare members directly there, fallback to `package.json` workspaces) |
+| `Cargo.toml [workspace] members` | Each entry resolves to a sub-`Cargo.toml`, name from its `[package].name` |
+| `pyproject.toml [tool.uv.workspace] members` | Each entry resolves to a sub-`pyproject.toml`, name from `[project].name` |
+| `pom.xml <modules>` | Each `<module>` resolves to a sub-`pom.xml`, name from its `<artifactId>` |
+| `settings.gradle*` `include` | Each include resolves to a sub-`build.gradle*`, name from `rootProject.name` or directory |
+| Generic `apps/*/package.json` + `packages/*/package.json` (no explicit workspace declaration) | Each subfolder containing a manifest is treated as a member; flag `workspace_implicit: true` so callers know it's heuristic |
+
+For each member, attempt to resolve `vault_project`:
+1. Look for an existing vault project with `slug` equal to the member's `name` (after slug-sanitization: lowercase, accents stripped, `/` and `@` and `.` → `-`).
+2. If no slug match, look for projects whose `context.md` declares `workspace_member: <name>` (the explicit linking introduced in v0.7.1 — see `mem-archive.md` §6.x for details).
+3. If neither matches, set `vault_project: ""`.
+
+The `workspaces` list is consumed primarily by:
+- `mem-archeo` orchestrator (renders the `## Workspaces` section in the persisted topology).
+- **Branch-first mode**: when a branch's commits touch a workspace's path, the touched workspace is flagged in the branch topology with a wikilink to its `vault_project` if any.
 
 Pass this object as a structured field of the calling skill's working memory (not as an atom file at this stage — persistence is the responsibility of `mem-archive` full-mode and the `mem-archeo` orchestrator, not of this Phase 0 block).
 
@@ -140,6 +179,49 @@ tags: [zone/meta, type/repo-topology, project/<slug>]
 `content_hash` and `previous_topology_hash` are **never omitted** — empty values are written as `""`, never as missing keys. The hash is computed on the body **after** the frontmatter (everything from the first `# Topology` line onward), normalized to LF + UTF-8 without BOM before hashing.
 
 When a persisted topology already exists for the project and the caller wants a **fresh scan**, the caller must explicitly opt in (e.g. orchestrator's `--rescan` flag). Otherwise the persisted topology is loaded and used as-is, which is faster.
+
+### T6.1. Branch-first topology files (v0.7.1)
+
+When the orchestrator or a sub-skill runs in **branch-first mode**, it writes an additional topology file dedicated to the branch:
+
+```
+{VAULT}/99-meta/repo-topology/{slug}-branches/{branch-san}.md
+```
+
+`{branch-san}` is the branch name with separators sanitized: `/` → `--`, `\` → `--`, spaces → `-`, FS-invalid characters removed. Example: `feature/oauth-flow` → `feature--oauth-flow`. `release/v2.0` → `release--v2-0`.
+
+The branch topology file has the same frontmatter schema as the main topology, with two additional MUST fields:
+
+```yaml
+branch: feature/oauth-flow                   # MUST — original branch name (not sanitized)
+branch_base: main                            # MUST — divergence reference (auto from `git merge-base`)
+branch_base_sha: abc123def456                # MUST — sha of the merge-base commit
+```
+
+The body contains the same sections as the main topology **plus** a `## Branch focus` section:
+
+```markdown
+## Branch focus
+
+- **Branch** : feature/oauth-flow
+- **Base** : main (divergence: 2026-04-12 14h22, sha abc123)
+- **Commits** : 47 (3 authors)
+  - Alice Doe <alice@example.com> — 28 commits
+  - Bob Smith <bob@example.com> — 15 commits
+  - Charlie Lee <charlie@example.com> — 4 commits
+- **Files touched** : 23
+  - src/auth/oauth_provider.py (new, 412 lines)
+  - src/auth/middleware.py (modified, +89/-12)
+  - docs/cadrage/oauth-design.md (new)
+  - ...
+- **Manifests modified on this branch** :
+  - pyproject.toml (+2 deps: authlib, pyjwt)
+- **Workspaces touched** : @acme/web → [[10-episodes/projects/acme-web/context]]
+```
+
+**Cross-link with the main topology** : the branch topology contains a wikilink to the main topology (`See ambient context: [[99-meta/repo-topology/{slug}]]`) and reciprocally the main topology gains a list of known branch topologies in its `## Phases archeo couvertes` section (or a new `## Branch topologies` section if you prefer separation — both are acceptable).
+
+**Cross-workspace links** : if branch commits touch multiple workspaces and several have associated vault projects, the branch topology becomes a hub of links toward each `[[99-meta/repo-topology/{ws-slug}]]` and `[[10-episodes/projects/{ws-slug}/context]]`.
 
 ### T7. Failure modes
 

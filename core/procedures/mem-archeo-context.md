@@ -11,11 +11,13 @@ The user types `/mem-archeo-context [repo-path]` or expresses intent in natural 
 Arguments:
 - `{repo-path}` (optional, default = CWD): absolute path to a local Git repository.
 - `--project {slug}`: forces the target project.
-- `--depth {N}`: max recursion depth for the topology scan (default 2).
+- `--depth {N}`: max recursion depth for the topology scan (default 2; default 1 in branch-first mode).
 - `--only-categories {list}`: comma-separated subset of `workflow,sync,multi-tenant,security,adr,goal,other`. Default: all.
 - `--dry-run`: lists the documents that would be read and the atoms that would be produced, without writing.
 - `--no-confirm`: passes through to the router in fluent mode.
 - `--rescan`: ignores any persisted topology and forces a fresh scan.
+- `--branch-first {branch}` (v0.7.1): scope Phase 1 to documents **modified or created on the branch** since divergence with `--branch-base`. Documents untouched by the branch are surveyed in light mode (filename + 1-line summary from the first heading), no extraction by category. Atoms produced inherit `branch` field in their frontmatter.
+- `--branch-base {ref}` (v0.7.1): base ref for the divergence calculation (default `main`, fallback `master`).
 
 ## Vault and repo path resolution
 
@@ -51,6 +53,8 @@ If the persisted topology `{VAULT}/99-meta/repo-topology/{slug}.md` exists and `
 
 ### 4. Enumerate documents to read
 
+#### 4.a Standard mode
+
 From the consumed categories, build the **document target list**. For each entry:
 
 - If it's a directory → list its files matching `*.md`, `*.txt`, `*.rst`, `*.adoc`, `*.docx`, `*.pdf`, `*.pptx`, `*.xlsx`, `*.html`, `*.htm` up to the topology depth.
@@ -61,6 +65,29 @@ For each document, determine the read strategy:
 - `.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html`, `.htm` → invoke the corresponding reader from `{kit_repo}/scripts/doc-readers/` (cf. `mem-doc.md` step 4 for the convention). Capture stdout (Markdown) and use it as the document's content.
 
 If `--dry-run` was passed: display the target list, total estimated read volume, and stop after this step (no atom extraction, no router invocation).
+
+#### 4.b Branch-first mode (v0.7.1)
+
+When `--branch-first {branch}` is set, the document target list is **partitioned** into two sets:
+
+**Set A — focused (deep extraction)** : documents modified or created on the branch since divergence. Computed via:
+
+```
+git -C {repo-path} log --no-merges {branch_base}..{branch} --name-only --diff-filter=AM \
+    -- docs/ cadrage/ adr/ rfc/ specs/ \
+    -- '*.md' '*.txt' '*.rst' '*.adoc' '*.docx' '*.pdf' '*.pptx' '*.html' '*.htm' \
+    | sort -u
+```
+
+(The double `--` separator splits paths from pathspecs; in practice the LLM filters the file list against the consumed categories from step 3.)
+
+The Root AI files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `MISTRAL.md`, `README.md`) are **always** included in Set A regardless of whether they were modified on the branch — they carry the project's living doctrine and the branch agent should know them.
+
+**Set B — ambient (light scan)** : every other document in the consumed categories that is **not** in Set A. For these, the procedure does **not** extract atoms by category. It only reads the filename + the first heading of each document and records this as a one-line summary in the `## Ambient context survey` section of the run's report. The full extraction is skipped.
+
+For each document in Set A, apply the same read strategy as the standard mode (native text or doc-reader). Set B documents are read at most up to their first heading.
+
+If `--dry-run`: display both sets and stop after this step.
 
 ### 5. For each document — extract by category
 
@@ -104,6 +131,7 @@ For each detected span (each will become an atom):
   extracted_category: <one of the seven>
   project: {slug}
   context_origin: "[[99-meta/repo-topology/{slug}]]"
+  branch: <branch-name-or-empty>                        # v0.7.1 — empty "" in standard mode, set in branch-first mode
   ```
 - Frontmatter category-specific fields per the table above. For `force` field on principles: values are always in **English** (`red-line | heuristic | preference`), never localized — keep the structural English schema invariant.
 

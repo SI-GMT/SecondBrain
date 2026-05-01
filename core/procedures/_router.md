@@ -94,9 +94,9 @@ The frontmatter emitted by the router MUST satisfy the following hard rules — 
 3. **Mandatory hashes.** `content_hash` is computed for **every** atom written by the router (zone-agnostic). It is the SHA-256 of the body Markdown (everything after the closing `---` of the frontmatter), normalized to LF + UTF-8 without BOM before hashing. Used by R10 idempotence and by `mem-archive` to detect topology evolution.
 4. **`previous_atom` always present** for atoms produced by `archeo-*` sources. Empty string `""` on first write, set to a wikilink on revisions.
 5. **Source-specific MUST fields** per R10 idempotence key composition:
-   - `archeo-context`: `source_doc`, `source_doc_hash`, `extracted_category`, `content_hash`, `previous_atom`.
-   - `archeo-stack`: `source_manifest`, `detected_layer`, `detected_techno`, `content_hash`, `previous_atom`.
-   - `archeo-git`: `source_milestone`, `commit_sha`, `friction_detected`, `content_hash`, `previous_atom`.
+   - `archeo-context`: `source_doc`, `source_doc_hash`, `extracted_category`, `content_hash`, `previous_atom`, `branch` (v0.7.1 — empty `""` in standard mode, set in branch-first mode).
+   - `archeo-stack`: `source_manifest`, `detected_layer`, `detected_techno`, `content_hash`, `previous_atom`, `branch` (v0.7.1).
+   - `archeo-git`: `source_milestone`, `commit_sha`, `friction_detected`, `content_hash`, `previous_atom`, `branch`, `branch_base`, `branch_base_sha`, `author_email`, `author_name`, `co_authors`, `granularity` (v0.7.1 — branch-* fields are empty `""` / `[]` in standard mode, set in branch-first mode).
 
 If any MUST field is missing or invalid, the router refuses to write and reports the error with the field name and the offending atom.
 
@@ -228,10 +228,15 @@ Mechanism: the atom carries an origin identifier whose key composition depends o
 
 | Source | Idempotence key |
 |---|---|
-| `archeo-context` | `(project, source_doc, extracted_category)` |
-| `archeo-stack` | `(project, source_manifest, detected_layer)` |
-| `archeo-git` | `(project, source_milestone, source_atom_type, source_atom_subject)` |
+| `archeo-context` (standard mode) | `(project, source_doc, extracted_category)` |
+| `archeo-context` (branch-first mode, v0.7.1) | `(project, branch, source_doc, extracted_category)` |
+| `archeo-stack` (standard mode) | `(project, source_manifest, detected_layer)` |
+| `archeo-stack` (branch-first mode, v0.7.1) | `(project, branch, source_manifest, detected_layer)` — ambient atom: `(project, branch, detected_layer=ambient)` |
+| `archeo-git` (standard mode) | `(project, source_milestone, source_atom_type, source_atom_subject)` |
+| `archeo-git` (branch-first mode, v0.7.1) | `(project, branch, source_milestone, source_atom_type, source_atom_subject)` — for `--by-author`, `source_milestone` encodes `author-{email-slug}-{window-id}` |
 | `archeo-atlassian` | `(confluence_page_id, confluence_updated)` |
+
+The `branch` component of the key in branch-first mode prevents collisions between archeo runs on `main` and on a feature branch covering overlapping commits or files. Standard-mode atoms carry `branch: ""` and are matched on the standard-mode key (the empty `branch` is part of the key — different from a non-empty branch value).
 
 If a match is found:
 - The router computes the candidate atom's `content_hash` (SHA-256 of the body) and compares it to the stored `content_hash` of the existing atom.

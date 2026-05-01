@@ -105,6 +105,7 @@ collective: false
 phase: {current phase}
 last-session: YYYY-MM-DD
 repo_path: {absolute-path or empty}
+workspace_member: {package-name or empty}    # v0.7.1 — name of the workspace package this project corresponds to in a monorepo, or empty if standalone
 tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 ---
 
@@ -126,6 +127,16 @@ tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 ## Active assets (URLs)
 {validated URLs}
 ```
+
+### 4.4. Suggest workspace_member if detectable (v0.7.1)
+
+If the project's `context.md` does not yet carry a `workspace_member` field AND the associated repo (per `repo_path`) is a monorepo workspace member (Phase 0 topology detected workspaces, and the project's slug or path resolves to one of them), suggest to the user:
+
+> The repo at `{repo_path}` is a monorepo workspace. This project ({slug}) appears to correspond to package `{detected-name}` at `{detected-path}`. Add `workspace_member: {detected-name}` to context.md? [y/n]
+
+If accepted (or if `--no-confirm` and a unique unambiguous match was found), set `workspace_member: {detected-name}` in the rewritten context.md frontmatter at step 4. If multiple candidates or no clear match, skip silently — the user can set it manually later.
+
+This declaration is persistent and is read by Phase 0 of `mem-archeo*` to wire workspace cross-links without re-detecting heuristically each run.
 
 ### 4.5. Update repo topology snapshot (new in v0.7.0)
 
