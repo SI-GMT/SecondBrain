@@ -22,9 +22,9 @@ Triggered by an explicit signal:
 
 Then run the full procedure below.
 
-## Vault path resolution
+## Vault and repo path resolution
 
-Before any write, read the memory kit configuration file ({{CONFIG_FILE}}) and extract the `vault` field. In what follows, `{VAULT}` denotes this value. Also read `default_scope` for the default scope value.
+Before any write, read the memory kit configuration file ({{CONFIG_FILE}}) and extract the `vault` field. In what follows, `{VAULT}` denotes this value. Also read `default_scope` and `kit_repo` for the default scope value and the kit repo path.
 
 If the file is absent or unreadable, reply:
 > Memory kit not configured. Expected file: {{CONFIG_FILE}}. Run `deploy.ps1` from the kit root.
@@ -104,6 +104,7 @@ scope: {personal|work}
 collective: false
 phase: {current phase}
 last-session: YYYY-MM-DD
+repo_path: {absolute-path or empty}
 tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 ---
 
@@ -125,6 +126,46 @@ tags: [zone/episodes, kind/*, {project|domain}/{slug}, scope/*]
 ## Active assets (URLs)
 {validated URLs}
 ```
+
+### 4.5. Update repo topology snapshot (new in v0.7.0)
+
+If the target is a project AND a Git repo is associated with it, refresh the persisted topology snapshot. **This step runs in full mode only — silent incremental mode never touches the topology.**
+
+#### a. Detect repo association
+
+In priority order:
+
+1. The project's `context.md` carries a `repo_path` field in its frontmatter — use it.
+2. CWD is a Git repo and its basename matches `{slug}` — use CWD.
+3. `{VAULT}/99-meta/repo-topology/{slug}.md` exists and carries `repo_path` — use that path. Verify the path still exists and is a Git repo.
+4. None of the above → **skip silently this step**. The full archive proceeds without topology update. Log a one-line note in the final report: "topology not refreshed — no repo associated with this project".
+
+#### b. Scan the topology
+
+If a repo was detected at step a, perform the scan:
+
+{{INCLUDE _repo-topology}}
+
+This produces the in-memory `topology` object.
+
+#### c. Render and compare
+
+Render the topology Markdown body per the schema in `docs/architecture/v0.7.0-archeo-and-base-skills-alignment.md` §2.3. Compute the SHA-256 of this body — that's the candidate `content_hash`.
+
+Read the existing `{VAULT}/99-meta/repo-topology/{slug}.md` if present and compare its `content_hash` to the candidate:
+
+- **Equal** → no change. Skip the write. Note in the report: "topology unchanged".
+- **Different** → capture the old hash as `previous_topology_hash` of the new file, and write atomically.
+- **Absent (first snapshot)** → write the new file with `previous_topology_hash: ""`.
+
+#### d. Cross-link the archive
+
+The archive created at step 3 carries in its frontmatter:
+
+- `topology_snapshot_hash: <new content_hash>` — the topology hash at the time of this archive.
+- `previous_topology_hash: <old content_hash or empty>` — for rollback by `mem-rollback-archive --with-topology`.
+
+The new topology file's `last_archive` field points to the archive name created at step 3.
 
 ### 5. Update the history
 

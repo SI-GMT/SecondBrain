@@ -53,6 +53,18 @@ In what follows, `{kind}` denotes `projects` or `domains`, and `{slug}` the iden
 
 Read `{VAULT}/10-episodes/{kind}/{slug}/history.md` to see the chronological session thread.
 
+### 3.5. Load repo topology (new in v0.7.0)
+
+If `{VAULT}/99-meta/repo-topology/{slug}.md` exists, read it. Extract:
+
+- The **resolved stack** (from the `## Stack résolue` section).
+- The **detected conventions** (from `## Conventions détectées`).
+- The **archeo coverage** counts (from `## Phases archeo couvertes`): how many atoms per phase, last pass dates.
+
+This gives the LLM the full **stature** of the project — its shape and scaffolding — not just the last session. It's what keeps the briefing from being amnesic on technical context.
+
+If the file is absent: skip the section. The briefing at step 5 will indicate: "Project topology not yet captured — run /mem-archeo to populate".
+
 ### 4. Load attached items (new in v0.5)
 
 The project/domain projects **transversally** into multiple zones via the tags `project/{slug}` or `domain/{slug}`. Load:
@@ -62,8 +74,11 @@ The project/domain projects **transversally** into multiple zones via the tags `
 | `40-principles/` | tag `project/{slug}` or `domain/{slug}`, **filtered by scope** if `--scope` | Active principles born in this project or applying to it — the LLM must respect them during the session. |
 | `50-goals/` | tag `project/{slug}` + `status: open\|in-progress` | Active goals — to orient the next steps. |
 | `60-people/` | mentioned in the last 3 archives or linked via project tag | Key people of the project — useful to preserve relational context. |
+| `20-knowledge/` | tag `project/{slug}` + `source: archeo-context\|archeo-stack` | Architectural decisions and resolved stack/patterns surfaced by the archeo. |
 
-Implementation: grep on `{VAULT}/40-principles/`, `{VAULT}/50-goals/`, `{VAULT}/60-people/` for the relevant tags. Limit to 5 items per zone if too many (display "+N more" at the end).
+Implementation: grep on `{VAULT}/40-principles/`, `{VAULT}/50-goals/`, `{VAULT}/60-people/`, `{VAULT}/20-knowledge/` for the relevant tags. Limit to 5 items per zone if too many (display "+N more" at the end).
+
+When the topology is present, the architectural knowledge listed under `Atomes dérivés des phases archeo` in the topology file gives the LLM the **direct list** of relevant atoms — no need to grep blindly.
 
 ### 5. Present the briefing
 
@@ -75,6 +90,17 @@ Reply format:
 **Last session**: {date} — {summary}
 **Current phase**: {phase}
 **Scope**: {personal|work}
+
+### Project topology
+
+**Stack** : {one-line synthesis from topology, or "Not yet captured"}
+**Conventions** : {N items}
+**Archeo coverage** :
+  - context: {N atoms}, last pass {date}
+  - stack:   {N atoms}, last pass {date}
+  - git:     {N archives}, last pass {date}
+
+(If topology absent: "Not yet captured. Suggest: /mem-archeo to populate.")
 
 ### State
 - Validated: …
@@ -89,6 +115,10 @@ Reply format:
 
 ### Open goals ({N})
 - [{horizon}] {title} (deadline: {date}) → [[link]]
+- …
+
+### Architecture & stack atoms ({N})
+- {detected_layer or extracted_category} — {short title} → [[link]]
 - …
 
 ### Key people

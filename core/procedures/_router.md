@@ -8,7 +8,7 @@ The router receives as input:
 
 - **Content**: Markdown text (may contain several heterogeneous atoms).
 - **Forced-zone hint** (optional): one of `episodes`, `knowledge`, `procedures`, `principles`, `goals`, `people`, `cognition`. If present, **bypass the heuristics cascade** for the entire content (but segmentation may still produce multiple atoms within the zone).
-- **Source hint** (optional): `lived | doc | archeo-git | archeo-atlassian | manual`. Set by the calling skill. Default: `manual`.
+- **Source hint** (optional): `lived | doc | archeo-context | archeo-stack | archeo-git | archeo-atlassian | manual`. Set by the calling skill. Default: `manual`.
 - **Context metadata** (optional): current project/domain detected by the adapter (CWD), Git branch, default scope (`default_scope` read in `~/.claude/memory-kit.json`).
 
 Preparation:
@@ -41,7 +41,7 @@ For each atom (and if no forced-zone hint), apply the cascade in priority order 
 | Priority | Detected clue | Target zone | Type |
 |---|---|---|---|
 | 1 | Forced-zone hint by the calling skill | Forced zone | (depends on zone) |
-| 2 | Past-dated event + identifiable project/domain context ("yesterday", "today", "on DD/MM", concrete past-tense verbs, hint `source: lived\|archeo-*`) | `10-episodes/{kind}/{slug}/archives/` | `archive` |
+| 2 | Past-dated event + identifiable project/domain context ("yesterday", "today", "on DD/MM", concrete past-tense verbs, hint `source: lived\|archeo-git\|archeo-atlassian`) | `10-episodes/{kind}/{slug}/archives/` | `archive` |
 | 3 | Imperative verb or step-by-step structure ("how to", "for X: step 1, 2, 3", "playbook") | `30-procedures/{scope}/{category}/` | `procedure` |
 | 4 | Rule / constraint / value ("always", "never", "prefer", "avoid", "red line", "do not") | `40-principles/{scope}/{domain}/` | `principle` |
 | 5 | Future intent + time horizon ("goal", "aim", "by X", deadline date, "ambition") | `50-goals/{scope}/{horizon}/` | `goal` |
@@ -74,12 +74,31 @@ Fields always set:
 
 Zone-specific fields (see section 7 of the doc):
 - **episodes**: `kind`, `project` or `domain`, `time`, `source`, `derived_atoms` (empty at creation, filled if derived atoms).
-- **knowledge**: `type` (`concept|card|synthesis|glossary|reference`), `sources: []`.
+- **knowledge**: `type` (`concept|card|synthesis|glossary|reference|architecture`), `sources: []`. Type `architecture` is reserved for atoms from `archeo-stack` (resolved layers, interop patterns) and `archeo-context` (recorded ADRs).
 - **procedures**: `type: procedure`, `steps`, `estimated_duration`, `tools`.
-- **principles**: `force` (`red-line|heuristic|preference`), `context_origin` (link to founding archive if derived), `project`.
+- **principles**: `force` (`red-line|heuristic|preference` — **canonical English values, never localized**), `context_origin` (link to founding archive if derived), `project`.
 - **goals**: `horizon` (`short|medium|long`), `deadline`, `status: open`, `project`.
 - **people**: `name`, `role`, `organization`, `contact`, `last_interaction`, `sensitive: true`.
 - **cognition**: `type` (`schema|metaphor|moodboard|sketch`), `project`.
+
+### R4.5. Frontmatter integrity rules (v0.7.0)
+
+The frontmatter emitted by the router MUST satisfy the following hard rules — any violation is a procedure bug:
+
+1. **No duplicate keys.** Each top-level YAML key appears exactly once. Multi-valued data uses lists (e.g. `source_commits: [sha1, sha2]`), never repeated keys (`commit_sha: sha1` then `commit_sha: sha2`).
+2. **Enum values in canonical English.** Never localize `zone`, `scope`, `kind`, `modality`, `force`, `horizon`, `type`. Examples:
+   - `force: red-line` (NOT `force: ligne-rouge`, `force: linea-roja`, etc.).
+   - `horizon: short` (NOT `horizon: court`).
+   - `kind: project` (NOT `kind: projet`).
+   The vault's structural English schema (v0.5.4 doctrine) trumps the user's conversational language for persisted enum values.
+3. **Mandatory hashes.** `content_hash` is computed for **every** atom written by the router (zone-agnostic). It is the SHA-256 of the body Markdown (everything after the closing `---` of the frontmatter), normalized to LF + UTF-8 without BOM before hashing. Used by R10 idempotence and by `mem-archive` to detect topology evolution.
+4. **`previous_atom` always present** for atoms produced by `archeo-*` sources. Empty string `""` on first write, set to a wikilink on revisions.
+5. **Source-specific MUST fields** per R10 idempotence key composition:
+   - `archeo-context`: `source_doc`, `source_doc_hash`, `extracted_category`, `content_hash`, `previous_atom`.
+   - `archeo-stack`: `source_manifest`, `detected_layer`, `detected_techno`, `content_hash`, `previous_atom`.
+   - `archeo-git`: `source_milestone`, `commit_sha`, `friction_detected`, `content_hash`, `previous_atom`.
+
+If any MUST field is missing or invalid, the router refuses to write and reports the error with the field name and the offending atom.
 
 ### R5. Target path construction
 
@@ -203,12 +222,70 @@ If some atoms were rejected (safe mode with `n` or `e`), list them in the report
 
 ### R10. Idempotence (for `mem-archeo*` skills)
 
-When the router is invoked by `mem-archeo` or `mem-archeo-atlassian` (retro-archiving), it must avoid **recreating atoms already ingested** during a previous pass.
+When the router is invoked by `mem-archeo-context`, `mem-archeo-stack`, `mem-archeo-git`, or `mem-archeo-atlassian` (retro-archiving), it must avoid **recreating atoms already ingested** during a previous pass.
 
-Mechanism:
-- The atom carries an origin identifier: `source_milestone` (commit SHA for archeo-git, page ID for archeo-atlassian) + `source_atom_type` (event/principle/concept/etc.) + `source_atom_subject` (short slug of the subject).
-- Before writing, the router searches the vault for a file with the same 3 fields. If found:
-  - If content identical → silent skip.
-  - If content modified → create a new version with `previous_atom: [[old]]` + tag `revision`. Preserves the immutability of historical archives.
+Mechanism: the atom carries an origin identifier whose key composition depends on the source. Before writing, the router searches the vault for a file with the same key composition.
 
-This logic does **not** apply to lived ingestion skills (`mem-archive`, `mem-note`, etc.): these skills always produce new content, no risk of duplicate.
+| Source | Idempotence key |
+|---|---|
+| `archeo-context` | `(project, source_doc, extracted_category)` |
+| `archeo-stack` | `(project, source_manifest, detected_layer)` |
+| `archeo-git` | `(project, source_milestone, source_atom_type, source_atom_subject)` |
+| `archeo-atlassian` | `(confluence_page_id, confluence_updated)` |
+
+If a match is found:
+- The router computes the candidate atom's `content_hash` (SHA-256 of the body) and compares it to the stored `content_hash` of the existing atom.
+- **Equal** → silent skip.
+- **Different** → create a new version of the atom with `previous_atom: "[[<old-name>]]"` in its frontmatter and tag `revision`. The old atom remains in place (immutability of historical archives).
+
+This logic does **not** apply to lived ingestion skills (`mem-archive`, `mem-note`, `mem-principle`, `mem-goal`, `mem-person`, `mem-doc` non-archeo): these skills always produce new content, with no idempotence guarantee. They go through R11 (semantic collision detection) instead.
+
+### R11. Semantic collision detection (lived and manual ingestion)
+
+For atoms with `source` in `lived | doc | manual` (i.e. not produced by an archeo skill), the router runs a **semantic collision check** before writing — to avoid creating a duplicate of an existing atom that already covers the same ground (typically an archeo-* atom already produced for the same project).
+
+#### Detection
+
+For each candidate atom, compute:
+
+1. **Slug-subject normalized** — lowercase, accents stripped, max 60 chars (already done for path construction).
+2. **Search the vault** for atoms matching:
+   - Same `project` (if the candidate has a project association).
+   - Same `zone` AND a comparable `type` / `extracted_category` / `detected_layer` (whichever is present on the existing atom).
+   - Slug-subject **equal** OR **prefix-included** OR Levenshtein ratio ≥ 0.8.
+
+If a match is found, that's a **candidate collision**.
+
+#### Behaviours by candidate source
+
+| Candidate source | Default behaviour | Override |
+|---|---|---|
+| `manual` (`mem`, `mem-note`, `mem-principle`, etc.) | Display to user: "Similar atom detected: {existing}. Action: merge (M), revision (R), skip (S), force (F)" | `--force-write` ignores the detection and creates the new atom |
+| `lived` (`mem-archive` derived atoms) | Create the atom anyway (lived sessions produce new content by construction), but signal the overlap in the report | `--strict-collision` switches to interactive like `manual` |
+| `doc` (`mem-doc`) | Interactive: "Document {path} overlaps existing atom {existing}. Action: merge into archeo (M), separate doc atom (S), skip (X)" | `--archeo-context` forces dressing as an archeo-context atom (different idempotence path, R10) |
+
+#### Action `merge`
+
+- The candidate is **not** written as a new atom.
+- Its body is appended to the existing atom in a new section `## Updates {YYYY-MM-DD}` at the end of the body.
+- The existing atom's `content_hash` is recomputed.
+- No `previous_atom` field is created — merge is non-destructive enrichment, not a revision.
+
+#### Action `revision`
+
+- The candidate becomes the new version of the atom (written at a new path with a `-rev2` / `-rev3` suffix or via slug update).
+- The existing atom gains `superseded_by: "[[<new-slug>]]"` in its frontmatter (no destruction).
+- The candidate carries `previous_atom: "[[<old-slug>]]"` and tag `revision`.
+
+#### Action `skip`
+
+- Nothing is written. The existing atom is kept as-is.
+
+#### Action `force` (manual only)
+
+- Bypass the detection and write the candidate as a new atom. Should be rare; useful when the user knows the apparent overlap is shallow.
+
+#### Limits
+
+- Lexical / structural detection only. Paraphrases pass through. This is intentional for v0.7.0 — a future iteration could integrate an embedding-based comparator.
+- Scoped to the same `project`. Cross-project overlaps are out of scope.
