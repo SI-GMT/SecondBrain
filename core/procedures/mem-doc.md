@@ -13,6 +13,7 @@ Arguments:
 - `--project {slug}` or `--domain {slug}` (optional): forces attachment.
 - `--zone X` (optional): forces the target zone (by default, the router decides based on content nature — a spec PDF goes to `20-knowledge/`, a meeting minutes to `10-episodes/`).
 - `--title "{text}"` (optional): short title for the archive.
+- `--archeo-context` (optional, new in v0.7.0): forces ingestion as an `archeo-context` atom rather than as a regular `doc` archive. Triggers the archeo-context idempotence path (R10 of the router) instead of the `doc` semantic collision check (R11). Use this when the document is project documentation (cadrage, ADR, spec) that should live alongside the archeo-* atoms.
 - `--no-confirm`, `--dry-run`: passed through to the router.
 
 ## Vault and repo path resolution
@@ -41,6 +42,30 @@ Read {{CONFIG_FILE}} and extract `vault`, `default_scope` and `kit_repo`. If `va
   | other | try UTF-8, otherwise stop with explicit message | — |
 
 - Reader scripts live in `{KIT_REPO}/scripts/doc-readers/` and declare their dependencies via PEP 723 inline metadata; they are invoked via `uv run` (no virtual environment management required). `uv` is a hard prerequisite of `/mem-doc` for non-native formats.
+
+### 1.5. Detect archeo-context candidacy (new in v0.7.0)
+
+If `--archeo-context` is passed → skip detection, force `archeo-context` mode and continue at step 5 with `Hint source: archeo-context`.
+
+Otherwise, run the heuristic detection. If **all four** conditions are true, ask the user whether to ingest as archeo-context:
+
+1. A project is resolved (explicit `--project`, CWD match, or `--archeo-context` would have been forced).
+2. The project's `context.md` carries a `repo_path` field (or one is detectable via CWD).
+3. The document path is **inside** the resolved repo (start of `{path}` ⊂ `{repo_path}`).
+4. Either:
+   - Path matches one of: `{repo}/docs/`, `{repo}/cadrage/`, `{repo}/adr/`, `{repo}/rfc/`, `{repo}/specs/`.
+   - Filename matches: `*cadrage*`, `*adr-*`, `*rfc-*`, `*spec-*`.
+   - Filename is one of: `README.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `MISTRAL.md`.
+
+If conditions met, prompt:
+
+> The document at `{path}` looks like project documentation that would normally be ingested by `/mem-archeo-context`. Ingest as **archeo-context** (linked to the project's topology, idempotent on re-ingestion) or as a **regular doc archive** (one-shot)? [archeo / doc / cancel]
+
+- `archeo` → bascule en mode archeo-context : continue à l'étape 5 avec `Hint source: archeo-context`. Le router applique R10 (idempotence par `(project, source_doc, extracted_category)`) — l'utilisateur sera invité par le LLM à choisir une `extracted_category` (parmi `workflow|sync|multi-tenant|security|adr|goal|other`) avant l'écriture.
+- `doc` → continue normalement à l'étape 2 en mode `Hint source: doc`.
+- `cancel` → stop, no write.
+
+If `--no-confirm` is set without `--archeo-context`: the heuristic prompt is bypassed and the document is ingested as a regular doc archive (default). The user can re-invoke with `--archeo-context` if needed.
 
 ### 2. Compute the SHA-256 hash and detect re-ingestion
 

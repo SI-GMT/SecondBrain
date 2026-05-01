@@ -43,6 +43,8 @@ Verify that `{VAULT}/10-episodes/{kind}/{new}/` does not already exist. If confl
 - **`history.md`**: title + links.
 - **`context.md`**: `slug:` field of the frontmatter.
 - **Sub-folders `50-goals/work/projects/{old}/`** if it exists.
+- **(v0.7.0) Topology file**: `{VAULT}/99-meta/repo-topology/{old}.md` → `{VAULT}/99-meta/repo-topology/{new}.md`. The frontmatter `project: {old}` and the title `# Topology — {old}` are also updated.
+- **(v0.7.0) Archeo-* atoms**: all atoms with `source: archeo-context|archeo-stack|archeo-git` carrying `project: {old}`. Their frontmatter `project:`, tag `project/{old}`, and any `context_origin` referencing the renamed topology are updated.
 
 ### 4. Present the plan
 
@@ -78,6 +80,8 @@ Steps (order matters):
 4. **Rewrite Obsidian links** across the whole vault: grep + replace `[[{old}` → `[[{new}` (prefix, beware of false positives in archive names).
 5. **Update `index.md`**: project/domain entry + archive entries.
 6. **Update `50-goals/work/projects/`** if affected.
+7. **(v0.7.0) Rename topology file** if `{VAULT}/99-meta/repo-topology/{old}.md` exists: `mv {old}.md {new}.md`, then rewrite its frontmatter (`project: {new}`, tags) and title (`# Topology — {new}`). Recompute `content_hash` since the body changed.
+8. **(v0.7.0) Rewrite archeo-* atoms** — for each atom with `source: archeo-*` carrying `project: {old}`: update frontmatter `project: {new}`, tag `project/{new}`, and any `context_origin` wikilink that points to the old topology (`[[99-meta/repo-topology/{old}]]` → `[[99-meta/repo-topology/{new}]]`).
 
 ### 6. Confirm
 

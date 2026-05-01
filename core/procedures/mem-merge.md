@@ -29,8 +29,9 @@ Search each in `projects/` then `domains/`. Verify they share **the same kind** 
 - **Archives**: `{VAULT}/10-episodes/{kind}/{source}/archives/*.md` → target.
 - **Source `history.md`**: to be merged at the end of the target `history.md` (chronological order preserved).
 - **Source `context.md`**: DO NOT overwrite the target. Append the source's "Cumulative decisions" and "Next steps" sections into the target with a note `(merged from {source} on YYYY-MM-DD)`.
-- **Cross-cutting atoms** (40-principles, 50-goals, 60-people, 20-knowledge) with tag `project/{source}` or `domain/{source}`: retag to `project/{target}` or `domain/{target}`. The `project:` / `domain:` frontmatter is also updated.
-- **Obsidian links**: `[[{source}]]` → `[[{target}]]`.
+- **Cross-cutting atoms** (40-principles, 50-goals, 60-people, 20-knowledge) with tag `project/{source}` or `domain/{source}`: retag to `project/{target}` or `domain/{target}`. The `project:` / `domain:` frontmatter is also updated. **Includes archeo-* atoms** (`source: archeo-context|archeo-stack|archeo-git`).
+- **(v0.7.0) Topology files**: if both `{VAULT}/99-meta/repo-topology/{source}.md` and `{target}.md` exist → topology merge required (cf. step 4). If only `{source}.md` exists → renamed to `{target}.md`. If only `{target}.md` exists → kept as-is, source archeo atoms retag onto it.
+- **Obsidian links**: `[[{source}]]` → `[[{target}]]`. Includes wikilinks to the source topology.
 - **`index.md`**: remove source, update target.
 
 ### 3. Present the plan
@@ -72,7 +73,17 @@ Steps:
 6. **Merge `history.md`**: append source entries at the end of the target (preserve global chronological order → resort by date after merge).
 7. **Append `context.md`**: add to the end of the target `context.md` a section "## Merged from {source} on YYYY-MM-DD" with the source's key sections.
 8. **Delete the source folder**: `rm -rf {VAULT}/10-episodes/{kind}/{source}/` after verifying that all archives have been transferred.
-9. **Update `index.md`**: remove source entry, keep target.
+9. **(v0.7.0) Topology merge**:
+   - If only `{target}.md` exists → no action needed; source archeo atoms retagged at step 3 already reference the target.
+   - If only `{source}.md` exists → `mv {source}.md {target}.md`, then update its frontmatter (`project: {target}`) and title.
+   - If both exist → **union merge**:
+     - Categories (sources, docs, manifests, ...) → set union (deduplicate).
+     - `repo_path` and `repo_remote` → if values differ, **prompt the user** to pick one. Log the unkept one in a comment in the merged topology body. If `--no-confirm`, default to `{target}` values and log the conflict.
+     - `Stack résolue` → keep `{target}`'s value, log `{source}`'s as a `## Stack alternative (merged from {source})` section in the body.
+     - `Phases archeo couvertes` and `Atomes dérivés des phases archeo` → recomputed from the post-merge state of the vault (atoms now tagged `project/{target}`).
+     - Recompute `content_hash`. The previous `{target}` hash goes into `previous_topology_hash`. The `{source}` topology file is deleted.
+   - If a conflict cannot be resolved automatically and `--no-confirm` is set: write a `99-meta/merge-conflicts/{YYYY-MM-DD}-{source}-into-{target}.md` file with the diff, and abort the topology merge step (other steps still complete).
+10. **Update `index.md`**: remove source entry, keep target.
 
 ### 5. Confirm
 
