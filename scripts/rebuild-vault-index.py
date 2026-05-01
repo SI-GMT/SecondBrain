@@ -183,6 +183,7 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
         f'date: {today}',
         'zone: meta',
         'type: index',
+        'display: "vault index"',
         'tags: [zone/meta, type/index]',
         '---',
         '',
@@ -193,15 +194,18 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
     ]
 
     # Section: Zones
+    # v0.7.3 : on linke vers {zone}/index.md (existe physiquement, voir
+    # ensure_zone_indexes) au lieu de ({zone}/) qui generait des noeuds
+    # fantomes dans le graph Obsidian + des MD vides crees au clic.
     lines.append(f"## {s.get('section_zones', 'Zones')}")
     lines.append('')
     zone_labels = s.get('zone_labels', {})
     for z in ZONES:
         label = zone_labels.get(z, '')
         if label:
-            lines.append(f'- [{z}]({z}/) — {label}')
+            lines.append(f'- [{z}]({z}/index.md) — {label}')
         else:
-            lines.append(f'- [{z}]({z}/)')
+            lines.append(f'- [{z}]({z}/index.md)')
     lines.append('')
 
     # Section: Projects
@@ -246,6 +250,23 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
         lines.append(s.get('empty_archives', '(none yet)'))
     lines.append('')
 
+    # Section: Health (v0.7.3) — list of mem-health-scan/repair reports.
+    # Renders only if 99-meta/health/ exists and contains at least one report.
+    health_dir = vault / '99-meta' / 'health'
+    if health_dir.exists():
+        health_reports = sorted(
+            [p for p in health_dir.glob('*.md') if p.is_file()],
+            key=lambda p: p.name,
+            reverse=True,
+        )
+        if health_reports:
+            lines.append('## Health')
+            lines.append('')
+            for p in health_reports:
+                rel = p.relative_to(vault).as_posix()
+                lines.append(f'- [{p.stem}]({rel})')
+            lines.append('')
+
     # Sections: Principles / Knowledge / Goals / People — grouped by project
     section_map = [
         ('40-principles', 'section_principles', 'empty_principles'),
@@ -288,6 +309,69 @@ def _today():
     return date.today().isoformat()
 
 # ============================================================
+# Zone indexes (v0.7.3)
+# ============================================================
+# Each {zone}/index.md is a zone hub: a real markdown file with frontmatter
+# (zone: meta, type: zone-index, display: "{zone} — index") that the vault
+# root index.md links to. Replaces the old `[{zone}]({zone}/)` that produced
+# ghost graph nodes + empty MDs at the vault root when clicked in Obsidian.
+
+def render_zone_index(zone: str, lang: str, strings: dict) -> str:
+    s = strings.get('index', {})
+    zone_labels = s.get('zone_labels', {})
+    label = zone_labels.get(zone, '')
+    today = _today()
+
+    body_intro = (
+        f'Hub of the `{zone}/` zone — {label}.' if label
+        else f'Hub of the `{zone}/` zone.'
+    )
+
+    lines = [
+        '---',
+        f'date: {today}',
+        'zone: meta',
+        'type: zone-index',
+        f'display: "{zone} — index"',
+        f'tags: [zone/meta, type/zone-index, target-zone/{zone}]',
+        '---',
+        '',
+        f'# {zone} — Index',
+        '',
+        body_intro,
+        '',
+        f'> Back to [[index|vault index]].',
+        '',
+    ]
+    return '\n'.join(lines)
+
+def ensure_zone_indexes(vault: Path, lang: str, strings: dict, dry_run: bool) -> list[str]:
+    """Create {zone}/index.md for each zone if missing. Idempotent: never
+    overwrites an existing file (a user may have customised the hub).
+    Returns the list of zones for which an index was created."""
+    created = []
+    for zone in ZONES:
+        zone_dir = vault / zone
+        if not zone_dir.exists():
+            # The zone itself does not exist yet (vault not scaffolded for
+            # this zone). Skip silently — scaffold-vault.py should create it
+            # before rebuild is called.
+            continue
+        idx_path = zone_dir / 'index.md'
+        if idx_path.exists():
+            continue
+        content = render_zone_index(zone, lang, strings)
+        if dry_run:
+            print(f"[dry-run] Would create {idx_path}")
+        else:
+            tmp = idx_path.with_suffix('.md.tmp')
+            tmp.write_text(content, encoding='utf-8', newline='\n')
+            tmp.replace(idx_path)
+            print(f"[OK] Created zone index {zone}/index.md")
+        created.append(zone)
+    return created
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -310,6 +394,11 @@ def main():
     print(f"[i] Language : {language}")
 
     strings = load_strings(repo_root, language)
+
+    # v0.7.3: ensure each zone has its hub index.md (created if missing).
+    # Done before rendering the root index so its links never dangle.
+    ensure_zone_indexes(vault, language, strings, args.dry_run)
+
     content = render_index(vault, language, strings)
 
     target = vault / 'index.md'

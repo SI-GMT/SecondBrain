@@ -23,6 +23,7 @@ Every file in the vault outside `00-inbox/` and `99-meta/` carries the **6 unive
 | Topology branch `99-meta/repo-topology/{slug}-branches/{branch-san}.md` | `"{slug} — topology ({branch})"` | `"acme-web — topology (feature/oauth)"` |
 | Transverse atoms (`40-principles/`, `20-knowledge/`, `50-goals/`, `60-people/`) | `"{kind-suffix}: {short-title}"` where `kind-suffix` is `principle` / `knowledge` / `goal` / `person` | `"principle: source-of-truth-derived-aggregates"` |
 | `index.md` (vault root) | `"vault index"` | `"vault index"` |
+| `{zone}/index.md` (zone hub, v0.7.3) | `"{zone} — index"` | `"20-knowledge — index"` |
 
 The `display` value is a string that will be picked up by Obsidian's Front Matter Title plugin. If the plugin is not installed, the field is silently ignored and Obsidian falls back to filename-based labels — so `display` is **never harmful** even when the plugin is absent. This makes it safe to add unconditionally.
 
@@ -43,5 +44,6 @@ The router and `mem-reclass` enforce the cross-field invariants below. Any viola
 ### Special cases
 
 - **`00-inbox/`**: no required field except `zone: inbox` and `tags: [zone/inbox]`. Other fields (scope, modality, etc.) are set at the moment of reclassification by `mem-reclass`.
-- **`99-meta/`**: no `scope`, `collective`, `modality` (meta is neutral, transverse). Minimal frontmatter: `date`, `zone: meta`, `type` (among `index|doctrine|taxonomy|rule`), `tags`.
+- **`99-meta/`**: no `scope`, `collective`, `modality` (meta is neutral, transverse). Minimal frontmatter: `date`, `zone: meta`, `type` (among `index|zone-index|doctrine|taxonomy|rule|repo-topology`), `tags`.
 - **`context.md` and `history.md`**: no `date` (mutable files). Inherit the scope of the project/domain declared once in `context.md`.
+- **`{zone}/index.md` (v0.7.3)**: zone hubs sitting at the root of each numbered zone. They turn what used to be ghost wiki-link targets (the vault root `index.md` linking to `(20-knowledge/)` etc.) into real, contextualised graph nodes. Frontmatter: `zone: meta`, `type: zone-index`, `display: "{zone} — index"`, `tags: [zone/meta, type/zone-index, target-zone/{zone}]`. Body: title + one-line intro reusing the i18n `zone_labels` description + back-link to the vault root `[[index|vault index]]`. Created at scaffold time and re-asserted by `rebuild-vault-index.py`.
