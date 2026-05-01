@@ -1,6 +1,6 @@
 ---
 name: mem-archeo
-description: "Reconstruct the history of an existing Git repo as multiple dated archives in the memory vault (1 archive per tag, release, merge, or commit window). AUTO-TRIGGER (without waiting for /mem-archeo) when the user says — 'do a Git retro of this project', 'reconstruct the history of this repo', 'archeo on this repo', 'analyze the version tags and archive them'. Also invocable via /mem-archeo [repo-path] with options --level, --project, --since, --until, --window, --dry-run. Auto-detects granularity (tags → releases → merges → commit windows) with interactive confirmation before writing. Idempotent: skips archives already created for the same milestone. Never overwrites a lived archive."
+description: "Triphasic archeo orchestrator. Runs Phase 1 (organizational/decisional/functional context — mem-archeo-context), Phase 2 (technical stack — mem-archeo-stack), Phase 3 (Git history — mem-archeo-git) in sequence on a Git repo, sharing a single Phase 0 topology scan across them. AUTO-TRIGGER (without waiting for /mem-archeo) when the user says — 'do a full archeo of this project', 'reconstruct project context, stack and history', 'archeo on this repo'. Also invocable via /mem-archeo [repo-path] with options --skip-phase, --only-phase, --level, --since, --until, --window, --rescan, --dry-run, --no-confirm. Persists a topology snapshot in 99-meta/repo-topology/{slug}.md."
 user-invocable: true
 ---
 

@@ -1,0 +1,6 @@
+---
+name: mem-archeo-stack
+description: "Phase 2 of the triphasic archeo: resolve the technical stack from manifests (package.json, pyproject.toml, Cargo.toml, go.mod, etc.), containerization (Dockerfile, docker-compose), CI/CD config, test frameworks and tooling. Source archeo-stack. AUTO-TRIGGER (without waiting for /mem-archeo-stack) when the user says — 'ingest the stack of this project', 'extract the technical context', 'archeo the deps and infra'. Also invocable directly. Idempotent via (project, source_manifest, detected_layer)."
+---
+
+{{PROCEDURE}}

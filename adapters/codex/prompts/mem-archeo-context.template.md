@@ -1,0 +1,11 @@
+---
+description: "Phase 1 of the triphasic archeo: extract from a repo's organizational, decisional and functional documents (CLAUDE.md, AGENTS.md, README, docs/, cadrage/, adr/, rfc/, CHANGELOG) the principles, goals, recorded ADRs and methodological conventions that frame the project. Source archeo-context. AUTO-TRIGGER (without waiting for /mem-archeo-context) when the user says — 'ingest the project context', 'archeo the docs of this repo', 'extract principles and goals from project docs'. Also invocable directly. Idempotent via (project, source_doc, extracted_category)."
+---
+
+{{PROCEDURE}}
+
+## User input
+
+```text
+$ARGUMENTS
+```
