@@ -1,0 +1,7 @@
+---
+name: mem-health-repair
+description: "Apply safe idempotent fixes to the issues detected by mem-health-scan. Dry-run by default — only writes when --apply is passed. Repairs: stray-zone-md and empty-md-at-root (delete after re-stat pre-flight), missing-zone-index (delegates to rebuild-vault-index.py), missing-display (delegates to inject-display-frontmatter.py --apply), missing-archeo-hashes (delegates to inject-archeo-hashes.py --apply). Orphan-atoms is semi-automated with per-orphan prompt (reclassify to 00-inbox with tag unlinked-atom, attach to a project, or skip). Dangling-wikilinks is manual-review only and skipped. Persists a repair report at 99-meta/health/repair-{ts}.md. AUTO-TRIGGER when the user says — 'fix the vault', 'repair memory health', 'clean up the vault', 'apply health fixes'."
+user-invocable: true
+---
+
+{{PROCEDURE}}

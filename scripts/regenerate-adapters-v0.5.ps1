@@ -107,6 +107,14 @@ $skillsV05 = [ordered]@{
         Description = "Promote a coherent set of items from the inbox into a new permanent domain in 10-episodes/domains/{slug}/. Enforces the anti-drift rule (>=3 items on the same thread)."
         ArgsText = "New domain slug + optional items. Options: --scope personal|work, --from-inbox {keyword}, --dry-run, --no-confirm."
     }
+    'mem-health-scan' = @{
+        Description = "Audit the vault for hygiene defects without writing anything. Detects 7 categories: stray-zone-md (empty MDs at vault root named after a zone, created by Obsidian when a dangling wikilink is clicked), empty-md-at-root, missing-zone-index (zones lacking their {zone}/index.md hub), missing-display (frontmatter without the v0.7.2 display field where conventions require it), dangling-wikilinks, orphan-atoms (transverse atoms with no project/domain attachment and no incoming wikilinks), missing-archeo-hashes (atoms with source: archeo-* missing content_hash). Persists a structured report at 99-meta/health/scan-{ts}.md that mem-health-repair consumes. AUTO-TRIGGER when the user says — 'audit my vault', 'check vault health', 'scan memory for issues', 'find orphans in the vault', 'what's broken in memory?'. Read-only."
+        ArgsText = "No required argument. Options: --zones {list}, --only {category}, --quiet, --no-write."
+    }
+    'mem-health-repair' = @{
+        Description = "Apply safe idempotent fixes to the issues detected by mem-health-scan. Dry-run by default — only writes when --apply is passed. Repairs: stray-zone-md and empty-md-at-root (delete after re-stat pre-flight), missing-zone-index (delegates to rebuild-vault-index.py), missing-display (delegates to inject-display-frontmatter.py --apply), missing-archeo-hashes (delegates to inject-archeo-hashes.py --apply). Orphan-atoms is semi-automated with per-orphan prompt (reclassify to 00-inbox with tag unlinked-atom, attach to a project, or skip). Dangling-wikilinks is manual-review only and skipped. Persists a repair report at 99-meta/health/repair-{ts}.md. AUTO-TRIGGER when the user says — 'fix the vault', 'repair memory health', 'clean up the vault', 'apply health fixes'."
+        ArgsText = "No required argument. Options: --apply (without it, dry-run only), --from-report {path}, --only {category}, --no-orphans, --no-confirm."
+    }
 }
 
 # Renamed skills (old -> new mapping for deletion)
