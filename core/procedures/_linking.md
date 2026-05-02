@@ -51,3 +51,46 @@ A file is an **orphan** if Obsidian's graph view shows it with zero edges. By do
 - Pre-v0.5.4 files written before this invariant was introduced — fixed by running `enforce-linking.py` once.
 
 Anything else flagged as orphan is a bug in the procedure that wrote it.
+
+## Wikilink resolution invariant (v0.7.4)
+
+**Every `[[wikilink]]` written into a persisted vault file must resolve to an existing target at the time of writing.** Wikilinks that name a future or hypothetical target are forbidden in plain prose — they create silent dangling references that pollute the graph view and trip downstream tools (`mem-health-scan` flags them, `mem-search` returns nothing, etc.).
+
+### Convention for legitimate non-resolving references
+
+A skill or human author legitimately needs to *mention* a wikilink by name (as an example, an illustration, or a future intention) without committing it as a reference. Two conventions cover this:
+
+| Use case | Convention | Example |
+|---|---|---|
+| Cite a wikilink as a literal example (doctrine, spec, tutorial body) | **Inline backticks** | `` Le wikilink `[[no-force-push-sur-main]]` est mentionné en doctrine. `` |
+| Note a future cible to be created later | **Inline backticks + a TODO note** | `` Cible à créer : `[[mt-iris-prod-backup-policy]]` (TODO once the policy is documented). `` |
+
+Both forms render Obsidian-side as code spans (the wikilink is **not** interpreted) and are filtered by `scripts/mem-health-scan.py` (function `strip_code` since v0.7.3.1) so they do not contribute to dangling-wikilink findings.
+
+### Enforcement at write time
+
+Skills that write prose into the vault (`mem-archive`, `_router`, `mem-archeo*`, `mem-promote-domain`, `mem-doc`, `mem-historize`) MUST:
+
+1. Before persisting, scan the body for `[[X]]` wikilinks **outside** code spans.
+2. For each, verify the target resolves (file with stem `X` exists in the vault, or relative path `X.md` exists).
+3. If a wikilink does not resolve, the skill MUST either:
+   - **Create the target first** (recursive write — preferred when the target is a transverse atom that would naturally exist, e.g. a derived principle or knowledge).
+   - **Demote the wikilink to inline backticks** in the persisted prose (e.g. `[[X]]` → `` `[[X]]` ``).
+   - **Surface the issue to the user** if the resolution requires arbitrage (e.g. the user must decide which existing target the link should point to).
+
+Silent persistence of a dangling wikilink is a bug in the procedure.
+
+### Retroactive fix policy for archives
+
+Archives are immutable by doctrine — their prose is not rewritten after publication. When `mem-health-scan` flags a dangling wikilink in an existing archive, the resolution policy is:
+
+1. **Preferred** — create the target the wikilink expects, even if the target is a historical/superseded note. The wikilink resolves and the graph stays consistent. (Pattern used in v0.7.4 to materialize `no-force-push-sur-main.md` and `obsidian-graph-style-v0-5.md` long after the archives that referenced them were written.)
+2. **Acceptable** — leave the dangling wikilink unresolved in the archive prose if the target is impossible to materialize meaningfully (e.g. the wikilink referred to a hypothetical concept that never came to be). Document the reason in the archive's frontmatter via a `dangling_intentional: ["X", "Y"]` field so the scanner can be configured to skip these.
+
+The second option is a last resort. The first option is doctrinally cleaner and is the default.
+
+### Why this invariant matters
+
+Without this rule, an archive written today can poison the graph for years — every scan reports the same dangling wikilink, every search misses the implied connection, every reader of the archive wastes attention parsing a broken reference. Forcing resolution at write time keeps the technical debt at zero.
+
+The convention also has a soft pedagogical effect: a writer aware that wikilinks are *enforced* tends to think harder about whether the link target is real and useful, which improves the quality of the cross-linking overall.

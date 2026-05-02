@@ -270,9 +270,12 @@ def collect_findings(vault: Path, zones_filter, only_filter):
             for m in WIKILINK_RE.finditer(plain_body):
                 target = m.group(1).strip()
                 basename = target.split("/")[-1]
-                if basename in SKIP_TARGETS:
+                # Strip optional .md from the basename (Obsidian accepts both
+                # [[foo]] and [[foo.md]] for the same target).
+                basename_stem = basename[:-3] if basename.endswith(".md") else basename
+                if basename_stem in SKIP_TARGETS:
                     continue
-                if basename in basename_to_paths:
+                if basename_stem in basename_to_paths:
                     continue
                 target_no_ext = target[:-3] if target.endswith(".md") else target
                 if target_no_ext in relpath_set:
