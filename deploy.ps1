@@ -349,6 +349,14 @@ function Get-ExistingVaultPath {
         @{
             Source     = 'Codex'
             ConfigFile = Join-Path $HOME '.codex\memory-kit.json'
+        },
+        @{
+            Source     = 'Copilot CLI'
+            ConfigFile = if ($env:COPILOT_HOME) {
+                Join-Path $env:COPILOT_HOME 'memory-kit.json'
+            } else {
+                Join-Path $HOME '.copilot\memory-kit.json'
+            }
         }
     )
 
@@ -833,6 +841,99 @@ function Deploy-MistralVibe {
 }
 
 # ============================================================
+# Adapter : GitHub Copilot CLI
+# ============================================================
+# Surface confirmee (mai 2026) :
+#   - skills/{nom}/SKILL.md format Anthropic (frontmatter name + description),
+#     auto-decouvert depuis ~/.copilot/skills/. Chaque skill expose nativement
+#     son slash command /{name} (issue #1113 toujours OPEN cote slash commands
+#     user-definis autonomes, mais les skills suffisent).
+#   - Instructions user-level dans ~/.copilot/copilot-instructions.md
+#     (equivalent CLAUDE.md / GEMINI.md / AGENTS.md cote user).
+#   - Pas de couche prompts/ separee comme Codex : le skill EST le slash command.
+#   - Override config dir via $env:COPILOT_HOME.
+
+function Deploy-CopilotCli {
+    param(
+        [string]$KitRoot,
+        [string]$ConfigDir,
+        [string]$VaultPath,
+        [switch]$Force
+    )
+
+    Write-Host ''
+    Write-Step "> Deploiement : GitHub Copilot CLI"
+
+    if (-not (Test-Path $ConfigDir)) {
+        Write-Warn2 "Dossier Copilot CLI introuvable ($ConfigDir). Lance 'copilot' au moins une fois."
+        return $false
+    }
+
+    $adapterDir = Join-Path $KitRoot 'adapters\copilot-cli'
+    $coreSource = Join-Path $KitRoot 'core\procedures'
+
+    # --- Skills (format Anthropic : skills/{nom}/SKILL.md) ---
+    $skillsTarget = Join-Path $ConfigDir 'skills'
+    if (-not (Test-Path $skillsTarget)) {
+        New-Item -ItemType Directory -Path $skillsTarget -Force | Out-Null
+    }
+    $skillsSource = Join-Path $adapterDir 'skills'
+    $configFileRef = '`~/.copilot/memory-kit.json` (ou `$COPILOT_HOME/memory-kit.json` si defini)'
+    if (Test-Path $skillsSource) {
+        Get-ChildItem -Path $skillsSource -Directory | ForEach-Object {
+            $name = $_.Name
+            $tplFile = Join-Path $_.FullName 'SKILL.md.template'
+            if (-not (Test-Path $tplFile)) {
+                Write-Warn2 "SKILL.md.template manquant pour $name (ignore)"
+                return
+            }
+            $tpl = Get-Content -Path $tplFile -Raw
+            $procPath = Join-Path $coreSource "$name.md"
+            if (-not (Test-Path $procPath)) {
+                Write-Warn2 "Procedure core manquante pour skill $name (ignore)"
+                return
+            }
+            $proc = Get-Content -Path $procPath -Raw
+            $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
+            $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
+            $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
+            $destDir = Join-Path $skillsTarget $name
+            if (-not (Test-Path $destDir)) {
+                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            }
+            Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding utf8NoBOM -NoNewline
+            Write-Ok "Skill   : $name/SKILL.md"
+        }
+    }
+
+    # --- Bloc d'instructions dans ~/.copilot/copilot-instructions.md ---
+    # Note : Copilot CLI accepte aussi AGENTS.md repo-level, mais cote user
+    # c'est copilot-instructions.md qui est canonique (cf. doc officielle).
+    $blockPath = Join-Path $adapterDir 'copilot-instructions-block.md'
+    if (-not (Test-Path $blockPath)) {
+        Write-Warn2 "copilot-instructions-block.md manquant : $blockPath"
+        return $false
+    }
+    $blockContent = Get-Content -Path $blockPath -Raw
+    $blockContent = $blockContent -replace '\{\{VAULT_PATH\}\}', ($VaultPath -replace '\\', '/')
+
+    $instructionsFile = Join-Path $ConfigDir 'copilot-instructions.md'
+    $startMarker = '<!-- MEMORY-KIT:START -->'
+    $endMarker   = '<!-- MEMORY-KIT:END -->'
+    $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
+    $existing = if (Test-Path $instructionsFile) { (Get-Content -Path $instructionsFile -Raw) ?? '' } else { '' }
+    $cleaned = [regex]::Replace($existing, $pattern, '').TrimEnd()
+    $final = if ($cleaned) { $cleaned + "`n`n" + $blockContent } else { $blockContent }
+    Set-Content -Path $instructionsFile -Value $final -Encoding utf8NoBOM -NoNewline
+    Write-Ok "copilot-instructions.md : bloc MEMORY-KIT injecte"
+
+    # --- memory-kit.json au niveau utilisateur ---
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
+
+    return $true
+}
+
+# ============================================================
 # 1. Resolution des chemins
 # ============================================================
 
@@ -918,6 +1019,13 @@ $platforms = @(
         Binary      = 'vibe'
         ConfigDir   = Join-Path $HOME '.vibe'
         DeployFunc  = 'Deploy-MistralVibe'
+    },
+    [ordered]@{
+        Name        = 'copilot-cli'
+        DisplayName = 'GitHub Copilot CLI'
+        Binary      = 'copilot'
+        ConfigDir   = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
+        DeployFunc  = 'Deploy-CopilotCli'
     }
 )
 
@@ -942,10 +1050,11 @@ if ($detected.Count -eq 0) {
     Write-Host 'Sans CLI IA, un second cerveau pour IA va etre... plutot theorique (haha).' -ForegroundColor Gray
     Write-Host ''
     Write-Host 'Installe au moins une des CLI suivantes, puis relance ce script :' -ForegroundColor White
-    Write-Info 'Claude Code  : https://claude.com/claude-code'
-    Write-Info 'Gemini CLI   : https://github.com/google-gemini/gemini-cli'
-    Write-Info 'Codex        : https://github.com/openai/codex'
-    Write-Info 'Mistral Vibe : (voir documentation Mistral AI)'
+    Write-Info 'Claude Code        : https://claude.com/claude-code'
+    Write-Info 'Gemini CLI         : https://github.com/google-gemini/gemini-cli'
+    Write-Info 'Codex              : https://github.com/openai/codex'
+    Write-Info 'Mistral Vibe       : (voir documentation Mistral AI)'
+    Write-Info 'GitHub Copilot CLI : https://github.com/github/copilot-cli'
     Write-Host ''
     exit 0
 }
@@ -959,10 +1068,11 @@ Write-Step 'Cleanup migration v0.4 -> v0.5 (skills renommes)...'
 $configMap = @{}
 foreach ($p in $detected) {
     switch ($p.Name) {
-        'claude-code'   { $configMap['Claude'] = $p.ConfigDir }
-        'gemini-cli'    { $configMap['Gemini'] = $p.ConfigDir }
-        'codex'         { $configMap['Codex']  = $p.ConfigDir }
-        'mistral-vibe'  { $configMap['Vibe']   = $p.ConfigDir }
+        'claude-code'   { $configMap['Claude']  = $p.ConfigDir }
+        'gemini-cli'    { $configMap['Gemini']  = $p.ConfigDir }
+        'codex'         { $configMap['Codex']   = $p.ConfigDir }
+        'mistral-vibe'  { $configMap['Vibe']    = $p.ConfigDir }
+        'copilot-cli'   { $configMap['Copilot'] = $p.ConfigDir }
     }
 }
 Remove-DeprecatedV04Files -ConfigDirs $configMap
@@ -1053,10 +1163,11 @@ if ($deployed.Count -gt 0) {
     Write-Host 'Test :' -ForegroundColor Cyan
     foreach ($cli in $deployed) {
         switch ($cli) {
-            'Claude Code'    { Write-Host "  [Claude Code]  /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
-            'Gemini CLI'     { Write-Host "  [Gemini CLI]   /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
-            'Codex (OpenAI)' { Write-Host "  [Codex]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
-            'Mistral Vibe'   { Write-Host "  [Mistral Vibe] dis 'charge mon contexte memoire' (Vibe n'expose pas de slash commands)" -ForegroundColor Cyan }
+            'Claude Code'        { Write-Host "  [Claude Code]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
+            'Gemini CLI'         { Write-Host "  [Gemini CLI]         /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
+            'Codex (OpenAI)'     { Write-Host "  [Codex]              /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
+            'Mistral Vibe'       { Write-Host "  [Mistral Vibe]       dis 'charge mon contexte memoire' (Vibe n'expose pas de slash commands)" -ForegroundColor Cyan }
+            'GitHub Copilot CLI' { Write-Host "  [Copilot CLI]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
         }
     }
 }

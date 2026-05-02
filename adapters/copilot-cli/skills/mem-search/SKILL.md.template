@@ -1,0 +1,6 @@
+---
+name: mem-search
+description: "Full-text search in the memory vault (archives, contexts, histories, index). Returns matches with 2 lines of context, grouped by file, sorted recent-archives-first. TRIGGER via /mem-search {query} or natural language — 'search memory for X', 'find archives that mention Y', 'where did we talk about Z?'. Excludes .obsidian/, *.canvas, *.excalidraw.md, *.base. Read-only. v0.7.2 EXTENDED FILTERS — --source archeo-context|archeo-stack|archeo-git|lived|doc|manual|archeo-* (wildcard), --branch {name}, --extracted-category {value}, --detected-layer {value}, --author {email-or-name} for fine-grained queries on the archeo-enriched vault."
+---
+
+{{PROCEDURE}}

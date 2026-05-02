@@ -1,0 +1,6 @@
+---
+name: mem-list
+description: "List vault projects and domains with their synthetic state. Renamed from mem-list-projects in v0.5 (now handles BOTH projects and domains). Can also list a zone's contents via --zone X. v0.7.2 — each project line is enriched with archeo coverage glyphs: T (main topology present), B{N} (N branch topologies known), [{C}c {S}s {G}g] (counts of archeo-context/stack/git atoms). With --detail, expands to a full per-project breakdown including repo_path, workspace_member, and per-source atom counts."
+---
+
+{{PROCEDURE}}
