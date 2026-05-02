@@ -147,3 +147,36 @@ class DigestResult(BaseModel):
     archives_total: int
     archives: list[ArchiveDigest] = Field(default_factory=list)
     summary_md: str
+
+
+class HealthFinding(BaseModel):
+    """One finding produced by mem_health_scan."""
+
+    category: str  # malformed-frontmatter | missing-display | empty-md | orphan-atom
+    severity: str  # 'error' | 'warning' | 'info'
+    path: str  # vault-relative
+    message: str
+    auto_fixable: bool = False
+
+
+class HealthScanResult(BaseModel):
+    """Result of mem_health_scan — vault audit (read-only)."""
+
+    vault: str
+    files_scanned: int
+    findings_total: int
+    by_category: dict[str, int] = Field(default_factory=dict)
+    findings: list[HealthFinding] = Field(default_factory=list)
+    summary_md: str
+
+
+class HealthRepairResult(BaseModel):
+    """Result of mem_health_repair — applies idempotent fixes."""
+
+    vault: str
+    dry_run: bool
+    fixes_applied: int
+    fixes_skipped: int
+    findings_remaining: int
+    files_modified: list[str] = Field(default_factory=list)
+    summary_md: str

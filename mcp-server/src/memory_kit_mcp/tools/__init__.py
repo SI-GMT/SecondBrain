@@ -13,6 +13,8 @@ from fastmcp import FastMCP
 from memory_kit_mcp.tools import (
     archive,
     digest,
+    health_repair,
+    health_scan,
     historize,
     list as list_tool,
     merge,
@@ -41,4 +43,7 @@ def register_all(mcp: FastMCP) -> None:
     rollback_archive.register(mcp)
     promote_domain.register(mcp)
     historize.register(mcp)
-    # Hygiene + ingestion + archeo will be registered here in chunks 8-10.
+    # Hygiene
+    health_scan.register(mcp)
+    health_repair.register(mcp)
+    # Ingestion + archeo will be registered here in chunks 9-10.
