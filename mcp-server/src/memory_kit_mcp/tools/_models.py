@@ -106,3 +106,44 @@ class ListResult(BaseModel):
     domains: list[ProjectListEntry] = Field(default_factory=list)
     archived: list[ProjectListEntry] = Field(default_factory=list)
     summary_md: str
+
+
+class SearchHit(BaseModel):
+    """One match returned by mem_search."""
+
+    path: str  # vault-relative path
+    zone: str  # "00-inbox" / "10-episodes" / etc.
+    line_number: int
+    line: str
+    context_before: list[str] = Field(default_factory=list)
+    context_after: list[str] = Field(default_factory=list)
+
+
+class SearchResult(BaseModel):
+    """Result of mem_search — ranked matches with context snippets."""
+
+    query: str
+    total_hits: int
+    truncated: bool = False
+    hits: list[SearchHit] = Field(default_factory=list)
+    summary_md: str
+
+
+class ArchiveDigest(BaseModel):
+    """One archive entry summarized in mem_digest output."""
+
+    filename: str  # e.g. "2026-04-30-14h00-alpha-initial.md"
+    date: str | None = None
+    subject: str | None = None
+    body_excerpt: str  # first ~300 chars of the archive body
+
+
+class DigestResult(BaseModel):
+    """Result of mem_digest — synthesis of the last N archives."""
+
+    project: str
+    kind: str
+    archives_returned: int
+    archives_total: int
+    archives: list[ArchiveDigest] = Field(default_factory=list)
+    summary_md: str

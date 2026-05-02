@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from memory_kit_mcp.tools import archive, list as list_tool, recall
+from memory_kit_mcp.tools import (
+    archive,
+    digest,
+    list as list_tool,
+    recall,
+    search,
+)
 
 
 def register_all(mcp: FastMCP) -> None:
@@ -18,4 +24,6 @@ def register_all(mcp: FastMCP) -> None:
     recall.register(mcp)
     archive.register(mcp)
     list_tool.register(mcp)
-    # Other tools will be registered here as they are implemented (chunks 6-10).
+    search.register(mcp)
+    digest.register(mcp)
+    # Other tools will be registered here as they are implemented (chunks 7-10).
