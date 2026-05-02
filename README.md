@@ -1,16 +1,18 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI — Claude Code, Gemini CLI, Codex, Mistral Vibe.
+> Mémoire persistante pour agents CLI — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI.
 
 [![License: MIT](https://img.shields.io/github/license/SI-GMT/SecondBrain?color=blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#prérequis)
 [![Shells](https://img.shields.io/badge/shells-PowerShell%207%2B%20%7C%20bash-5391FE)](#prérequis)
-[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe-8A2BE2)](#cli-supportées)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot-8A2BE2)](#cli-supportées)
 [![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
+> **v0.7.5** — **5e adapter : GitHub Copilot CLI**. Le kit se déploie maintenant dans `~/.copilot/` en plus des 4 CLI précédentes. Surface installée : 24 skills au format Anthropic dans `~/.copilot/skills/{nom}/SKILL.md` (chacun expose nativement son slash command `/mem-recall`, `/mem-archive`, …) + bloc MEMORY-KIT injecté dans `~/.copilot/copilot-instructions.md` (équivalent CLAUDE.md user-level) + `memory-kit.json` au niveau utilisateur. Override du config dir via `$COPILOT_HOME` supporté. Détection automatique par `deploy.ps1` / `deploy.sh` — rien à faire de plus pour un poste qui a déjà tourné `copilot` au moins une fois. Copilot CLI ne lit plus `~/.claude/skills/` depuis sa version 1.0.35, l'écriture explicite dans `~/.copilot/skills/` est donc nécessaire (et faite par l'adapter).
+>
 > **v0.7.4** — `mem-historize` + renforcements doctrinaux. (1) **Nouveau skill `mem-historize`** : déplace un projet terminé vers `10-episodes/archived/{slug}/` pour le sortir du scope par défaut des skills d'accès (`mem-recall`, `mem-list`, `mem-search`, `mem-digest`) et réduire la consommation tokens du briefing au démarrage. Réversible via `--revive`. Délégation à `scripts/mem-historize.py` (versionné, idempotent, pattern when-to-script). Patch atomique de `context.md` (phase, archived_at, display suffix `[archived]`) + `shutil.move` du dossier. (2) **Bloc doctrinal `core/procedures/_archived.md`** qui définit la règle de résolution (projets d'abord, archivés ensuite) et la matrice de comportement par skill (refuse / skip / collapse par défaut, override `--include-archived` / `--from-archived` / `--allow-archived` selon le contexte). 6 skills d'accès patchés (`mem-recall`, `mem-list`, `mem-search`, `mem-digest`, `mem-archive`, `mem-archeo*`). `rebuild-vault-index.py` rend une section `## Archived projects` séparée. i18n EN/FR/ES/DE/RU étendue. (3) **Renforcement `mem-promote-domain`** : mode CREATE vs EXTEND automatique (idempotent sur ré-invocation), nouvelles sources `--from-sub-zone` / `--from-tag` pour promouvoir des atomes existants hors `00-inbox/`, override anti-drift `--allow-2-items` documenté. Distinction move-vs-retag clarifiée (notes inbox déplacées, atomes transverses retaggés en place). (4) **Renforcement `_linking.md`** : invariant binding sur la résolution des wikilinks dans la prose persistée (DOIT résoudre au moment de l'écriture, sinon backticks ou TODO marqué) + politique de fix rétroactif sur archives immuables. Scanner patche le bug stem-resolution (`[[X.md]]` résout maintenant comme `[[X]]`).
 >
 > **v0.7.3.1** — Doctrinal hotfix. (1) Le scanner `mem-health-scan` est promu en `scripts/mem-health-scan.py` versionné — la version v0.7.3 ne décrivait que la procédure et laissait le LLM créer un script ad-hoc dans `$TEMP/` à chaque invocation, ce qui n'est ni reproductible ni auditable. La procédure `core/procedures/mem-health-scan.md` est refactorée en délégation explicite au script. Une 8e catégorie **`malformed-frontmatter`** (sévérité `error`) est ajoutée au scanner pour éviter les cascades de faux positifs (un frontmatter YAML mal-quoté faisait conclure "missing display" sur des fichiers qui en avaient pourtant un — bug observé sur 10 archives `gmt-ia-devops` produites par `mem-archeo-atlassian` antérieurement). Exit code 1 si erreurs, utile pour CI. (2) Nouveau bloc doctrinal `core/procedures/_when-to-script.md` qui formalise la règle : toute procédure avec parcours systématique du vault, parsing structuré multi-fichier ou agrégation cross-file DOIT déléguer à un script versionné dans `scripts/`, jamais re-implémenter ad-hoc. (3) Procédure `mem-archeo-atlassian` patchée pour toujours quoter `confluence_page_title:`, `jira_summary:` et `confluence_url:` à l'écriture (cause racine corrigée à la source). (4) Script one-shot `scripts/migrate-fix-archeo-atlassian-frontmatter.py` pour réparer les archives existantes (10 archives patchées sur le vault prod GMT — quote des `[TAG]` non-quotés + restauration des newlines après `---`).
@@ -50,7 +52,7 @@ SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fage
 
 Les CLI LLM agentiques n'ont pas de mémoire entre les sessions. Après un `/clear` ou une fermeture d'IDE, l'intégralité du contexte — état du projet, décisions prises, prochaines étapes — doit être ré-exposée manuellement à l'agent.
 
-SecondBrain installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau utilisateur (dans `~/.claude/`, `~/.gemini/`, `~/.codex/` ou `~/.vibe/` selon la CLI). Le contexte devient disponible depuis n'importe quel projet sur le poste.
+SecondBrain installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau utilisateur (dans `~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/` ou `~/.copilot/` selon la CLI). Le contexte devient disponible depuis n'importe quel projet sur le poste.
 
 **Gain mesurable** : la reprise de session consomme environ 2× moins de tokens qu'un re-briefing manuel équivalent.
 
@@ -62,6 +64,7 @@ SecondBrain installe une mémoire locale structurée que l'agent lit et écrit a
 | **Gemini CLI** | Fonctionnel, validé en conditions réelles | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
 | **Codex** | Fonctionnel, validé en conditions réelles | Prompts + skills |
 | **Mistral Vibe** | Fonctionnel, validé en conditions réelles | Skills dans `~/.vibe/skills/` + bloc injecté dans `~/.vibe/AGENTS.md` |
+| **GitHub Copilot CLI** | Fonctionnel (v0.7.5) | Skills dans `~/.copilot/skills/` (chacun expose son slash command natif) + bloc injecté dans `~/.copilot/copilot-instructions.md` |
 
 Le script d'installation détecte automatiquement les CLI présentes sur le poste et ne déploie que les adapters correspondants.
 
@@ -77,7 +80,7 @@ Le cycle de mémoire se décompose en trois phases :
 
 ### Fiabilité du déclenchement par langage naturel
 
-Le déclenchement automatique repose sur des instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`). Sa fiabilité dépend du modèle sous-jacent : très élevée sur Claude Code, bonne sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`, etc.) produisent un comportement identique sur toutes les plateformes qui les exposent.
+Le déclenchement automatique repose sur des instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `copilot-instructions.md`). Sa fiabilité dépend du modèle sous-jacent : très élevée sur Claude Code, bonne sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`, etc.) produisent un comportement identique sur toutes les plateformes qui les exposent.
 
 ### Anglais structurel, conversation native
 
@@ -90,7 +93,7 @@ Toutes les **instructions destinées au LLM** (procédures, frontmatter, tags, v
 ### Prérequis
 
 - **PowerShell 7+** (`pwsh`) sur Windows, **ou** **bash** sur macOS/Linux/git-bash.
-- **Au moins une CLI supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/` ou `~/.vibe/`).
+- **Au moins une CLI supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/` ou `~/.copilot/`).
 - **Obsidian** (optionnel) — pour visualiser le vault sous forme de graphe.
 - **`uv`** (optionnel) — requis uniquement pour `/mem-doc` sur les formats non-natifs (`.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html`). Voir [Formats supportés par `/mem-doc`](#formats-supportés-par-mem-doc). Installation : <https://docs.astral.sh/uv/>.
 
@@ -123,6 +126,7 @@ Le script détecte les CLI présentes, déploie l'adapter correspondant à chacu
 | Gemini CLI | Extension dans `~/.gemini/extensions/memory-kit/`, `memory-kit.json`, activation dans `extension-enablement.json` |
 | Codex | `~/.codex/prompts/mem-*.md`, `~/.codex/skills/mem-*/SKILL.md`, `memory-kit.json` |
 | Mistral Vibe | `~/.vibe/AGENTS.md` (bloc injecté), `~/.vibe/skills/mem-*/SKILL.md` |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` (bloc injecté), `~/.copilot/skills/mem-*/SKILL.md`, `memory-kit.json`. Override du config dir via `$COPILOT_HOME`. |
 
 ### Choix du vault et de la langue
 
@@ -187,7 +191,8 @@ SecondBrain/
 │   ├── claude-code/            Skills + slash commands + bloc CLAUDE.md
 │   ├── gemini-cli/             Extension memory-kit + GEMINI.md + TOML
 │   ├── codex/                  Prompts + skills
-│   └── mistral-vibe/           Bloc AGENTS.md + skills (format Anthropic)
+│   ├── mistral-vibe/           Bloc AGENTS.md + skills (format Anthropic)
+│   └── copilot-cli/            Bloc copilot-instructions.md + skills (format Anthropic)
 ├── memory/                     Vault Obsidian local (non versionné — voir .gitignore)
 │   ├── index.md                Catalogue maître à la racine
 │   ├── 00-inbox/               Captation brute non qualifiée
@@ -361,7 +366,7 @@ python scripts/enforce-linking.py --vault ~/vault
 
 | Phase | État | Portée |
 |---|---|---|
-| **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe. |
+| **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI. |
 | **Phase 2** | À venir | Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale ; promotion `CollectiveBrain` (flag `collective` déjà persisté en v0.5). |
 | **Phase 3** | À venir | Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims délégant au MCP ; une seule implémentation pour toutes les CLI compatibles MCP. |
 
@@ -392,6 +397,11 @@ Remove-Item "$HOME\.codex\memory-kit.json" -Force
 # Mistral Vibe
 Remove-Item "$HOME\.vibe\skills\mem-*" -Recurse -Force
 # Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\AGENTS.md
+
+# GitHub Copilot CLI
+Remove-Item "$HOME\.copilot\skills\mem-*" -Recurse -Force
+Remove-Item "$HOME\.copilot\memory-kit.json" -Force
+# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.copilot\copilot-instructions.md
 ```
 
 Le vault `memory/` reste intact. Les archives, projets et domaines sont préservés.
