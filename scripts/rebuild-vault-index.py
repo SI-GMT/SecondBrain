@@ -132,17 +132,31 @@ def _deep_merge(base, override):
 # ============================================================
 
 def list_projects_or_domains(vault: Path, kind: str) -> list[str]:
-    """kind = 'projects' or 'domains'. Returns list of slugs."""
+    """kind = 'projects', 'domains', or 'archived'. Returns list of slugs."""
     base = vault / '10-episodes' / kind
     if not base.exists():
         return []
     return sorted([d.name for d in base.iterdir() if d.is_dir()])
 
 def list_archives_for(vault: Path, kind: str, slug: str) -> list[Path]:
+    """kind = 'projects', 'domains', or 'archived'."""
     base = vault / '10-episodes' / kind / slug / 'archives'
     if not base.exists():
         return []
     return sorted(base.glob('*.md'))
+
+def read_archived_at(vault: Path, slug: str) -> str:
+    """Read archived_at from 10-episodes/archived/{slug}/context.md frontmatter."""
+    ctx = vault / '10-episodes' / 'archived' / slug / 'context.md'
+    if not ctx.exists():
+        return ''
+    try:
+        text = ctx.read_text(encoding='utf-8')
+    except Exception:
+        return ''
+    fm, _body = parse_frontmatter(text)
+    val = fm.get('archived_at', '')
+    return str(val).strip() if val else ''
 
 def scan_atoms(vault: Path, zone: str) -> list[tuple[Path, dict]]:
     """Scan a zone (40-principles, 20-knowledge, 50-goals, 60-people) and
@@ -230,6 +244,21 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
         lines.append(s.get('empty_domains', '(none yet)'))
     lines.append('')
 
+    # Section: Archived projects (v0.7.4)
+    # Listed separately from active Projects so the inventory keeps the
+    # active surface clean. The mem-historize skill moves projects between
+    # 10-episodes/projects/ and 10-episodes/archived/.
+    archived = list_projects_or_domains(vault, 'archived')
+    if archived:
+        section_title = s.get('section_archived', 'Archived projects')
+        lines.append(f"## {section_title} ({len(archived)})")
+        lines.append('')
+        for slug in archived:
+            archived_at = read_archived_at(vault, slug)
+            suffix = f' — archived since {archived_at}' if archived_at else ''
+            lines.append(f'- [{slug}](10-episodes/archived/{slug}/history.md){suffix}')
+        lines.append('')
+
     # Section: Archives (sorted by filename desc — filename starts with date)
     all_archives: list[tuple[str, str, Path]] = []  # (slug, kind, path)
     for slug in projects:
@@ -238,6 +267,15 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
     for slug in domains:
         for a in list_archives_for(vault, 'domains', slug):
             all_archives.append((slug, 'domains', a))
+    # v0.7.4 — archived projects' archives are also included in the global
+    # Archives section so the chronological view stays complete. The
+    # discrimination is in the rendering: archived archives carry an [archived]
+    # suffix.
+    archived_paths_set = set()
+    for slug in archived:
+        for a in list_archives_for(vault, 'archived', slug):
+            all_archives.append((slug, 'archived', a))
+            archived_paths_set.add(a)
     all_archives.sort(key=lambda t: t[2].name, reverse=True)
 
     lines.append(f"## {s.get('section_archives', 'Archives')}")
@@ -245,7 +283,8 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
     if all_archives:
         for slug, kind, path in all_archives:
             rel = path.relative_to(vault).as_posix()
-            lines.append(f'- [{path.stem}]({rel})')
+            suffix = ' [archived]' if kind == 'archived' else ''
+            lines.append(f'- [{path.stem}]({rel}){suffix}')
     else:
         lines.append(s.get('empty_archives', '(none yet)'))
     lines.append('')

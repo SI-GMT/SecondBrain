@@ -141,3 +141,20 @@ Adapt the briefing to the requested scope: if `--scope personal`, hide `work` it
 Ask: "Do we resume at step {X}?"
 
 If the user confirms, read the necessary project files and start the work.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block):
+
+- **Without an explicit slug**, the auto-detection from CWD or the inventory used to disambiguate **excludes** projects under `10-episodes/archived/`. The implicit briefing flow never touches them.
+- **With an explicit slug** (`/mem-recall {slug}` or natural-language equivalent like "reprends codemagdns"), look up the slug in BOTH `10-episodes/projects/{slug}/` and `10-episodes/archived/{slug}/`. The first match wins. If only the archived location matches, load it and signal in the briefing that the project is archived (date from `archived_at`).
+
+When loading an archived project, prepend the briefing with:
+
+```
+ℹ️ Project '{slug}' is currently archived (since {archived_at}).
+   Loaded for read-only retrospective. To resume actively, run:
+     /mem-historize {slug} --revive --apply
+```
+
+After this notice, proceed with the standard briefing. The user can read, ask questions, navigate the history; if they want to write or commit changes via `mem-archive`, that skill will refuse with a hard error and re-suggest `--revive`.

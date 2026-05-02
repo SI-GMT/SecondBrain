@@ -283,3 +283,7 @@ If invoked from the `mem-archeo` orchestrator, return the structured result.
 - **One atom per detected layer, never less.** A single consolidated "stack" atom that mixes frontend + backend + db + infra is a procedure violation. The atom granularity is the layer. Convention atoms in `40-principles/` are the only legitimate additional split per layer.
 - **No layer fusion.** If `frontend` and `backend` share a manifest (rare, e.g. monorepo `package.json` at root), still produce two atoms with `detected_layer: frontend` and `detected_layer: backend`, each carrying its specific resolution. Same `source_manifest`, different `detected_layer`.
 - **`detected_layer`, `detected_techno`, `content_hash` are mandatory** on every Phase 2 atom — never omitted, even if value is `[]` for `detected_techno` or `""` for `previous_atom`.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block). `mem-archeo-stack` refuses by default on an archived target slug — see the override path in `mem-archeo.md` (`--allow-archived` flag forwarded from the orchestrator).

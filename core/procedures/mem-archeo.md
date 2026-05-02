@@ -210,3 +210,25 @@ Project briefing      : run /mem-recall {slug} to see the full picture
 - **Order context → stack → git** is fixed. Reordering breaks the contextualization chain.
 - **Topology is persisted at the end**, after all enabled phases have completed. A failure mid-phase leaves the topology in its previous state (no partial write of the topology summary).
 - **Canonical write paths only.** Same invariant as the sub-phases.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block).
+
+`mem-archeo` and its sub-phases **refuse by default** on an archived project. An archeo'd repo is typically an active one — running phases on a finished project would write into an archive structure that should be frozen.
+
+Resolution: before invoking any phase, look up the target slug across both `10-episodes/projects/` and `10-episodes/archived/`. If the slug is archived:
+
+```
+✗ Project '{slug}' is archived (since {archived_at}).
+
+  Archeo refuses on archived projects by default. Options:
+
+  - Override:    /mem-archeo {repo} --project {slug} --allow-archived
+                 (proceeds — writes into 10-episodes/archived/{slug}/archives/
+                  and 99-meta/repo-topology/{slug}.md as if active)
+  - Reactivate:  /mem-historize {slug} --revive --apply
+                 (then run /mem-archeo normally)
+```
+
+The `--allow-archived` flag is forwarded to all sub-phases (`mem-archeo-context`, `-stack`, `-git`). It exists for the legitimate case of running a retrospective archeo on a project that was archived prematurely.

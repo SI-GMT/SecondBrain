@@ -197,3 +197,30 @@ Context updated: {context.md path}
 
 The /clear is safe — use /mem-recall {slug} to resume.
 ```
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block).
+
+**Hard error, no override.** Before any write, resolve the target project's location:
+
+- If the target slug lives at `10-episodes/projects/{slug}/` → proceed normally.
+- If the target slug lives at `10-episodes/archived/{slug}/` → **refuse** with:
+
+  ```
+  ✗ Project '{slug}' is archived (since {archived_at}). Cannot write to an archived project.
+
+    Writing would silently un-archive without metadata. Required step:
+
+      /mem-historize {slug} --revive --apply
+
+    Then re-run /mem-archive.
+  ```
+
+  Stop. Do not proceed even with `--no-confirm`. The user must explicitly revive the project first.
+
+- If both locations exist → half-state error, refuse and ask for manual cleanup (see `_archived.md`).
+
+This rule is doctrinal and intentional. Silent un-archive on write would defeat the entire `mem-historize` mechanism — a finished project should require an explicit reactivation step before accepting new sessions.
+
+The same rule applies in **silent incremental mode** (the `context.md` patches that happen during a session without creating an archive). If the project was archived mid-conversation by another agent or a manual edit, the silent updates also fail-fast — surface a warning to the user once and skip until the situation is resolved.

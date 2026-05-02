@@ -21,6 +21,8 @@ Recognized options:
 - `--author {email-or-name}`: filters archeo-git atoms by `author_email` or `author_name` (v0.7.2). Substring match, case-insensitive.
 - `--limit N`: max number of matches (default 50).
 - `--case-sensitive`: opt-in for case-sensitive search (default is case-insensitive).
+- `--include-archived` _(v0.7.4)_: also scan `10-episodes/archived/**`. Default behaviour skips it (see Archived projects handling below).
+- `--archived-only` _(v0.7.4)_: search only inside `10-episodes/archived/**`. Mutually exclusive with `--include-archived`.
 
 ## Vault path resolution
 
@@ -124,3 +126,23 @@ No occurrence found in the vault (active filters: {list}).
 ### 7. Suggest what's next
 
 If the results mostly concern a project/domain (recurring slug in the results), suggest: "Do you want me to load the context of `{slug}`?" — which will trigger `/mem-recall {slug}`.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block).
+
+By default, `mem-search` **excludes** `10-episodes/archived/**` from the scan. The summary line should reflect this, e.g.:
+
+```
+Found {N} match(es) across {M} file(s). (Archived projects skipped — use --include-archived to include.)
+```
+
+If `--include-archived`, also scan archived/ and tag each archived-result line with `[archived]` after the file path. The grouping by file remains the same.
+
+If `--archived-only`, scan only archived/ and report:
+
+```
+Found {N} match(es) across {M} file(s) in archived projects.
+```
+
+When the user invokes `mem-search` from inside an archived project (CWD match), neither flag is needed — search the project even if archived. This is the "explicit context wins" rule.

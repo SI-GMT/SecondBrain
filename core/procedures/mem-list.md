@@ -120,3 +120,34 @@ If the vault is empty or contains neither projects nor domains:
 ```
 Empty vault. Create your first project or domain via /mem-archive or /mem.
 ```
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block).
+
+In addition to enumerating `10-episodes/projects/`, also enumerate `10-episodes/archived/`. For each archived project, read its `context.md` for `phase: archived` and `archived_at`.
+
+Default rendering — the inventory has a separate **`### Archived projects ({N})`** section appended after `### Projects` and `### Domains`, **collapsed to count only** (no per-line listing):
+
+```
+### Archived projects (3)
+
+(use `--include-archived` to list, or `--archived-only` to filter)
+```
+
+With `--include-archived`, expand the section with the same per-project line format as Projects, but suffix each line with `[archived since {YYYY-MM-DD}]`:
+
+```
+### Archived projects (3)
+
+- **codemagdns** (work) — phase: archived — 12 archive(s) — last: 2025-12-12 — archeo: T [3c 2s 8g] [archived since 2026-05-15]
+- ...
+```
+
+With `--archived-only`, hide `### Projects` and `### Domains`, show only `### Archived projects` expanded.
+
+Recognized override flags forwarded:
+- `--include-archived` — expand the section.
+- `--archived-only` — show only archived.
+
+The two flags are mutually exclusive — if both passed, `--archived-only` wins (more restrictive).

@@ -218,3 +218,7 @@ If invoked from the `mem-archeo` orchestrator, return the structured result inst
 - **No verbatim ingestion.** A document that yields zero categorized atom is not ingested at all (no copy in `99-meta/sources/`, no inbox entry). The persisted topology already records the doc's existence; that's enough.
 - **Read once.** Within a single invocation, never re-read a document. Cache its content in working memory.
 - **`extracted_category` is mandatory.** Every Phase 1 atom carries this field. Atoms without it are bugs to be reported.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block). `mem-archeo-context` refuses by default on an archived target slug — see the override path in `mem-archeo.md` (`--allow-archived` flag forwarded from the orchestrator).

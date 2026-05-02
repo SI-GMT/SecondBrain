@@ -123,3 +123,20 @@ Depending on the zone:
 ### 3. Display
 
 Format adapted to the zone, always start with a global counter and the groupings.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block).
+
+`mem-digest` **refuses by default** to digest an archived project. Surface the standard refusal:
+
+```
+✗ Project '{slug}' is archived (since {archived_at}).
+
+  Digesting an archived project is a deliberate retrospective action,
+  not a default. To proceed, re-run with --from-archived.
+
+  Alternative: /mem-historize {slug} --revive --apply  (then digest as usual)
+```
+
+With `--from-archived` _(v0.7.4)_, proceed with the digest reading from `10-episodes/archived/{slug}/archives/`. Tag the digest output title with `(retrospective on archived project)` so the user is reminded of the context.

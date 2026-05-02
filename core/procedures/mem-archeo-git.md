@@ -321,3 +321,7 @@ If invoked from the `mem-archeo` orchestrator, return the structured result.
 - **`source_milestone`, `commit_sha`, `friction_detected`, `content_hash`, `previous_atom` are mandatory** on every Phase 3 archive — never omitted, even with empty values.
 - **No duplicate YAML keys.** Each frontmatter key appears exactly once. Use lists for multi-valued data.
 - **Frontmatter values in canonical English** — `force` enum is `red-line | heuristic | preference`, never localized.
+
+## Archived projects handling (v0.7.4)
+
+Per `core/procedures/_archived.md` (doctrinal block). `mem-archeo-git` refuses by default on an archived target slug — see the override path in `mem-archeo.md` (`--allow-archived` flag forwarded from the orchestrator).
