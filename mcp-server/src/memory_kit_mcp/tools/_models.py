@@ -66,3 +66,43 @@ class RecallInventory(BaseModel):
     domains: list[InventoryEntry] = Field(default_factory=list)
     archived_count: int = 0
     message: str
+
+
+class ChangeReport(BaseModel):
+    """Standardized result for tools that mutate the vault.
+
+    Returned by mem_archive, mem_rename, mem_merge, mem_reclass, etc. Lets the
+    LLM client surface a uniform diff summary to the user.
+    """
+
+    skill: str
+    success: bool
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    files_deleted: list[str] = Field(default_factory=list)
+    files_moved: list[tuple[str, str]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    summary_md: str
+
+
+class ProjectListEntry(BaseModel):
+    """One row in the inventory returned by mem_list."""
+
+    slug: str
+    kind: str  # "project" | "domain"
+    archived: bool = False
+    phase: str | None = None
+    last_session: str | None = None
+    scope: str | None = None
+    archived_at: str | None = None
+    archives_count: int = 0
+
+
+class ListResult(BaseModel):
+    """Result of mem_list — a snapshot of the vault inventory."""
+
+    vault: str
+    projects: list[ProjectListEntry] = Field(default_factory=list)
+    domains: list[ProjectListEntry] = Field(default_factory=list)
+    archived: list[ProjectListEntry] = Field(default_factory=list)
+    summary_md: str
