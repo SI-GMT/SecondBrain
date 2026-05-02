@@ -13,17 +13,32 @@ from fastmcp import FastMCP
 from memory_kit_mcp.tools import (
     archive,
     digest,
+    historize,
     list as list_tool,
+    merge,
+    promote_domain,
     recall,
+    reclass,
+    rename,
+    rollback_archive,
     search,
 )
 
 
 def register_all(mcp: FastMCP) -> None:
     """Register every mem_* tool with the FastMCP instance."""
+    # Cycle session
     recall.register(mcp)
     archive.register(mcp)
+    # Inventory
     list_tool.register(mcp)
     search.register(mcp)
     digest.register(mcp)
-    # Other tools will be registered here as they are implemented (chunks 7-10).
+    # Vault management
+    rename.register(mcp)
+    merge.register(mcp)
+    reclass.register(mcp)
+    rollback_archive.register(mcp)
+    promote_domain.register(mcp)
+    historize.register(mcp)
+    # Hygiene + ingestion + archeo will be registered here in chunks 8-10.
