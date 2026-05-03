@@ -156,13 +156,43 @@ async def test_doc_ingests_native_markdown(client: Client, tmp_path: Path, vault
     assert "Some content" in body
 
 
-async def test_doc_unsupported_format_raises(
+async def test_doc_malformed_pdf_raises(
     client: Client, tmp_path: Path
 ) -> None:
+    """A malformed/scanned PDF should raise so the LLM can fall back to native reading."""
     src = tmp_path / "report.pdf"
     src.write_bytes(b"%PDF-1.4 fake")
     with pytest.raises(ToolError):
         await client.call_tool("mem_doc", {"path": str(src)})
+
+
+async def test_doc_unknown_suffix_raises(client: Client, tmp_path: Path) -> None:
+    src = tmp_path / "blob.xyz"
+    src.write_text("just bytes")
+    with pytest.raises(ToolError):
+        await client.call_tool("mem_doc", {"path": str(src)})
+
+
+async def test_doc_ingests_docx_via_dispatcher(
+    client: Client, tmp_path: Path, vault_tmp: Path
+) -> None:
+    docx_mod = pytest.importorskip("docx")
+    src = tmp_path / "report.docx"
+    doc = docx_mod.Document()
+    doc.add_heading("Quarterly report", level=1)
+    doc.add_paragraph("Body content with enough words to be meaningful.")
+    doc.save(src)
+
+    res = await client.call_tool(
+        "mem_doc", {"path": str(src), "title": "Q-report"}
+    )
+    assert res.data.success is True
+    files = list((vault_tmp / "00-inbox").glob("*-doc-q-report*.md"))
+    assert len(files) == 1
+    fm, body = frontmatter.read(files[0])
+    assert fm["source_format"] == "docx"
+    assert "# Quarterly report" in body
+    assert "Body content" in body
 
 
 async def test_doc_missing_path_raises(client: Client, tmp_path: Path) -> None:

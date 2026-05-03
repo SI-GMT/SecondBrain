@@ -1,11 +1,21 @@
 """mem_doc — Ingest a local document into the vault as a single-shot archive.
 
-Spec: core/procedures/mem-doc.md (full multi-format support)
+Spec: ``core/procedures/mem-doc.md``.
 
-POC implementation: native text formats (.md, .txt) only. For PDF/DOCX/PPTX/
-XLSX/CSV/HTML, the spec delegates to scripts/doc-readers/*.py via uv run —
-that integration is deferred to v0.8.x. This POC raises a clear error for
-unsupported formats so the LLM can fall back to the skills mode.
+Native fast-path for plain-text formats (``.md``, ``.markdown``, ``.txt``,
+``.text``). All other formats (``.pdf``, ``.docx``, ``.pptx``, ``.xlsx``,
+``.csv``, ``.html`` / ``.htm``) are dispatched to ``memory_kit_mcp.readers``
+which extracts Markdown via the optional ``[doc-readers]`` extra.
+
+Failure modes intentionally distinguished:
+
+- ``UnsupportedFormatError`` — suffix has no registered reader; the caller
+  (LLM) should fall back to native reading or refuse the file.
+- ``DocReaderDependencyError`` — the optional extra is missing; install via
+  ``pip install memory-kit-mcp[doc-readers]``.
+- ``ValueError`` with a ``fall back to native LLM reading`` hint — file was
+  parsed but yielded no usable text (e.g. scanned PDF without OCR). The
+  LLM client should reattempt via its own vision/document-reading capability.
 """
 
 from __future__ import annotations
@@ -17,10 +27,29 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from memory_kit_mcp.config import get_config
+from memory_kit_mcp.readers import read_document
 from memory_kit_mcp.tools._ingestion import slugify_title, standard_frontmatter, write_atom
 from memory_kit_mcp.tools._models import IngestionResult
 
 _NATIVE_TEXT_EXTS = {".md", ".markdown", ".txt", ".text"}
+
+
+def _read_native_text(src: Path) -> str:
+    try:
+        return src.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"Cannot read {src} as UTF-8: {e}") from e
+
+
+def _read_via_dispatcher(src: Path) -> tuple[str, list[str]]:
+    content, warnings = read_document(src)
+    if not content:
+        warning_tail = f" Warnings: {'; '.join(warnings)}" if warnings else ""
+        raise ValueError(
+            f"Reader for {src.suffix!r} parsed {src} but yielded no usable text. "
+            f"Fall back to native LLM reading.{warning_tail}"
+        )
+    return content, warnings
 
 
 def register(mcp: FastMCP) -> None:
@@ -38,9 +67,9 @@ def register(mcp: FastMCP) -> None:
     ) -> IngestionResult:
         """Ingest a local document as a single-shot vault archive.
 
-        POC supports native text (.md, .markdown, .txt, .text) only. PDF, DOCX,
-        PPTX, XLSX, CSV, HTML require the doc-readers from scripts/doc-readers/
-        which will be integrated in v0.8.x.
+        Native text (.md, .markdown, .txt, .text) is read directly. Other
+        supported formats (.pdf, .docx, .pptx, .xlsx, .csv, .html, .htm) go
+        through the readers package (requires the ``[doc-readers]`` extra).
         """
         src = Path(path).expanduser()
         if not src.exists():
@@ -49,17 +78,11 @@ def register(mcp: FastMCP) -> None:
             raise IsADirectoryError(f"Not a file: {src}")
 
         suffix = src.suffix.lower()
-        if suffix not in _NATIVE_TEXT_EXTS:
-            raise NotImplementedError(
-                f"Unsupported format {suffix!r}. POC v0.8.0 supports "
-                f"{sorted(_NATIVE_TEXT_EXTS)} natively. For PDF/DOCX/PPTX/XLSX/CSV/HTML, "
-                "fall back to the skills procedure (uses scripts/doc-readers/ via uv run)."
-            )
-
-        try:
-            content = src.read_text(encoding="utf-8")
-        except UnicodeDecodeError as e:
-            raise ValueError(f"Cannot read {src} as UTF-8: {e}") from e
+        warnings: list[str] = []
+        if suffix in _NATIVE_TEXT_EXTS:
+            content = _read_native_text(src)
+        else:
+            content, warnings = _read_via_dispatcher(src)
 
         config = get_config()
         timestamp = datetime.now().strftime("%Y-%m-%d-%Hh%M")
@@ -83,6 +106,9 @@ def register(mcp: FastMCP) -> None:
         body = f"# {title_resolved}\n\n_(ingested from `{src}`)_\n\n{content}\n"
         target = config.vault / "00-inbox" / f"{slug}.md"
         actual = write_atom(target, fm, body)
+        warnings_md = ""
+        if warnings:
+            warnings_md = "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
         return IngestionResult(
             skill="mem_doc",
             success=True,
@@ -91,6 +117,6 @@ def register(mcp: FastMCP) -> None:
             target_zone="00-inbox",
             summary_md=(
                 f"**mem_doc** — ingested `{src.name}` to `00-inbox/{actual.name}` "
-                f"({len(content)} chars).\n"
+                f"({len(content)} chars).{warnings_md}\n"
             ),
         )
