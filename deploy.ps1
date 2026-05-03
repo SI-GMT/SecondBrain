@@ -39,7 +39,8 @@ param(
     [string]$Language = '',
     [switch]$Force,
     [switch]$SkipObsidianStyle,
-    [switch]$ForceObsidianStyle
+    [switch]$ForceObsidianStyle,
+    [switch]$SkipMcpServer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -308,6 +309,43 @@ function Resolve-IncludeDirectives {
 }
 
 # ============================================================
+# Composition MCP-first : prepend du bloc _mcp-first.md (v0.8.0)
+# ============================================================
+# Pattern : chaque procedure resolue par deploy.ps1 gagne automatiquement
+# un bloc d'introduction qui dit au LLM "si l'outil mcp__memory-kit__mem_X
+# est disponible, l'invoquer ; sinon executer la procedure ci-dessous".
+# Le {{TOOL_NAME}} dans le bloc est substitue par le nom MCP correspondant
+# au skill (ex: mem-recall -> mem_recall).
+
+function Get-McpToolName {
+    param([Parameter(Mandatory=$true)][string]$SkillName)
+    # Convention : kebab-case dans les skills (mem-recall) ↔ snake_case dans
+    # les outils MCP (mem_recall). Cf. doc d'archi v0.8.0 §5.
+    return $SkillName -replace '-', '_'
+}
+
+function Add-McpFirstBlock {
+    param(
+        [Parameter(Mandatory=$true)][string]$ProcedureContent,
+        [Parameter(Mandatory=$true)][string]$SkillName,
+        [Parameter(Mandatory=$true)][string]$BlocsRoot
+    )
+    $blockPath = Join-Path $BlocsRoot '_mcp-first.md'
+    if (-not (Test-Path $blockPath)) {
+        # Si le bloc n'existe pas (cas core/ sans v0.8.0), retourner inchange.
+        return $ProcedureContent
+    }
+    $block = Get-Content -Path $blockPath -Raw
+    # Resolution des sous-includes du bloc (au cas ou).
+    $block = Resolve-IncludeDirectives -Content $block -BlocsRoot $BlocsRoot
+    # Substitution du nom de l'outil MCP correspondant.
+    $toolName = Get-McpToolName -SkillName $SkillName
+    $block = $block -replace '\{\{TOOL_NAME\}\}', $toolName
+    # Prepend : le bloc s'inserre au-dessus de la procedure complete.
+    return $block + $ProcedureContent
+}
+
+# ============================================================
 # Detection des CLI IA
 # ============================================================
 
@@ -471,7 +509,13 @@ function Deploy-ClaudeCode {
         $procedureContent = Get-Content -Path $procedurePath -Raw
         $procedureContent = Resolve-IncludeDirectives -Content $procedureContent -BlocsRoot $coreSource
         $procedureContent = $procedureContent -replace '\{\{CONFIG_FILE\}\}', $configFileRef
-        $assembled = $templateContent -replace '\{\{PROCEDURE\}\}', $procedureContent
+        $procedureContent = Add-McpFirstBlock -ProcedureContent $procedureContent -SkillName $skillName -BlocsRoot $coreSource
+        # .Replace() = literal string replace (pas regex). PowerShell -replace
+        # interprete les sequences $1, $2, $&, $' du contenu de remplacement
+        # comme des references regex — or les procedures contiennent du shell
+        # avec '$' (ex: regex grep '...yml)$' qui declenche le bug ou $' est
+        # remplace par "texte apres le match" → doublon en milieu de fichier).
+        $assembled = $templateContent.Replace('{{PROCEDURE}}', $procedureContent)
         Set-Content -Path (Join-Path $skillsTarget "$skillName.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
         Write-Ok "Skill   : $skillName.md"
     }
@@ -616,7 +660,13 @@ function Deploy-GeminiCli {
         $procedureContent = Get-Content -Path $procedurePath -Raw
         $procedureContent = Resolve-IncludeDirectives -Content $procedureContent -BlocsRoot $coreSource
         $procedureContent = $procedureContent -replace '\{\{CONFIG_FILE\}\}', $configFileRef
-        $assembled = $templateContent -replace '\{\{PROCEDURE\}\}', $procedureContent
+        $procedureContent = Add-McpFirstBlock -ProcedureContent $procedureContent -SkillName $commandName -BlocsRoot $coreSource
+        # .Replace() = literal string replace (pas regex). PowerShell -replace
+        # interprete les sequences $1, $2, $&, $' du contenu de remplacement
+        # comme des references regex — or les procedures contiennent du shell
+        # avec '$' (ex: regex grep '...yml)$' qui declenche le bug ou $' est
+        # remplace par "texte apres le match" → doublon en milieu de fichier).
+        $assembled = $templateContent.Replace('{{PROCEDURE}}', $procedureContent)
         Set-Content -Path (Join-Path $cmdDir "$commandName.toml") -Value $assembled -Encoding utf8NoBOM -NoNewline
         Write-Ok "Command : $commandName.toml"
     }
@@ -699,7 +749,8 @@ function Deploy-Codex {
             $proc = Get-Content -Path $procPath -Raw
             $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
-            $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
+            $proc = Add-McpFirstBlock -ProcedureContent $proc -SkillName $name -BlocsRoot $coreSource
+            $assembled = $tpl.Replace('{{PROCEDURE}}', $proc)
             Set-Content -Path (Join-Path $promptsTarget "$name.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
             Write-Ok "Prompt  : $name.md"
         }
@@ -724,7 +775,8 @@ function Deploy-Codex {
             $proc = Get-Content -Path $procPath -Raw
             $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
-            $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
+            $proc = Add-McpFirstBlock -ProcedureContent $proc -SkillName $name -BlocsRoot $coreSource
+            $assembled = $tpl.Replace('{{PROCEDURE}}', $proc)
             $destDir = Join-Path $skillsTarget $name
             if (-not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
@@ -827,7 +879,8 @@ function Deploy-MistralVibe {
             $proc = Get-Content -Path $procPath -Raw
             $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
-            $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
+            $proc = Add-McpFirstBlock -ProcedureContent $proc -SkillName $name -BlocsRoot $coreSource
+            $assembled = $tpl.Replace('{{PROCEDURE}}', $proc)
             $destDir = Join-Path $skillsTarget $name
             if (-not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
@@ -896,7 +949,8 @@ function Deploy-CopilotCli {
             $proc = Get-Content -Path $procPath -Raw
             $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
             $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $configFileRef
-            $assembled = $tpl -replace '\{\{PROCEDURE\}\}', $proc
+            $proc = Add-McpFirstBlock -ProcedureContent $proc -SkillName $name -BlocsRoot $coreSource
+            $assembled = $tpl.Replace('{{PROCEDURE}}', $proc)
             $destDir = Join-Path $skillsTarget $name
             if (-not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
@@ -931,6 +985,337 @@ function Deploy-CopilotCli {
     Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
 
     return $true
+}
+
+# ============================================================
+# Deploy-McpServer (v0.8.0) — install pipx + sync configs MCP
+# ============================================================
+# Installe le serveur Python memory-kit-mcp via pipx (fallback pip --user),
+# ecrit ~/.memory-kit/config.json, et inject la declaration MCP dans les
+# configs des CLI compatibles (Claude Code, Codex, Copilot CLI).
+#
+# Mistral Vibe et Gemini CLI ne supportent pas MCP a ce jour : skips
+# silencieux.
+
+function Test-PipxAvailable {
+    return $null -ne (Get-Command pipx -ErrorAction SilentlyContinue)
+}
+
+function Install-McpServerPackage {
+    param(
+        [Parameter(Mandatory=$true)][string]$KitRoot
+    )
+    $mcpServerDir = Join-Path $KitRoot 'mcp-server'
+    if (-not (Test-Path $mcpServerDir)) {
+        Write-Skip "mcp-server/ absent du kit (skip silencieux)"
+        return $false
+    }
+
+    # Si binaire deja sur PATH, on tolere un echec d'upgrade (WinError 32 :
+    # binaire utilise par une session CLI active qui a charge le serveur MCP).
+    $alreadyInstalled = $null -ne (Get-Command memory-kit-mcp -ErrorAction SilentlyContinue)
+
+    if (Test-PipxAvailable) {
+        Write-Step "Install/upgrade memory-kit-mcp via pipx..."
+        $pipxOutput = & pipx install --force $mcpServerDir 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "memory-kit-mcp installe via pipx"
+            return $true
+        }
+        # WinError 32 = fichier utilise (CLI active a charge le serveur).
+        # Si binaire deja installe, on accepte : la version precedente reste OK.
+        if ($alreadyInstalled -and ($pipxOutput -match 'WinError 32|cannot access|in use|deleteme')) {
+            Write-Skip "memory-kit-mcp deja installe — upgrade differe (binaire utilise par une CLI active)"
+            Write-Info "Pour forcer l'upgrade : ferme toutes les sessions Claude Code/Codex/Copilot puis relance."
+            return $true
+        }
+        Write-Warn2 "pipx install a echoue (exit $LASTEXITCODE)."
+        if ($alreadyInstalled) {
+            Write-Info "Binaire memory-kit-mcp deja sur PATH — utilisation de la version existante."
+            return $true
+        }
+        Write-Step "Tentative fallback pip --user..."
+    } else {
+        Write-Info "pipx non detecte. Recommande pour isoler le serveur : https://pipx.pypa.io"
+        if ($alreadyInstalled) {
+            Write-Skip "Binaire memory-kit-mcp deja sur PATH — pas d'install pip --user."
+            return $true
+        }
+        Write-Step "Tentative install via pip --user..."
+    }
+
+    $python = Get-Command python3 -ErrorAction SilentlyContinue
+    if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
+    if (-not $python) {
+        Write-Warn2 "python introuvable. Install MCP server skip."
+        return $alreadyInstalled
+    }
+    & $python.Source -m pip install --user --upgrade $mcpServerDir 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "memory-kit-mcp installe via pip --user"
+        return $true
+    }
+    Write-Warn2 "pip install a echoue (exit $LASTEXITCODE)."
+    return $alreadyInstalled
+}
+
+function Write-McpServerConfig {
+    param(
+        [Parameter(Mandatory=$true)][string]$VaultPath,
+        [Parameter(Mandatory=$true)][string]$KitRepo,
+        [Parameter(Mandatory=$true)][string]$Language
+    )
+    # Cf. doc d'archi v0.8.0 §8 : ~/.memory-kit/config.json est la source de
+    # verite cote MCP server (override via $MEMORY_KIT_HOME).
+    $mcpHome = if ($env:MEMORY_KIT_HOME) { $env:MEMORY_KIT_HOME } else { Join-Path $HOME '.memory-kit' }
+    if (-not (Test-Path $mcpHome)) {
+        New-Item -ItemType Directory -Path $mcpHome -Force | Out-Null
+    }
+    $configPath = Join-Path $mcpHome 'config.json'
+    Write-MemoryKitJson -Path $configPath -Vault $VaultPath -KitRepo $KitRepo -Language $Language -Force
+}
+
+function Add-McpServerToJsonConfig {
+    param(
+        [Parameter(Mandatory=$true)][string]$ConfigPath,
+        [Parameter(Mandatory=$true)][string]$ServerName,
+        [Parameter(Mandatory=$true)][string]$Command,
+        [string]$Label = '',
+        [string[]]$LegacyServerNames = @()  # noms a supprimer (migration rename)
+    )
+    # Pattern commun Claude Code / Copilot CLI : { "mcpServers": { "{name}":
+    # { "command": ..., "args": [] } } }. Idempotent : preserve le reste.
+    $existing = $null
+    if (Test-Path $ConfigPath) {
+        try {
+            $existing = Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable
+        } catch {
+            Write-Warn2 "$ConfigPath illisible ($_). Inject MCP skip."
+            return
+        }
+    } else {
+        $existing = [ordered]@{}
+        # Cree le parent si necessaire
+        $parent = Split-Path -Parent $ConfigPath
+        if ($parent -and -not (Test-Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+    }
+
+    if (-not $existing.Contains('mcpServers')) {
+        $existing['mcpServers'] = [ordered]@{}
+    }
+    $servers = $existing['mcpServers']
+
+    # Cleanup legacy : retire les noms obsoletes (migration rename, ex
+    # 'memory-kit' -> 'secondbrain-memory-kit'). Idempotent.
+    $labelTagPre = if ($Label) { " ($Label)" } else { '' }
+    foreach ($legacy in $LegacyServerNames) {
+        if ($legacy -ne $ServerName -and $servers.Contains($legacy)) {
+            $servers.Remove($legacy)
+            Write-Ok "$ConfigPath$labelTagPre : mcpServers.$legacy supprime (legacy)"
+        }
+    }
+
+    $newServer = [ordered]@{
+        command = $Command
+        args    = @()
+    }
+
+    $labelTag = if ($Label) { " ($Label)" } else { '' }
+
+    if ($servers.Contains($ServerName)) {
+        # Compare command : si different, update et signale
+        $current = $servers[$ServerName]
+        if ($current.command -ne $Command) {
+            $servers[$ServerName] = $newServer
+            $json = $existing | ConvertTo-Json -Depth 100
+            Set-Content -Path $ConfigPath -Value $json -Encoding utf8NoBOM -NoNewline
+            Write-Ok "$ConfigPath$labelTag : mcpServers.$ServerName mis a jour"
+        } else {
+            Write-Skip "$ConfigPath$labelTag : mcpServers.$ServerName deja present"
+        }
+        return
+    }
+
+    $servers[$ServerName] = $newServer
+    $json = $existing | ConvertTo-Json -Depth 100
+    Set-Content -Path $ConfigPath -Value $json -Encoding utf8NoBOM -NoNewline
+    Write-Ok "$ConfigPath$labelTag : mcpServers.$ServerName ajoute"
+}
+
+function Add-McpServerToTomlConfig {
+    param(
+        [Parameter(Mandatory=$true)][string]$ConfigPath,
+        [Parameter(Mandatory=$true)][string]$SectionName,
+        [Parameter(Mandatory=$true)][string]$Command,
+        [string]$Label = ''
+    )
+    # Codex : ~/.codex/config.toml. Pas de parser TOML natif PowerShell, on
+    # gere via markers idempotents <!-- MEMORY-KIT:START --> / END dans des
+    # commentaires TOML #.
+    $startMarker = '# MEMORY-KIT:START'
+    $endMarker   = '# MEMORY-KIT:END'
+    $block = @"
+$startMarker
+[mcp_servers.$SectionName]
+command = "$Command"
+args = []
+$endMarker
+"@
+
+    $labelTag = if ($Label) { " ($Label)" } else { '' }
+
+    if (-not (Test-Path $ConfigPath)) {
+        $parent = Split-Path -Parent $ConfigPath
+        if ($parent -and -not (Test-Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+        Set-Content -Path $ConfigPath -Value $block -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath$labelTag : section [mcp_servers.$SectionName] cree (nouveau fichier)"
+        return
+    }
+
+    $existing = (Get-Content -Path $ConfigPath -Raw) ?? ''
+    $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
+    if ($existing -match $pattern) {
+        # Utiliser un MatchEvaluator pour passer $block litteralement (sinon les
+        # groupes $1, $2 du replacement seraient interpretes par regex).
+        $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{ param($m) return $block }
+        $newContent = [regex]::Replace($existing, $pattern, $evaluator)
+        # Compare avant/apres : si pas de changement reel, skip
+        if ($newContent -eq $existing) {
+            Write-Skip "$ConfigPath$labelTag : section MEMORY-KIT deja a jour"
+            return
+        }
+        Set-Content -Path $ConfigPath -Value $newContent -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath$labelTag : section MEMORY-KIT mise a jour"
+    } else {
+        $separator = if ($existing.TrimEnd().Length -gt 0) { "`n`n" } else { '' }
+        $merged = $existing.TrimEnd() + $separator + $block + "`n"
+        Set-Content -Path $ConfigPath -Value $merged -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath$labelTag : section MEMORY-KIT injectee"
+    }
+}
+
+function Add-McpServerToVibeTomlConfig {
+    param(
+        [Parameter(Mandatory=$true)][string]$ConfigPath,
+        [Parameter(Mandatory=$true)][string]$ServerName,
+        [Parameter(Mandatory=$true)][string]$Command,
+        [string]$Label = ''
+    )
+    # Vibe utilise le format TOML "table d'arrays" [[mcp_servers]] (different
+    # de Codex qui utilise [mcp_servers.X]). Inspire de mcp-iris-connector qui
+    # configure son serveur via ce meme fichier ~/.vibe/config.toml.
+    $startMarker = '# MEMORY-KIT:START'
+    $endMarker   = '# MEMORY-KIT:END'
+    $block = @"
+$startMarker
+[[mcp_servers]]
+name = "$ServerName"
+transport = "stdio"
+command = "$Command"
+args = []
+$endMarker
+"@
+
+    $labelTag = if ($Label) { " ($Label)" } else { '' }
+
+    if (-not (Test-Path $ConfigPath)) {
+        $parent = Split-Path -Parent $ConfigPath
+        if ($parent -and -not (Test-Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+        Set-Content -Path $ConfigPath -Value $block -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath$labelTag : entry [[mcp_servers]] cree (nouveau fichier)"
+        return
+    }
+
+    $existing = (Get-Content -Path $ConfigPath -Raw) ?? ''
+    $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
+    if ($existing -match $pattern) {
+        $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{ param($m) return $block }
+        $newContent = [regex]::Replace($existing, $pattern, $evaluator)
+        if ($newContent -eq $existing) {
+            Write-Skip "$ConfigPath$labelTag : section MEMORY-KIT deja a jour"
+            return
+        }
+        Set-Content -Path $ConfigPath -Value $newContent -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath$labelTag : section MEMORY-KIT mise a jour"
+    } else {
+        $separator = if ($existing.TrimEnd().Length -gt 0) { "`n`n" } else { '' }
+        $merged = $existing.TrimEnd() + $separator + $block + "`n"
+        Set-Content -Path $ConfigPath -Value $merged -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath$labelTag : entry [[mcp_servers]] injectee"
+    }
+}
+
+function Deploy-McpServer {
+    param(
+        [Parameter(Mandatory=$true)][string]$KitRoot,
+        [Parameter(Mandatory=$true)][string]$VaultPath,
+        [Parameter(Mandatory=$true)][hashtable]$DetectedConfigs
+    )
+    Write-Host ''
+    Write-Step "> Deploiement : MCP server secondbrain-memory-kit (v0.8.0)"
+
+    $installed = Install-McpServerPackage -KitRoot $KitRoot
+    if (-not $installed) {
+        Write-Warn2 "MCP server non installe. Les CLI restent en mode skills (fallback)."
+        return
+    }
+
+    # Verifie que le binaire est sur le PATH (pipx ne l'ajoute pas toujours sans 'pipx ensurepath')
+    if (-not (Get-Command memory-kit-mcp -ErrorAction SilentlyContinue)) {
+        Write-Warn2 "Binaire 'memory-kit-mcp' non trouve sur PATH apres install."
+        Write-Info "Lance 'pipx ensurepath' (puis ouvre un nouveau terminal) ou ajoute le scripts dir Python au PATH."
+    }
+
+    Write-McpServerConfig -VaultPath $VaultPath -KitRepo $KitRoot -Language $script:Language
+
+    # Inject MCP server dans les configs CLI compatibles
+    if ($DetectedConfigs.ContainsKey('Claude')) {
+        $claudeConfig = Join-Path $HOME '.claude.json'
+        Add-McpServerToJsonConfig -ConfigPath $claudeConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Claude Code'
+    }
+    if ($DetectedConfigs.ContainsKey('Codex')) {
+        $codexConfig = Join-Path $DetectedConfigs['Codex'] 'config.toml'
+        Add-McpServerToTomlConfig -ConfigPath $codexConfig -SectionName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -Label 'Codex'
+    }
+    if ($DetectedConfigs.ContainsKey('Copilot')) {
+        $copilotMcpConfig = Join-Path $DetectedConfigs['Copilot'] 'mcp-config.json'
+        Add-McpServerToJsonConfig -ConfigPath $copilotMcpConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Copilot CLI'
+    }
+    if ($DetectedConfigs.ContainsKey('Vibe')) {
+        # Mistral Vibe supporte MCP via ~/.vibe/config.toml (format
+        # [[mcp_servers]] table d'arrays). Pattern verifie en lisant le
+        # config existant de mcp-iris-connector qui s'y installe deja.
+        $vibeConfig = Join-Path $DetectedConfigs['Vibe'] 'config.toml'
+        Add-McpServerToVibeTomlConfig -ConfigPath $vibeConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -Label 'Mistral Vibe'
+    }
+
+    if ($DetectedConfigs.ContainsKey('Gemini')) {
+        # Gemini CLI lit ses serveurs MCP depuis ~/.gemini/settings.json
+        # section mcpServers.{name}.command/args (meme format que Claude Code,
+        # Copilot CLI, Claude Desktop). Champs extras 'trust' et 'description'
+        # acceptes mais non injectes (l'utilisateur peut les ajouter manuellement).
+        $geminiSettings = Join-Path $DetectedConfigs['Gemini'] 'settings.json'
+        Add-McpServerToJsonConfig -ConfigPath $geminiSettings -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Gemini CLI'
+    }
+
+    # Cibles desktop : detection independante des CLI command-line. Leur config
+    # MCP est lue par les apps desktop, pas par les binaires CLI.
+    $claudeDesktopConfig = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'
+    $claudeDesktopDir = Split-Path -Parent $claudeDesktopConfig
+    if (Test-Path $claudeDesktopDir) {
+        Add-McpServerToJsonConfig -ConfigPath $claudeDesktopConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Claude Desktop'
+    } else {
+        Write-Skip "Claude Desktop non detecte ($claudeDesktopDir absent)"
+    }
+
+    # Codex Desktop : chemin a investiguer (pas detecte sur ce poste, attente
+    # info utilisateur sur le bon emplacement).
 }
 
 # ============================================================
@@ -1146,6 +1531,14 @@ if (-not $SkipObsidianStyle) {
 }
 
 # ============================================================
+# 6.6. Deploy-McpServer (v0.8.0, opt-out via -SkipMcpServer)
+# ============================================================
+
+if (-not $SkipMcpServer) {
+    Deploy-McpServer -KitRoot $kitRoot -VaultPath $VaultPath -DetectedConfigs $configMap
+}
+
+# ============================================================
 # 7. Resume final
 # ============================================================
 
@@ -1166,7 +1559,7 @@ if ($deployed.Count -gt 0) {
             'Claude Code'        { Write-Host "  [Claude Code]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
             'Gemini CLI'         { Write-Host "  [Gemini CLI]         /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
             'Codex (OpenAI)'     { Write-Host "  [Codex]              /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
-            'Mistral Vibe'       { Write-Host "  [Mistral Vibe]       dis 'charge mon contexte memoire' (Vibe n'expose pas de slash commands)" -ForegroundColor Cyan }
+            'Mistral Vibe'       { Write-Host "  [Mistral Vibe]       dis 'charge mon contexte memoire' (Vibe expose le MCP secondbrain-memory-kit + skills mais pas de slash commands)" -ForegroundColor Cyan }
             'GitHub Copilot CLI' { Write-Host "  [Copilot CLI]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
         }
     }
