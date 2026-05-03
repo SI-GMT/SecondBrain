@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from memory_kit_mcp.tools import (
+    archeo,
     archive,
     digest,
     doc,
@@ -59,4 +60,5 @@ def register_all(mcp: FastMCP) -> None:
     person.register(mcp)
     ingest.register(mcp)
     doc.register(mcp)
-    # Archeo will be registered here in chunk 10.
+    # Archeo (5 stubs in v0.8.0 — full implementation deferred)
+    archeo.register(mcp)
