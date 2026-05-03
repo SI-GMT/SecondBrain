@@ -2,10 +2,11 @@
 
 Spec: core/procedures/mem-health-repair.md
 
-POC: only the 'missing-display' category is auto-fixable in this implementation.
-Other categories require human review (orphan-atom needs the operator to decide
-which project to attach to; malformed-frontmatter needs manual rewrite; empty-md
-might be intentional).
+POC: only the 'missing-display' category is auto-fixed in this implementation.
+Other auto-fixable categories (stray-zone-md, empty-md-at-root,
+missing-zone-index) require destructive ops (delete or scaffold) and need
+explicit opt-in beyond this POC. orphan-atoms / malformed-frontmatter /
+dangling-wikilinks / missing-archeo-hashes need human review.
 
 Dry-run by default. Pass apply=True to write.
 """
@@ -19,11 +20,11 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from memory_kit_mcp.config import get_config
+from memory_kit_mcp.health.scan import scan_vault
 from memory_kit_mcp.tools._models import HealthRepairResult
-from memory_kit_mcp.tools.health_scan import _scan_file
 from memory_kit_mcp.vault import frontmatter
 
-_AUTO_FIXABLE = {"missing-display"}
+_AUTO_FIXABLE_CATEGORIES = {"missing-display"}
 
 
 def _derive_display(rel: Path, fm: dict[str, Any]) -> str:
@@ -36,7 +37,7 @@ def _derive_display(rel: Path, fm: dict[str, Any]) -> str:
         return f"{slug} — history"
     if kind == "archive":
         return f"{slug} — {rel.stem}"
-    if kind == "topology" or kind == "repo-topology":
+    if kind in ("topology", "repo-topology"):
         return f"{slug} — topology"
     return str(slug)
 
@@ -71,21 +72,16 @@ def register(mcp: FastMCP) -> None:
 
         POC: only 'missing-display' is auto-fixed (derives display from kind+slug
         per the universal frontmatter convention). Other categories require
-        manual review.
+        manual review or explicit opt-in for destructive ops.
 
         Dry-run by default — pass apply=True to write.
         """
         config = get_config()
         vault = config.vault
 
-        all_findings = []
-        for md in vault.rglob("*.md"):
-            try:
-                all_findings.extend(_scan_file(vault, md))
-            except (OSError, UnicodeDecodeError):
-                continue
+        all_findings, _errors, _files_scanned = scan_vault(vault)
 
-        fixable = [f for f in all_findings if f.category in _AUTO_FIXABLE]
+        fixable = [f for f in all_findings if f.category in _AUTO_FIXABLE_CATEGORIES]
         applied = 0
         skipped = 0
         modified: list[str] = []
@@ -98,9 +94,10 @@ def register(mcp: FastMCP) -> None:
                     modified.append(str(vault / path))
                 else:
                     skipped += 1
-        # Recount remaining findings
+
+        # Remaining = non-fixable findings + (fixable that weren't applied)
         remaining = (
-            len([f for f in all_findings if f.category not in _AUTO_FIXABLE])
+            len([f for f in all_findings if f.category not in _AUTO_FIXABLE_CATEGORIES])
             + (len(fixable) - applied if apply else len(fixable))
         )
 
@@ -112,7 +109,7 @@ def register(mcp: FastMCP) -> None:
         if not apply and fixable:
             summary_lines.append("Re-invoke with `apply=True` to write changes.\n")
         if not fixable:
-            summary_lines.append("✅ No auto-fixable findings.\n")
+            summary_lines.append("No auto-fixable findings.\n")
         summary_lines.append(f"_Remaining (non-auto-fixable): {remaining}_")
 
         return HealthRepairResult(

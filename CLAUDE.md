@@ -62,6 +62,15 @@ Le kit fournit deux scripts de déploiement jumeaux : `deploy.ps1` (PowerShell, 
 
 Limitation connue de `deploy.sh` sous Git Bash Windows : les heredocs Python utilisent `python` natif Windows qui ne traduit pas les chemins MSYS (`/tmp/...` côté shell vs `C:\...` côté Python). Pas un blocker en production : la cible primaire de `deploy.sh` est macOS/Linux où shell et Python partagent la même vision filesystem.
 
+## Discipline de cohérence `scripts/mem-health-scan.py` ↔ `memory_kit_mcp.health.scan`
+
+L'audit hygiène 8-catégories existe en deux endroits par construction :
+
+- **`mcp-server/src/memory_kit_mcp/health/scan.py`** — bibliothèque Python importable, source de vérité côté serveur MCP. Utilisée par `tools/health_scan.py` et `tools/health_repair.py`.
+- **`scripts/mem-health-scan.py`** — script versionné autonome (doctrine `_when-to-script.md`), utilisable sans `pip install memory-kit-mcp`. Maintient sa propre copie de la logique pour préserver l'usage standalone (utilisateurs en mode skills sans MCP server installé).
+
+Tout ajout ou modification de catégorie / heuristique doit être co-commité dans les deux endroits. Les noms de catégories canoniques sont alignés (`malformed-frontmatter | stray-zone-md | empty-md-at-root | missing-zone-index | missing-display | dangling-wikilinks | orphan-atoms | missing-archeo-hashes`). En cas de drift détecté, le script versionné est la source canonique des règles, la lib MCP doit s'aligner.
+
 ## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, etc.)
 
 Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, puis étendre **les deux scripts de déploiement** (`deploy.ps1` et `deploy.sh`) pour détecter l'installation de la plateforme et y déployer. **Ne jamais modifier `core/`** pour accommoder une plateforme — `core/` reste neutre.
