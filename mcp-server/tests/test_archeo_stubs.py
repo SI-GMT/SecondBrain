@@ -14,8 +14,16 @@ ARCHEO_TOOLS = [
     "mem_archeo_atlassian",
 ]
 
+# Tools still in stub mode (raise NotImplementedError). Updated as ports land.
+STILL_STUB_TOOLS = [
+    "mem_archeo",
+    "mem_archeo_context",
+    "mem_archeo_git",
+    "mem_archeo_atlassian",
+]
 
-@pytest.mark.parametrize("tool_name", ARCHEO_TOOLS)
+
+@pytest.mark.parametrize("tool_name", STILL_STUB_TOOLS)
 async def test_archeo_stub_raises_with_fallback_message(
     client: Client, tool_name: str
 ) -> None:

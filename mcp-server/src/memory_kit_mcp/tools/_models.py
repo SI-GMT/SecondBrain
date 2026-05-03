@@ -191,3 +191,31 @@ class IngestionResult(BaseModel):
     files_created: list[str] = Field(default_factory=list)
     target_zone: str
     summary_md: str
+
+
+# ---------- Archeo (v0.8.x progressive port) ----------
+
+
+class LayerResolution(BaseModel):
+    """One resolved layer for mem_archeo_stack (Phase 2)."""
+
+    layer: str  # frontend | backend | db | ci | infra | tests | tooling | other
+    source_manifest: str  # repo-relative path of the main manifest
+    technos: list[str] = Field(default_factory=list)
+    summary_md: str  # ready-to-render body for the layer atom
+
+
+class ArcheoStackResult(BaseModel):
+    """Result of mem_archeo_stack — Phase 2 stack resolution."""
+
+    project: str
+    repo_path: str
+    layers_resolved: int
+    atoms_created: int
+    atoms_revised: int
+    atoms_skipped: int
+    layers: list[LayerResolution] = Field(default_factory=list)
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    summary_md: str

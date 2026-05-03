@@ -12,6 +12,10 @@ from fastmcp import FastMCP
 
 from memory_kit_mcp.tools import (
     archeo,
+    archeo_atlassian,
+    archeo_context,
+    archeo_git,
+    archeo_stack,
     archive,
     digest,
     doc,
@@ -60,5 +64,11 @@ def register_all(mcp: FastMCP) -> None:
     person.register(mcp)
     ingest.register(mcp)
     doc.register(mcp)
-    # Archeo (5 stubs in v0.8.0 — full implementation deferred)
+    # Archeo (one module per tool — v0.8.x progressive port).
+    # mem_archeo_context stays as a skills-only stub by design (semantic LLM work).
+    # The other phases are being ported one by one onto topology_scanner.
     archeo.register(mcp)
+    archeo_context.register(mcp)
+    archeo_stack.register(mcp)
+    archeo_git.register(mcp)
+    archeo_atlassian.register(mcp)
