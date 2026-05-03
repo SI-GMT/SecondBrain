@@ -180,3 +180,14 @@ class HealthRepairResult(BaseModel):
     findings_remaining: int
     files_modified: list[str] = Field(default_factory=list)
     summary_md: str
+
+
+class IngestionResult(BaseModel):
+    """Result of an ingestion tool (mem_note, mem_principle, mem_goal, mem_person, mem_doc, mem)."""
+
+    skill: str
+    success: bool
+    atoms_created: int
+    files_created: list[str] = Field(default_factory=list)
+    target_zone: str
+    summary_md: str

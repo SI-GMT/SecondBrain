@@ -13,11 +13,17 @@ from fastmcp import FastMCP
 from memory_kit_mcp.tools import (
     archive,
     digest,
+    doc,
+    goal,
     health_repair,
     health_scan,
     historize,
+    ingest,
     list as list_tool,
     merge,
+    note,
+    person,
+    principle,
     promote_domain,
     recall,
     reclass,
@@ -46,4 +52,11 @@ def register_all(mcp: FastMCP) -> None:
     # Hygiene
     health_scan.register(mcp)
     health_repair.register(mcp)
-    # Ingestion + archeo will be registered here in chunks 9-10.
+    # Ingestion
+    note.register(mcp)
+    principle.register(mcp)
+    goal.register(mcp)
+    person.register(mcp)
+    ingest.register(mcp)
+    doc.register(mcp)
+    # Archeo will be registered here in chunk 10.
