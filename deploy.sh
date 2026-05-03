@@ -24,6 +24,12 @@
 
 set -euo pipefail
 
+# Force UTF-8 pour les heredocs Python : sans ca, Windows + Python 3.x
+# par defaut en cp1252 plante sur les caracteres comme '→' (UnicodeEncodeError).
+# No-op sur Linux/macOS deja en UTF-8.
+export PYTHONIOENCODING=utf-8
+export PYTHONUTF8=1
+
 # ============================================================
 # Parsing des arguments
 # ============================================================
@@ -33,6 +39,7 @@ LANGUAGE=""
 FORCE=false
 SKIP_OBSIDIAN_STYLE=false
 FORCE_OBSIDIAN_STYLE=false
+SKIP_MCP_SERVER=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,14 +63,19 @@ while [[ $# -gt 0 ]]; do
             FORCE_OBSIDIAN_STYLE=true
             shift
             ;;
+        --skip-mcp-server)
+            SKIP_MCP_SERVER=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style]"
+            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server]"
             echo ""
             echo "  --vault-path             Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
             echo "  --language               Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
             echo "  --force                  Ecrase memory-kit.json meme s'il existe deja"
             echo "  --skip-obsidian-style    Ne deploie pas les configs canoniques Obsidian (graph palette)"
             echo "  --force-obsidian-style   Force le deploy Obsidian style meme si Obsidian semble ouvert"
+            echo "  --skip-mcp-server        Ne deploie pas le serveur MCP Python (CLI restent en mode skills fallback)"
             exit 0
             ;;
         *)
@@ -84,27 +96,54 @@ _gray()     { printf '\033[0;90m  [--] %s\033[0m\n' "$1"; }
 _info()     { printf '\033[0;96m  [i]  %s\033[0m\n' "$1"; }
 
 # ============================================================
-# Assemblage d'une procedure core (resolution {{INCLUDE _bloc}} + {{CONFIG_FILE}})
+# Resolution Python 3 cross-platform
+# ============================================================
+# Sur Git Bash Windows, 'python3' peut rediriger vers le stub Microsoft Store
+# qui ne fait qu'afficher un message d'install. Sur macOS/Linux, 'python3' est
+# nominal. On detecte le cas et on shadow par une fonction shell qui delegue a
+# 'python' ou 'py -3' si disponibles. Aucun effet sur les OS ou python3 marche.
+
+if ! python3 -c 'import sys' >/dev/null 2>&1; then
+    if command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' >/dev/null 2>&1; then
+        python3() { command python "$@"; }
+        export -f python3
+    elif command -v py >/dev/null 2>&1 && py -3 -c 'import sys' >/dev/null 2>&1; then
+        python3() { command py -3 "$@"; }
+        export -f python3
+    fi
+fi
+
+# ============================================================
+# Assemblage d'une procedure core (resolution {{INCLUDE _bloc}} + {{CONFIG_FILE}}
+# + prepend MCP-first v0.8.0)
 # ============================================================
 # Une procedure peut inclure des blocs reutilisables (encoding, concurrence,
 # router, frontmatter-universel...) via {{INCLUDE _nom}}. Resolution recursive
 # avec profondeur max 5 pour eviter les cycles.
 #
-# Args  : <procedure_path> <core_root> <config_file_ref>
-# Stdout: contenu assemble (procedure + blocs inclus + CONFIG_FILE substitue)
+# Si skill_name est fourni (4e arg), le bloc core/procedures/_mcp-first.md est
+# prepend en tete avec {{TOOL_NAME}} substitue par la variante snake_case du
+# skill (mem-recall -> mem_recall). Indique au LLM d'invoquer l'outil MCP
+# correspondant si disponible, sinon d'executer la procedure ci-dessous.
+#
+# Args  : <procedure_path> <core_root> <config_file_ref> [skill_name]
+# Stdout: contenu assemble (procedure + blocs inclus + CONFIG_FILE substitue
+#         + prepend MCP-first si skill_name fourni)
 # Exit  : 1 si bloc introuvable ou cycle detecte.
 
 assemble_procedure() {
     local proc_path="$1"
     local core_root="$2"
     local config_file_ref="$3"
-    python3 - "$proc_path" "$core_root" "$config_file_ref" << 'PYEOF'
+    local skill_name="${4:-}"
+    python3 - "$proc_path" "$core_root" "$config_file_ref" "$skill_name" << 'PYEOF'
 import re, sys
 from pathlib import Path
 
 proc_path = Path(sys.argv[1])
 core_root = Path(sys.argv[2])
 config_file_ref = sys.argv[3]
+skill_name = sys.argv[4] if len(sys.argv) > 4 else ""
 
 INCLUDE_RE = re.compile(r'\{\{INCLUDE\s+(_\w+)\}\}')
 
@@ -124,6 +163,17 @@ def resolve(content, depth=0):
 content = proc_path.read_text(encoding='utf-8')
 content = resolve(content)
 content = content.replace('{{CONFIG_FILE}}', config_file_ref)
+
+# v0.8.0 : prepend du bloc _mcp-first.md si skill_name fourni et bloc present
+if skill_name:
+    mcp_block_path = core_root / "_mcp-first.md"
+    if mcp_block_path.exists():
+        block = resolve(mcp_block_path.read_text(encoding='utf-8'))
+        # Convention kebab->snake : mem-recall <-> mem_recall (cf. doc archi v0.8.0 §5).
+        tool_name = skill_name.replace('-', '_')
+        block = block.replace('{{TOOL_NAME}}', tool_name)
+        content = block + content
+
 sys.stdout.write(content)
 PYEOF
 }
@@ -293,10 +343,12 @@ declare -a EXISTING_VAULTS=()
 
 get_existing_vault_paths() {
     local claude_config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    local copilot_config="${COPILOT_HOME:-$HOME/.copilot}"
     local sources=(
         "Claude Code|$claude_config/memory-kit.json"
         "Gemini CLI|$HOME/.gemini/memory-kit.json"
         "Codex|$HOME/.codex/memory-kit.json"
+        "Copilot CLI|$copilot_config/memory-kit.json"
     )
 
     EXISTING_VAULTS=()
@@ -386,6 +438,13 @@ remove_deprecated_v04_files() {
                         count=$((count+1))
                     fi
                     ;;
+                copilot-cli)
+                    if [[ -d "$config/skills/$name" ]]; then
+                        rm -rf "$config/skills/$name"
+                        _green "Cleanup v0.4 : Copilot/skills/$name/ supprime"
+                        count=$((count+1))
+                    fi
+                    ;;
             esac
         done
     done
@@ -440,7 +499,7 @@ deploy_claude_code() {
             continue
         fi
         local procedure_content
-        procedure_content="$(assemble_procedure "$procedure_path" "$core_source" "$config_file_ref")" || {
+        procedure_content="$(assemble_procedure "$procedure_path" "$core_source" "$config_file_ref" "$skill_name")" || {
             _yellow "Echec assemblage procedure $skill_name (ignore)"
             continue
         }
@@ -513,13 +572,15 @@ else:
 
 # allow : patterns pour les operations vault des skills mem-*
 # Les procedures mem-rename-project, mem-merge-projects et mem-rollback-archive
-# appellent mv/rm. On autorise les patterns Bash correspondants.
+# appellent mv/rm cote shell, ou Rename-Item/Remove-Item/Move-Item via pwsh
+# (sur Windows ou cas hybrides Git Bash + pwsh). On autorise les deux familles.
 allow = perms.setdefault('allow', [])
 mem_patterns = [
-    'Bash(mv *)',
-    'Bash(rm *)',
     'Bash(mv:*)',
     'Bash(rm:*)',
+    'Bash(pwsh -Command Rename-Item:*)',
+    'Bash(pwsh -Command Remove-Item:*)',
+    'Bash(pwsh -Command Move-Item:*)',
 ]
 added_count = 0
 for pat in mem_patterns:
@@ -604,7 +665,7 @@ deploy_gemini_cli() {
             continue
         fi
         local procedure_content
-        procedure_content="$(assemble_procedure "$procedure_path" "$core_source" "$config_file_ref")" || {
+        procedure_content="$(assemble_procedure "$procedure_path" "$core_source" "$config_file_ref" "$command_name")" || {
             _yellow "Echec assemblage procedure $command_name (ignore)"
             continue
         }
@@ -693,7 +754,7 @@ deploy_codex() {
                 continue
             fi
             local proc
-            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref")" || {
+            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref" "$name")" || {
                 _yellow "Echec assemblage procedure $name (ignore)"
                 continue
             }
@@ -725,7 +786,7 @@ deploy_codex() {
             local tpl_content
             tpl_content="$(cat "$tpl_file")"
             local proc
-            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref")" || {
+            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref" "$name")" || {
                 _yellow "Echec assemblage procedure $name (ignore)"
                 continue
             }
@@ -841,7 +902,7 @@ ${block_content}"
             local tpl_content
             tpl_content="$(cat "$tpl_file")"
             local proc
-            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref")" || {
+            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref" "$name")" || {
                 _yellow "Echec assemblage procedure $name (ignore)"
                 continue
             }
@@ -854,6 +915,494 @@ ${block_content}"
     fi
 
     return 0
+}
+
+# ============================================================
+# Adapter : GitHub Copilot CLI (v0.7.5)
+# ============================================================
+# Surface confirmee :
+#   - skills/{nom}/SKILL.md format Anthropic (frontmatter name + description),
+#     auto-decouvert depuis ~/.copilot/skills/. Chaque skill expose nativement
+#     son slash command /{name}.
+#   - Instructions user-level dans ~/.copilot/copilot-instructions.md
+#     (equivalent CLAUDE.md / GEMINI.md / AGENTS.md cote user).
+#   - Pas de couche prompts/ separee comme Codex : le skill EST le slash command.
+#   - Override config dir via $COPILOT_HOME.
+
+deploy_copilot_cli() {
+    local kit_root="$1"
+    local config_dir="$2"
+    local vault_path="$3"
+
+    echo ""
+    _cyan "> Deploiement : GitHub Copilot CLI"
+
+    if [[ ! -d "$config_dir" ]]; then
+        _yellow "Dossier Copilot CLI introuvable ($config_dir). Lance 'copilot' au moins une fois."
+        return 1
+    fi
+
+    local adapter_dir="$kit_root/adapters/copilot-cli"
+    local core_source="$kit_root/core/procedures"
+
+    # --- Skills (format Anthropic : skills/{nom}/SKILL.md) ---
+    local skills_target="$config_dir/skills"
+    mkdir -p "$skills_target"
+    local skills_source="$adapter_dir/skills"
+    local config_file_ref='`~/.copilot/memory-kit.json` (ou `$COPILOT_HOME/memory-kit.json` si defini)'
+    if [[ -d "$skills_source" ]]; then
+        for skill_dir in "$skills_source"/*/; do
+            [[ -d "$skill_dir" ]] || continue
+            local name
+            name="$(basename "$skill_dir")"
+            local tpl_file="$skill_dir/SKILL.md.template"
+            if [[ ! -f "$tpl_file" ]]; then
+                _yellow "SKILL.md.template manquant pour $name (ignore)"
+                continue
+            fi
+            local proc_path="$core_source/$name.md"
+            if [[ ! -f "$proc_path" ]]; then
+                _yellow "Procedure core manquante pour skill $name (ignore)"
+                continue
+            fi
+            local tpl_content
+            tpl_content="$(cat "$tpl_file")"
+            local proc
+            proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref" "$name")" || {
+                _yellow "Echec assemblage procedure $name (ignore)"
+                continue
+            }
+            local assembled="${tpl_content//\{\{PROCEDURE\}\}/$proc}"
+            local dest_dir="$skills_target/$name"
+            mkdir -p "$dest_dir"
+            printf '%s' "$assembled" > "$dest_dir/SKILL.md"
+            _green "Skill   : $name/SKILL.md"
+        done
+    fi
+
+    # --- Bloc d'instructions dans ~/.copilot/copilot-instructions.md ---
+    # Note : Copilot CLI accepte aussi AGENTS.md repo-level, mais cote user
+    # c'est copilot-instructions.md qui est canonique.
+    local block_path="$adapter_dir/copilot-instructions-block.md"
+    if [[ ! -f "$block_path" ]]; then
+        _yellow "copilot-instructions-block.md manquant : $block_path"
+        return 1
+    fi
+    local block_content
+    block_content="$(cat "$block_path")"
+    block_content="${block_content//\{\{VAULT_PATH\}\}/$vault_path}"
+
+    local instructions_file="$config_dir/copilot-instructions.md"
+    local start_marker='<!-- MEMORY-KIT:START -->'
+    local end_marker='<!-- MEMORY-KIT:END -->'
+    local existing=""
+    if [[ -f "$instructions_file" ]]; then
+        existing="$(cat "$instructions_file")"
+    fi
+    local cleaned
+    cleaned="$(printf '%s' "$existing" | perl -0777 -pe "s/\Q${start_marker}\E[\s\S]*?\Q${end_marker}\E//g")"
+    cleaned="$(echo "$cleaned" | sed -e 's/[[:space:]]*$//')"
+    local final
+    if [[ -n "$cleaned" ]]; then
+        final="${cleaned}
+
+${block_content}"
+    else
+        final="$block_content"
+    fi
+    printf '%s' "$final" > "$instructions_file"
+    _green "copilot-instructions.md : bloc MEMORY-KIT injecte"
+
+    # --- memory-kit.json au niveau utilisateur ---
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
+
+    return 0
+}
+
+# ============================================================
+# Deploy-McpServer (v0.8.0) — install pipx + sync configs MCP
+# ============================================================
+# Installe le serveur Python memory-kit-mcp via pipx (fallback pip --user),
+# ecrit ~/.memory-kit/config.json, et inject la declaration MCP dans les
+# configs des CLI compatibles (Claude Code, Codex, Copilot CLI, Gemini CLI,
+# Mistral Vibe + Claude Desktop). Codex Desktop herite de Codex CLI (meme
+# fichier ~/.codex/config.toml).
+
+install_mcp_server_package() {
+    local kit_root="$1"
+    local mcp_server_dir="$kit_root/mcp-server"
+    if [[ ! -d "$mcp_server_dir" ]]; then
+        _gray "mcp-server/ absent du kit (skip silencieux)"
+        return 1
+    fi
+
+    local already_installed=false
+    if command -v memory-kit-mcp &>/dev/null; then
+        already_installed=true
+    fi
+
+    if command -v pipx &>/dev/null; then
+        _cyan "Install/upgrade memory-kit-mcp via pipx..."
+        local pipx_output
+        if pipx_output="$(pipx install --force "$mcp_server_dir" 2>&1)"; then
+            _green "memory-kit-mcp installe via pipx"
+            return 0
+        fi
+        # Tolerance : si binaire deja installe et echec lie a un fichier en
+        # cours d'utilisation (CLI active a charge le serveur via stdio), on
+        # accepte la version precedente.
+        if [[ "$already_installed" == "true" ]] && \
+           printf '%s' "$pipx_output" | grep -qiE "in use|cannot access|deleteme|text file busy|winerror 32"; then
+            _gray "memory-kit-mcp deja installe — upgrade differe (binaire utilise par une CLI active)"
+            _info "Pour forcer l'upgrade : ferme toutes les sessions Claude Code/Codex/Copilot/Vibe puis relance."
+            return 0
+        fi
+        _yellow "pipx install a echoue."
+        if [[ "$already_installed" == "true" ]]; then
+            _info "Binaire memory-kit-mcp deja sur PATH — utilisation de la version existante."
+            return 0
+        fi
+        _cyan "Tentative fallback pip --user..."
+    else
+        _info "pipx non detecte. Recommande pour isoler le serveur : https://pipx.pypa.io"
+        if [[ "$already_installed" == "true" ]]; then
+            _gray "Binaire memory-kit-mcp deja sur PATH — pas d'install pip --user."
+            return 0
+        fi
+        _cyan "Tentative install via pip --user..."
+    fi
+
+    local python_bin
+    if command -v python3 &>/dev/null; then
+        python_bin="python3"
+    elif command -v python &>/dev/null; then
+        python_bin="python"
+    else
+        _yellow "python introuvable. Install MCP server skip."
+        [[ "$already_installed" == "true" ]] && return 0 || return 1
+    fi
+
+    if "$python_bin" -m pip install --user --upgrade "$mcp_server_dir" >/dev/null 2>&1; then
+        _green "memory-kit-mcp installe via pip --user"
+        return 0
+    fi
+    _yellow "pip install a echoue."
+    [[ "$already_installed" == "true" ]] && return 0 || return 1
+}
+
+write_mcp_server_config() {
+    local vault_path="$1"
+    local kit_repo="$2"
+    local language="$3"
+    # Cf. doc d'archi v0.8.0 §8 : ~/.memory-kit/config.json est la source de
+    # verite cote MCP server (override via $MEMORY_KIT_HOME).
+    local mcp_home="${MEMORY_KIT_HOME:-$HOME/.memory-kit}"
+    mkdir -p "$mcp_home"
+    local config_path="$mcp_home/config.json"
+    # Force ecrasement : la config MCP server est centrale et doit refleter le
+    # vault courant. write_memory_kit_json gere le force via la variable globale
+    # FORCE — on la met temporairement a true.
+    local _saved_force="$FORCE"
+    FORCE=true
+    write_memory_kit_json "$config_path" "$vault_path" "$kit_repo" "work" "$language"
+    FORCE="$_saved_force"
+}
+
+# Injection idempotente d'une declaration MCP dans un fichier JSON au format
+# {"mcpServers": {"<name>": {"command": ..., "args": [...]}}} (Claude Code,
+# Copilot CLI, Claude Desktop, Gemini CLI). Cleanup des noms legacy fournis
+# (migration rename, ex 'memory-kit' -> 'secondbrain-memory-kit').
+#
+# Args : <config_path> <server_name> <command> <label> [legacy_name1 legacy_name2 ...]
+
+add_mcp_server_to_json_config() {
+    local config_path="$1"
+    local server_name="$2"
+    local command_name="$3"
+    local label="$4"
+    shift 4
+    local legacy_names=("$@")
+
+    if ! command -v python3 &>/dev/null; then
+        _yellow "python3 indisponible — injection MCP $server_name dans $config_path skipee"
+        return 1
+    fi
+
+    local label_tag=""
+    [[ -n "$label" ]] && label_tag=" ($label)"
+
+    local legacy_csv=""
+    if [[ ${#legacy_names[@]} -gt 0 ]]; then
+        legacy_csv="$(IFS=,; echo "${legacy_names[*]}")"
+    fi
+
+    local result
+    result="$(python3 - "$config_path" "$server_name" "$command_name" "$legacy_csv" << 'PYEOF'
+import json, os, sys
+from pathlib import Path
+from collections import OrderedDict
+
+config_path = Path(sys.argv[1])
+server_name = sys.argv[2]
+command_name = sys.argv[3]
+legacy_names = [n for n in sys.argv[4].split(',') if n]
+
+if config_path.exists():
+    try:
+        existing = json.loads(config_path.read_text(encoding='utf-8'), object_pairs_hook=OrderedDict)
+    except Exception as e:
+        print(f"ERR|{e}")
+        sys.exit(0)
+else:
+    existing = OrderedDict()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+if 'mcpServers' not in existing:
+    existing['mcpServers'] = OrderedDict()
+servers = existing['mcpServers']
+
+removed_legacy = []
+for legacy in legacy_names:
+    if legacy != server_name and legacy in servers:
+        del servers[legacy]
+        removed_legacy.append(legacy)
+
+new_server = OrderedDict([('command', command_name), ('args', [])])
+status = ""
+
+if server_name in servers:
+    current = servers[server_name]
+    if current.get('command') != command_name:
+        servers[server_name] = new_server
+        status = "UPDATED"
+    else:
+        status = "SKIP"
+else:
+    servers[server_name] = new_server
+    status = "ADDED"
+
+if status in ("UPDATED", "ADDED") or removed_legacy:
+    config_path.write_text(json.dumps(existing, indent=2), encoding='utf-8')
+
+print(f"{status}|{','.join(removed_legacy)}")
+PYEOF
+)"
+
+    case "$result" in
+        ERR\|*)
+            _yellow "$config_path illisible (${result#ERR|}). Inject MCP skip."
+            return 1
+            ;;
+    esac
+
+    local status="${result%%|*}"
+    local removed="${result#*|}"
+
+    if [[ -n "$removed" ]]; then
+        IFS=',' read -ra _legacy_arr <<< "$removed"
+        for _l in "${_legacy_arr[@]}"; do
+            _green "$config_path$label_tag : mcpServers.$_l supprime (legacy)"
+        done
+    fi
+
+    case "$status" in
+        ADDED)   _green "$config_path$label_tag : mcpServers.$server_name ajoute" ;;
+        UPDATED) _green "$config_path$label_tag : mcpServers.$server_name mis a jour" ;;
+        SKIP)    _gray  "$config_path$label_tag : mcpServers.$server_name deja present" ;;
+    esac
+    return 0
+}
+
+# Injection idempotente d'une section TOML [mcp_servers.<name>] (format Codex).
+# Pas de parser TOML natif bash : on utilise des markers MEMORY-KIT:START/END.
+#
+# Args : <config_path> <section_name> <command> <label>
+
+add_mcp_server_to_toml_config() {
+    local config_path="$1"
+    local section_name="$2"
+    local command_name="$3"
+    local label="$4"
+
+    local label_tag=""
+    [[ -n "$label" ]] && label_tag=" ($label)"
+
+    local start_marker='# MEMORY-KIT:START'
+    local end_marker='# MEMORY-KIT:END'
+    local block
+    block="$(printf '%s\n[mcp_servers.%s]\ncommand = "%s"\nargs = []\n%s' \
+        "$start_marker" "$section_name" "$command_name" "$end_marker")"
+
+    if [[ ! -f "$config_path" ]]; then
+        local parent
+        parent="$(dirname "$config_path")"
+        mkdir -p "$parent"
+        printf '%s' "$block" > "$config_path"
+        _green "$config_path$label_tag : section [mcp_servers.$section_name] cree (nouveau fichier)"
+        return 0
+    fi
+
+    local existing
+    existing="$(cat "$config_path")"
+    if printf '%s' "$existing" | grep -q "^${start_marker}$"; then
+        # Replace via perl (gestion safe des caracteres speciaux dans le block)
+        local new_content
+        new_content="$(BLOCK="$block" perl -0777 -pe '
+            my $b = $ENV{BLOCK};
+            s/\Q'"$start_marker"'\E[\s\S]*?\Q'"$end_marker"'\E/$b/g;
+        ' <<< "$existing")"
+        if [[ "$new_content" == "$existing" ]]; then
+            _gray "$config_path$label_tag : section MEMORY-KIT deja a jour"
+            return 0
+        fi
+        printf '%s' "$new_content" > "$config_path"
+        _green "$config_path$label_tag : section MEMORY-KIT mise a jour"
+    else
+        local trimmed="${existing%$'\n'}"
+        # Trim trailing whitespace
+        trimmed="$(printf '%s' "$trimmed" | sed -e 's/[[:space:]]*$//')"
+        local sep=""
+        [[ -n "$trimmed" ]] && sep=$'\n\n'
+        printf '%s%s%s\n' "$trimmed" "$sep" "$block" > "$config_path"
+        _green "$config_path$label_tag : section MEMORY-KIT injectee"
+    fi
+}
+
+# Injection idempotente d'une entree TOML [[mcp_servers]] (format Mistral Vibe,
+# table d'arrays). Pattern verifie en lisant la config existante de
+# mcp-iris-connector qui s'installe deja dans ~/.vibe/config.toml.
+#
+# Args : <config_path> <server_name> <command> <label>
+
+add_mcp_server_to_vibe_toml_config() {
+    local config_path="$1"
+    local server_name="$2"
+    local command_name="$3"
+    local label="$4"
+
+    local label_tag=""
+    [[ -n "$label" ]] && label_tag=" ($label)"
+
+    local start_marker='# MEMORY-KIT:START'
+    local end_marker='# MEMORY-KIT:END'
+    local block
+    block="$(printf '%s\n[[mcp_servers]]\nname = "%s"\ntransport = "stdio"\ncommand = "%s"\nargs = []\n%s' \
+        "$start_marker" "$server_name" "$command_name" "$end_marker")"
+
+    if [[ ! -f "$config_path" ]]; then
+        local parent
+        parent="$(dirname "$config_path")"
+        mkdir -p "$parent"
+        printf '%s' "$block" > "$config_path"
+        _green "$config_path$label_tag : entry [[mcp_servers]] cree (nouveau fichier)"
+        return 0
+    fi
+
+    local existing
+    existing="$(cat "$config_path")"
+    if printf '%s' "$existing" | grep -q "^${start_marker}$"; then
+        local new_content
+        new_content="$(BLOCK="$block" perl -0777 -pe '
+            my $b = $ENV{BLOCK};
+            s/\Q'"$start_marker"'\E[\s\S]*?\Q'"$end_marker"'\E/$b/g;
+        ' <<< "$existing")"
+        if [[ "$new_content" == "$existing" ]]; then
+            _gray "$config_path$label_tag : section MEMORY-KIT deja a jour"
+            return 0
+        fi
+        printf '%s' "$new_content" > "$config_path"
+        _green "$config_path$label_tag : section MEMORY-KIT mise a jour"
+    else
+        local trimmed="${existing%$'\n'}"
+        trimmed="$(printf '%s' "$trimmed" | sed -e 's/[[:space:]]*$//')"
+        local sep=""
+        [[ -n "$trimmed" ]] && sep=$'\n\n'
+        printf '%s%s%s\n' "$trimmed" "$sep" "$block" > "$config_path"
+        _green "$config_path$label_tag : entry [[mcp_servers]] injectee"
+    fi
+}
+
+# Resolution du chemin Claude Desktop config selon l'OS.
+# - macOS  : ~/Library/Application Support/Claude/claude_desktop_config.json
+# - Linux  : ~/.config/Claude/claude_desktop_config.json
+# - Windows (Git Bash / WSL) : $APPDATA/Claude/claude_desktop_config.json
+
+claude_desktop_config_path() {
+    case "$(uname -s)" in
+        Darwin)
+            echo "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+            ;;
+        Linux)
+            echo "$HOME/.config/Claude/claude_desktop_config.json"
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            local appdata="${APPDATA:-$HOME/AppData/Roaming}"
+            echo "$appdata/Claude/claude_desktop_config.json"
+            ;;
+        *)
+            echo "$HOME/.config/Claude/claude_desktop_config.json"
+            ;;
+    esac
+}
+
+deploy_mcp_server() {
+    local kit_root="$1"
+    local vault_path="$2"
+
+    echo ""
+    _cyan "> Deploiement : MCP server secondbrain-memory-kit (v0.8.0)"
+
+    if ! install_mcp_server_package "$kit_root"; then
+        _yellow "MCP server non installe. Les CLI restent en mode skills (fallback)."
+        return 0
+    fi
+
+    if ! command -v memory-kit-mcp &>/dev/null; then
+        _yellow "Binaire 'memory-kit-mcp' non trouve sur PATH apres install."
+        _info "Lance 'pipx ensurepath' (puis ouvre un nouveau terminal) ou ajoute le scripts dir Python au PATH."
+    fi
+
+    write_mcp_server_config "$vault_path" "$kit_root" "$LANGUAGE"
+
+    # Inject MCP server dans les configs CLI compatibles
+    local server_name='secondbrain-memory-kit'
+    local server_command='memory-kit-mcp'
+
+    # Claude Code (~/.claude.json — note : different de ~/.claude/memory-kit.json)
+    for i in "${DETECTED_IDX[@]}"; do
+        case "${PLATFORM_NAMES[$i]}" in
+            claude-code)
+                add_mcp_server_to_json_config "$HOME/.claude.json" "$server_name" "$server_command" "Claude Code" "memory-kit"
+                ;;
+            codex)
+                add_mcp_server_to_toml_config "${PLATFORM_CONFIGS[$i]}/config.toml" "$server_name" "$server_command" "Codex"
+                ;;
+            copilot-cli)
+                add_mcp_server_to_json_config "${PLATFORM_CONFIGS[$i]}/mcp-config.json" "$server_name" "$server_command" "Copilot CLI" "memory-kit"
+                ;;
+            mistral-vibe)
+                add_mcp_server_to_vibe_toml_config "${PLATFORM_CONFIGS[$i]}/config.toml" "$server_name" "$server_command" "Mistral Vibe"
+                ;;
+            gemini-cli)
+                add_mcp_server_to_json_config "${PLATFORM_CONFIGS[$i]}/settings.json" "$server_name" "$server_command" "Gemini CLI" "memory-kit"
+                ;;
+        esac
+    done
+
+    # Cibles desktop : detection independante des CLI command-line.
+    local claude_desktop_config
+    claude_desktop_config="$(claude_desktop_config_path)"
+    local claude_desktop_dir
+    claude_desktop_dir="$(dirname "$claude_desktop_config")"
+    if [[ -d "$claude_desktop_dir" ]]; then
+        add_mcp_server_to_json_config "$claude_desktop_config" "$server_name" "$server_command" "Claude Desktop" "memory-kit"
+    else
+        _gray "Claude Desktop non detecte ($claude_desktop_dir absent)"
+    fi
+
+    # Codex Desktop : herite automatiquement de Codex CLI via le meme
+    # fichier ~/.codex/config.toml (confirme par utilisateur). Pas d'action
+    # supplementaire requise.
 }
 
 # ============================================================
@@ -941,16 +1490,17 @@ _cyan "Detection des CLI IA..."
 echo ""
 
 # Plateformes : nom|affichage|binaire|config_dir|fonction
-declare -a PLATFORM_NAMES=("claude-code" "gemini-cli" "codex" "mistral-vibe")
-declare -a PLATFORM_DISPLAY=("Claude Code" "Gemini CLI" "Codex (OpenAI)" "Mistral Vibe")
-declare -a PLATFORM_BINARIES=("claude" "gemini" "codex" "vibe")
+declare -a PLATFORM_NAMES=("claude-code" "gemini-cli" "codex" "mistral-vibe" "copilot-cli")
+declare -a PLATFORM_DISPLAY=("Claude Code" "Gemini CLI" "Codex (OpenAI)" "Mistral Vibe" "GitHub Copilot CLI")
+declare -a PLATFORM_BINARIES=("claude" "gemini" "codex" "vibe" "copilot")
 declare -a PLATFORM_CONFIGS=(
     "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
     "$HOME/.gemini"
     "$HOME/.codex"
     "$HOME/.vibe"
+    "${COPILOT_HOME:-$HOME/.copilot}"
 )
-declare -a PLATFORM_FUNCS=("deploy_claude_code" "deploy_gemini_cli" "deploy_codex" "deploy_mistral_vibe")
+declare -a PLATFORM_FUNCS=("deploy_claude_code" "deploy_gemini_cli" "deploy_codex" "deploy_mistral_vibe" "deploy_copilot_cli")
 
 declare -a DETECTED_IDX=()
 
@@ -974,10 +1524,11 @@ if [[ ${#DETECTED_IDX[@]} -eq 0 ]]; then
     printf '\033[0;90m%s\033[0m\n' "Sans CLI IA, un second cerveau pour IA va etre... plutot theorique (haha)."
     echo ""
     printf '\033[0;37m%s\033[0m\n' "Installe au moins une des CLI suivantes, puis relance ce script :"
-    _info "Claude Code  : https://claude.com/claude-code"
-    _info "Gemini CLI   : https://github.com/google-gemini/gemini-cli"
-    _info "Codex        : https://github.com/openai/codex"
-    _info "Mistral Vibe : (voir documentation Mistral AI)"
+    _info "Claude Code        : https://claude.com/claude-code"
+    _info "Gemini CLI         : https://github.com/google-gemini/gemini-cli"
+    _info "Codex              : https://github.com/openai/codex"
+    _info "Mistral Vibe       : (voir documentation Mistral AI)"
+    _info "GitHub Copilot CLI : https://github.com/github/copilot-cli"
     echo ""
     exit 0
 fi
@@ -1129,6 +1680,14 @@ if [[ "$SKIP_OBSIDIAN_STYLE" != "true" ]]; then
 fi
 
 # ============================================================
+# 6.6. Deploy-McpServer (v0.8.0, opt-out via --skip-mcp-server)
+# ============================================================
+
+if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
+    deploy_mcp_server "$KIT_ROOT" "$VAULT_PATH"
+fi
+
+# ============================================================
 # 7. Resume final
 # ============================================================
 
@@ -1146,10 +1705,11 @@ if [[ ${#DEPLOYED[@]} -gt 0 ]]; then
     _cyan "Test :"
     for d in "${DEPLOYED[@]}"; do
         case "$d" in
-            "Claude Code")    _cyan "  [Claude Code]  /mem-recall (dans une nouvelle session)" ;;
-            "Gemini CLI")     _cyan "  [Gemini CLI]   /mem-recall (dans une nouvelle session)" ;;
-            "Codex (OpenAI)") _cyan "  [Codex]        /mem-recall (dans une nouvelle session)" ;;
-            "Mistral Vibe")   _cyan "  [Mistral Vibe] dis 'charge mon contexte memoire' (dans une nouvelle session)" ;;
+            "Claude Code")        _cyan "  [Claude Code]        /mem-recall (dans une nouvelle session)" ;;
+            "Gemini CLI")         _cyan "  [Gemini CLI]         /mem-recall (dans une nouvelle session)" ;;
+            "Codex (OpenAI)")     _cyan "  [Codex]              /mem-recall (dans une nouvelle session)" ;;
+            "Mistral Vibe")       _cyan "  [Mistral Vibe]       dis 'charge mon contexte memoire' (Vibe expose le MCP secondbrain-memory-kit + skills mais pas de slash commands)" ;;
+            "GitHub Copilot CLI") _cyan "  [Copilot CLI]        /mem-recall (dans une nouvelle session)" ;;
         esac
     done
 fi

@@ -56,9 +56,15 @@ Discipline de cohérence : tout changement dans une procédure doit s'accompagne
 
 Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-projects`, `mem-search`, `mem-rename-project`, `mem-merge-projects`, `mem-digest`, `mem-rollback-archive` (gestion du vault).
 
+## Discipline de cohérence `deploy.ps1` ↔ `deploy.sh`
+
+Le kit fournit deux scripts de déploiement jumeaux : `deploy.ps1` (PowerShell, cible Windows native) et `deploy.sh` (Bash, cible macOS/Linux et Git Bash sur Windows). Tout ajout ou modification dans l'un doit être co-commité dans l'autre — même comportement, mêmes flags, mêmes patterns d'idempotence. Si un comportement diverge, c'est généralement justifié par la plateforme cible (ex : patterns `allow` `settings.json` PowerShell-style côté `.ps1`, Bash-style côté `.sh`) — documenter la divergence en commentaire dans les deux scripts.
+
+Limitation connue de `deploy.sh` sous Git Bash Windows : les heredocs Python utilisent `python` natif Windows qui ne traduit pas les chemins MSYS (`/tmp/...` côté shell vs `C:\...` côté Python). Pas un blocker en production : la cible primaire de `deploy.sh` est macOS/Linux où shell et Python partagent la même vision filesystem.
+
 ## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, etc.)
 
-Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, puis étendre `deploy.ps1` pour détecter l'installation de la plateforme et y déployer. **Ne jamais modifier `core/`** pour accommoder une plateforme — `core/` reste neutre.
+Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, puis étendre **les deux scripts de déploiement** (`deploy.ps1` et `deploy.sh`) pour détecter l'installation de la plateforme et y déployer. **Ne jamais modifier `core/`** pour accommoder une plateforme — `core/` reste neutre.
 
 ## Ajouter un nouvel outil MCP
 
@@ -71,11 +77,11 @@ Pour qu'un nouveau skill `mem-Y` apparaisse aussi côté MCP server :
 
 ## Ajouter une nouvelle cible MCP (CLI ou app desktop)
 
-Si une nouvelle CLI/app supporte MCP via un fichier de config dédié, étendre `Deploy-McpServer` dans `deploy.ps1` :
-- Si format JSON `{"mcpServers": {...}}` (pattern Claude Code, Copilot CLI, Claude Desktop, Gemini CLI), réutiliser `Add-McpServerToJsonConfig`.
-- Si format TOML `[mcp_servers.X]` (Codex), réutiliser `Add-McpServerToTomlConfig`.
-- Si format TOML `[[mcp_servers]]` (Vibe), réutiliser `Add-McpServerToVibeTomlConfig`.
-- Si format différent : créer une nouvelle fonction `Add-McpServerToXxxConfig` sur le même pattern (markers idempotents).
+Si une nouvelle CLI/app supporte MCP via un fichier de config dédié, étendre `Deploy-McpServer` dans `deploy.ps1` **et** `deploy_mcp_server` dans `deploy.sh` :
+- Si format JSON `{"mcpServers": {...}}` (pattern Claude Code, Copilot CLI, Claude Desktop, Gemini CLI), réutiliser `Add-McpServerToJsonConfig` / `add_mcp_server_to_json_config`.
+- Si format TOML `[mcp_servers.X]` (Codex), réutiliser `Add-McpServerToTomlConfig` / `add_mcp_server_to_toml_config`.
+- Si format TOML `[[mcp_servers]]` (Vibe), réutiliser `Add-McpServerToVibeTomlConfig` / `add_mcp_server_to_vibe_toml_config`.
+- Si format différent : créer une nouvelle fonction sur le même pattern (markers idempotents) dans les deux scripts.
 
 ### Gemini CLI : TOML literal strings (`'''`) pour `prompt`
 
