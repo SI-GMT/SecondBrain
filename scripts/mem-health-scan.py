@@ -33,6 +33,12 @@ Idempotent. Read-only on the vault content (the report is the only write).
 Exit code 1 if any `error`-severity finding is detected, else 0 — useful
 for CI gating.
 
+NOTE on the standalone ↔ MCP-lib pair (per CLAUDE.md cohesion doctrine):
+The MCP server exposes a 9th category, `mcp-tool-spec-drift`, which audits
+the kit repo (core/procedures vs sync.json) rather than the vault. That
+category is intentionally MCP-only — this standalone is meant to scan vaults
+from machines without the kit installed, so kit-repo audits do not apply.
+
 Usage:
     python scripts/mem-health-scan.py --vault /path/to/vault
     python scripts/mem-health-scan.py --vault /path/to/vault --only orphan-atoms

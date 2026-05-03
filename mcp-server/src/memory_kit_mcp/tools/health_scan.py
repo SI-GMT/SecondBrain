@@ -1,10 +1,10 @@
-"""mem_health_scan — Audit vault hygiene.
+"""mem_health_scan — Audit vault hygiene + kit-repo spec drift.
 
 Spec: core/procedures/mem-health-scan.md
-Scripted reference: scripts/mem-health-scan.py (versioned standalone CLI)
+Scripted reference: scripts/mem-health-scan.py (8 vault categories only)
 
 Thin wrapper over the shared library memory_kit_mcp.health.scan, which
-implements the canonical 8-category audit:
+implements the canonical 9-category audit:
 
 - malformed-frontmatter  (error)
 - stray-zone-md          (warning)
@@ -14,6 +14,7 @@ implements the canonical 8-category audit:
 - dangling-wikilinks     (info)
 - orphan-atoms           (warning)
 - missing-archeo-hashes  (warning)
+- mcp-tool-spec-drift    (info)  — mcp-only; needs kit_repo + sync.json.
 
 Read-only — no writes. mem_health_repair applies fixes.
 """
@@ -70,13 +71,14 @@ def register(mcp: FastMCP) -> None:
                 "Restrict to one category. One of: "
                 "malformed-frontmatter | stray-zone-md | empty-md-at-root | "
                 "missing-zone-index | missing-display | dangling-wikilinks | "
-                "orphan-atoms | missing-archeo-hashes. None = all."
+                "orphan-atoms | missing-archeo-hashes | mcp-tool-spec-drift. "
+                "None = all."
             ),
         ),
     ) -> HealthScanResult:
-        """Audit vault hygiene. Read-only — no writes.
+        """Audit vault hygiene + kit-repo spec drift. Read-only — no writes.
 
-        Covers the 8 canonical categories defined in core/procedures/mem-health-scan.md.
+        Covers the 9 canonical categories defined in core/procedures/mem-health-scan.md.
         Use mem_health_repair to apply auto-fixes (currently: missing-display only;
         stray-zone-md and empty-md-at-root are auto-fixable in principle but the
         repair tool requires opt-in for delete operations).
@@ -84,7 +86,9 @@ def register(mcp: FastMCP) -> None:
         config = get_config()
         vault = config.vault
 
-        findings, _scan_errors, files_scanned = scan_vault(vault, only_filter=category)
+        findings, _scan_errors, files_scanned = scan_vault(
+            vault, only_filter=category, kit_repo=config.kit_repo
+        )
         by_cat = dict(Counter(f.category for f in findings))
 
         return HealthScanResult(

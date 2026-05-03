@@ -8,6 +8,8 @@ import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
+from memory_kit_mcp.health.scan import scan_vault
+from memory_kit_mcp.sync import ManifestEntry, compute_procedure_hash, save_manifest
 from memory_kit_mcp.vault import frontmatter
 
 
@@ -217,6 +219,96 @@ async def test_health_scan_detects_missing_previous_topology_hash(
         if f.category == "missing-archeo-hashes" and "previous_topology_hash" in f.message
     ]
     assert matches, "expected a missing previous_topology_hash finding"
+
+
+# ---------- mcp-tool-spec-drift (9th category) ----------
+
+
+def _seed_kit_with_procedure(root: Path, name: str, body: str) -> Path:
+    proc_dir = root / "core" / "procedures"
+    proc_dir.mkdir(parents=True, exist_ok=True)
+    (proc_dir / name).write_text(body, encoding="utf-8")
+    return proc_dir / name
+
+
+def test_drift_detected_when_procedure_changed_after_sync(
+    tmp_path: Path, vault_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A procedure body that no longer matches the recorded hash → finding."""
+    kit = tmp_path / "kit"
+    proc_path = _seed_kit_with_procedure(kit, "mem-recall.md", "# baseline\n")
+    baseline_hash = compute_procedure_hash(proc_path)
+
+    manifest_path = tmp_path / "sync.json"
+    save_manifest(
+        {"mem_recall": ManifestEntry("mem-recall.md", baseline_hash)},
+        manifest_path,
+    )
+    monkeypatch.setattr("memory_kit_mcp.sync.MANIFEST_PATH", manifest_path)
+
+    # Simulate the developer editing the procedure WITHOUT re-syncing.
+    proc_path.write_text("# modified body — drift!\n", encoding="utf-8")
+
+    findings, _errors, _scanned = scan_vault(vault_tmp, kit_repo=kit)
+    drift = [f for f in findings if f.category == "mcp-tool-spec-drift"]
+    assert len(drift) == 1
+    assert "mem_recall" in drift[0].message
+    assert drift[0].severity == "info"
+
+
+def test_no_drift_when_procedure_matches_manifest(
+    tmp_path: Path, vault_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kit = tmp_path / "kit"
+    proc_path = _seed_kit_with_procedure(kit, "mem-recall.md", "# stable body\n")
+    manifest_path = tmp_path / "sync.json"
+    save_manifest(
+        {"mem_recall": ManifestEntry("mem-recall.md", compute_procedure_hash(proc_path))},
+        manifest_path,
+    )
+    monkeypatch.setattr("memory_kit_mcp.sync.MANIFEST_PATH", manifest_path)
+
+    findings, _errors, _scanned = scan_vault(vault_tmp, kit_repo=kit)
+    assert not [f for f in findings if f.category == "mcp-tool-spec-drift"]
+
+
+def test_drift_silently_skipped_when_kit_repo_absent(
+    vault_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No kit_repo argument → category silently does nothing (no errors)."""
+    findings, _errors, _scanned = scan_vault(vault_tmp, kit_repo=None)
+    assert not [f for f in findings if f.category == "mcp-tool-spec-drift"]
+
+
+def test_drift_silently_skipped_when_manifest_absent(
+    tmp_path: Path, vault_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kit = tmp_path / "kit"
+    _seed_kit_with_procedure(kit, "mem-recall.md", "# body\n")
+    monkeypatch.setattr(
+        "memory_kit_mcp.sync.MANIFEST_PATH", tmp_path / "absent.json"
+    )
+    findings, _errors, _scanned = scan_vault(vault_tmp, kit_repo=kit)
+    assert not [f for f in findings if f.category == "mcp-tool-spec-drift"]
+
+
+def test_drift_flags_missing_procedure_file(
+    tmp_path: Path, vault_tmp: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifest references a procedure that no longer exists on disk → finding."""
+    kit = tmp_path / "kit"
+    (kit / "core" / "procedures").mkdir(parents=True)
+    manifest_path = tmp_path / "sync.json"
+    save_manifest(
+        {"mem_recall": ManifestEntry("mem-recall.md", "any-hash")},
+        manifest_path,
+    )
+    monkeypatch.setattr("memory_kit_mcp.sync.MANIFEST_PATH", manifest_path)
+
+    findings, _errors, _scanned = scan_vault(vault_tmp, kit_repo=kit)
+    drift = [f for f in findings if f.category == "mcp-tool-spec-drift"]
+    assert len(drift) == 1
+    assert "missing" in drift[0].message.lower()
 
 
 # ---------- mem_health_repair ----------

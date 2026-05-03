@@ -1,9 +1,13 @@
-"""Vault hygiene scan — 8-category audit (shared library).
+"""Vault hygiene scan — 9-category audit (shared library).
 
 Spec: core/procedures/mem-health-scan.md
-Mirrors: scripts/mem-health-scan.py (versioned standalone CLI)
+Mirrors: scripts/mem-health-scan.py (versioned standalone CLI) for the first
+8 categories. The 9th category (``mcp-tool-spec-drift``) is mcp-only by
+design: it audits the *kit repo* (core/procedures vs ``sync.json``), not the
+vault, so the standalone — which scans vaults from machines without the kit
+installed — has no equivalent.
 
-Read-only. Detects 8 categories of issues:
+Read-only. Detects 9 categories of issues:
 
 - malformed-frontmatter  (error)  YAML frontmatter that fails to parse.
 - stray-zone-md          (warn)   Empty MD at vault root named after a
@@ -22,6 +26,12 @@ Read-only. Detects 8 categories of issues:
 - missing-archeo-hashes  (warn)   Atoms with source: archeo-* missing
                                   `content_hash` or (for repo-topology)
                                   `previous_topology_hash`.
+- mcp-tool-spec-drift    (info)   Procedure body in core/procedures/mem-X.md
+                                  diverges from the hash recorded in
+                                  ``memory_kit_mcp/sync.json`` — signals
+                                  that ``tools/X.py`` may need review.
+                                  Skipped silently when ``kit_repo`` is not
+                                  configured or ``sync.json`` is absent.
 
 The function returns Pydantic HealthFinding objects (defined in
 tools._models) so the MCP tool layer can serialize them directly.
@@ -54,6 +64,7 @@ CATEGORIES: tuple[str, ...] = (
     "dangling-wikilinks",
     "orphan-atoms",
     "missing-archeo-hashes",
+    "mcp-tool-spec-drift",
 )
 
 # Zones whose atoms are "transverse" — they live cross-project and require
@@ -146,14 +157,17 @@ def scan_vault(
     vault: Path,
     zones_filter: set[str] | None = None,
     only_filter: str | None = None,
+    kit_repo: Path | None = None,
 ) -> tuple[list[HealthFinding], list[tuple[str, str]], int]:
-    """Run all 8 category checks against `vault`.
+    """Run all 9 category checks against `vault`.
 
     Args:
         vault: absolute path to the vault root.
         zones_filter: if non-empty, restrict scan to these zones (e.g.
             {"20-knowledge", "40-principles"}).
         only_filter: if set, restrict to this single category.
+        kit_repo: optional path to the SecondBrain source repo. Required for
+            the ``mcp-tool-spec-drift`` category (otherwise silently skipped).
 
     Returns:
         (findings, scan_errors, files_scanned)
@@ -392,6 +406,46 @@ def scan_vault(
                         "Missing `previous_topology_hash` key on a repo-topology atom.",
                         auto_fixable=False,
                     ))
+
+    # ---- 7. mcp-tool-spec-drift -----------------------------------------
+    # Audits the kit repo (not the vault). Silently skipped when kit_repo is
+    # not configured or sync.json is absent — both are expected in deployments
+    # where the user installed the wheel without the source tree.
+    if cat_active("mcp-tool-spec-drift") and kit_repo is not None:
+        try:
+            from memory_kit_mcp.sync import (
+                MANIFEST_PATH,
+                compute_procedure_hash,
+                load_manifest,
+                procedures_dir,
+            )
+
+            manifest = load_manifest(MANIFEST_PATH)
+            proc_dir = procedures_dir(kit_repo)
+            if manifest and proc_dir.is_dir():
+                for tool_name, entry in manifest.items():
+                    proc_path = proc_dir / entry.procedure
+                    if not proc_path.is_file():
+                        findings_by_cat["mcp-tool-spec-drift"].append(_finding(
+                            "mcp-tool-spec-drift", "info",
+                            f"core/procedures/{entry.procedure}",
+                            f"Procedure file missing for tool `{tool_name}`.",
+                            auto_fixable=False,
+                        ))
+                        continue
+                    current_hash = compute_procedure_hash(proc_path)
+                    if current_hash != entry.last_synced_hash:
+                        findings_by_cat["mcp-tool-spec-drift"].append(_finding(
+                            "mcp-tool-spec-drift", "info",
+                            f"core/procedures/{entry.procedure}",
+                            f"Procedure has drifted since last sync — review the "
+                            f"`{tool_name}` implementation in tools/ and run "
+                            "`python -m memory_kit_mcp.sync update` after reconciling.",
+                            auto_fixable=False,
+                        ))
+        except (FileNotFoundError, OSError, ValueError):
+            # Manifest missing or unreadable — silent skip per design.
+            pass
 
     # ---- Flatten in canonical category order ----------------------------
     findings: list[HealthFinding] = []

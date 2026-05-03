@@ -1,0 +1,233 @@
+"""Spec-drift manifest — track when ``core/procedures/mem-X.md`` (the canonical
+functional spec) drifts away from its Python implementation in
+``memory_kit_mcp.tools.X``.
+
+Per the cohesion doctrine in ``CLAUDE.md``: every change in a procedure must be
+co-committed with a change in the matching Python tool (and vice versa). This
+manifest is the safety net that surfaces silent divergence — it is informational,
+never blocking.
+
+Contract:
+
+- Each entry maps a tool name (``mem_recall``, ``mem_archeo``…) to its
+  procedure file (``mem-recall.md``…) and the SHA-256 hash of the procedure
+  body (frontmatter stripped, line endings normalised to LF) at the moment
+  the developer last reconciled core ↔ Python.
+
+- The :func:`compute_procedure_hash` function defines the canonical hash —
+  any drift detection MUST use this exact normalisation.
+
+- The CLI ``python -m memory_kit_mcp.sync update`` recomputes every hash and
+  rewrites the manifest. Run it after a synchronised core/Python change.
+
+- The 9th health-scan category (``mcp-tool-spec-drift``) reads this manifest
+  via :func:`load_manifest` and compares to the live procedure hashes resolved
+  from ``Config.kit_repo``. If the repo is not configured or the manifest is
+  absent, the category is silently skipped.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from memory_kit_mcp.vault.atomic_io import hash_content, write_atomic
+
+# Manifest lives next to this module so it ships with the wheel and
+# is reachable read-only from any installed deployment.
+MANIFEST_PATH: Path = Path(__file__).parent / "sync.json"
+
+# Exhaustive list of (tool_name, procedure_filename) pairs. Order is stable
+# (matches the order tools are registered in ``tools/__init__.py``) so the
+# manifest stays diff-friendly.
+TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
+    # Cycle session
+    ("mem_recall", "mem-recall.md"),
+    ("mem_archive", "mem-archive.md"),
+    # Inventory
+    ("mem_list", "mem-list.md"),
+    ("mem_search", "mem-search.md"),
+    ("mem_digest", "mem-digest.md"),
+    # Vault management
+    ("mem_rename", "mem-rename.md"),
+    ("mem_merge", "mem-merge.md"),
+    ("mem_reclass", "mem-reclass.md"),
+    ("mem_rollback_archive", "mem-rollback-archive.md"),
+    ("mem_promote_domain", "mem-promote-domain.md"),
+    ("mem_historize", "mem-historize.md"),
+    # Hygiene
+    ("mem_health_scan", "mem-health-scan.md"),
+    ("mem_health_repair", "mem-health-repair.md"),
+    # Ingestion
+    ("mem_note", "mem-note.md"),
+    ("mem_principle", "mem-principle.md"),
+    ("mem_goal", "mem-goal.md"),
+    ("mem_person", "mem-person.md"),
+    ("mem", "mem.md"),
+    ("mem_doc", "mem-doc.md"),
+    # Archeo
+    ("mem_archeo", "mem-archeo.md"),
+    ("mem_archeo_context", "mem-archeo-context.md"),
+    ("mem_archeo_stack", "mem-archeo-stack.md"),
+    ("mem_archeo_git", "mem-archeo-git.md"),
+    ("mem_archeo_atlassian", "mem-archeo-atlassian.md"),
+)
+
+
+@dataclass(frozen=True)
+class ManifestEntry:
+    procedure: str
+    last_synced_hash: str
+
+
+def compute_procedure_hash(procedure_path: Path) -> str:
+    """SHA-256 of the procedure body, with frontmatter stripped and LF line endings.
+
+    The hash deliberately ignores the YAML frontmatter so cosmetic edits there
+    (description rewrites picked up by Claude Code's skill system) don't
+    trigger drift findings. Only the procedural body — the contract that the
+    Python tool is meant to mirror — is hashed.
+    """
+    raw = procedure_path.read_text(encoding="utf-8-sig")
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+    if text.startswith("---"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            body = text[end + 4:].lstrip("\n")
+        else:
+            body = text
+    else:
+        body = text
+    return hash_content(body)
+
+
+def procedures_dir(kit_repo: Path) -> Path:
+    """Resolve ``core/procedures/`` inside ``kit_repo``."""
+    return kit_repo / "core" / "procedures"
+
+
+def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, ManifestEntry]:
+    """Load the manifest from disk. Returns an empty dict if absent.
+
+    Malformed manifests raise ``json.JSONDecodeError`` — they should be
+    treated as a setup error, not silently ignored, so the developer sees
+    a clear failure rather than confusing scan output.
+    """
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, ManifestEntry] = {}
+    for tool_name, entry in (raw.get("tools") or {}).items():
+        out[tool_name] = ManifestEntry(
+            procedure=entry["procedure"],
+            last_synced_hash=entry["last_synced_hash"],
+        )
+    return out
+
+
+def save_manifest(entries: dict[str, ManifestEntry], path: Path = MANIFEST_PATH) -> None:
+    """Write the manifest to ``path`` atomically (UTF-8 / LF / no BOM)."""
+    payload = {
+        "_doc": (
+            "Auto-generated by `python -m memory_kit_mcp.sync update`. "
+            "Tracks the SHA-256 of each core/procedures/mem-X.md body at the "
+            "last manual sync with the matching tools/X.py. The "
+            "mcp-tool-spec-drift health category reads this file."
+        ),
+        "tools": {
+            name: {
+                "procedure": entry.procedure,
+                "last_synced_hash": entry.last_synced_hash,
+            }
+            for name, entry in entries.items()
+        },
+    }
+    write_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def compute_current_hashes(kit_repo: Path) -> dict[str, ManifestEntry]:
+    """Return ``{tool_name: ManifestEntry}`` for every mapped procedure.
+
+    Procedures that are missing on disk are skipped — surfaced separately
+    via the warnings the caller can collect.
+    """
+    proc_dir = procedures_dir(kit_repo)
+    out: dict[str, ManifestEntry] = {}
+    for tool_name, filename in TOOL_PROCEDURE_MAPPING:
+        candidate = proc_dir / filename
+        if not candidate.is_file():
+            continue
+        out[tool_name] = ManifestEntry(
+            procedure=filename,
+            last_synced_hash=compute_procedure_hash(candidate),
+        )
+    return out
+
+
+def update(kit_repo: Path, manifest_path: Path = MANIFEST_PATH) -> tuple[int, list[str]]:
+    """Recompute every hash and rewrite the manifest. Returns
+    ``(entries_written, warnings)``.
+    """
+    proc_dir = procedures_dir(kit_repo)
+    if not proc_dir.is_dir():
+        raise FileNotFoundError(
+            f"core/procedures/ not found under {kit_repo}. "
+            "Pass --kit-repo to point at the SecondBrain source repo."
+        )
+    warnings: list[str] = []
+    entries = compute_current_hashes(kit_repo)
+    expected = {name for name, _ in TOOL_PROCEDURE_MAPPING}
+    missing = expected - entries.keys()
+    for name in sorted(missing):
+        filename = dict(TOOL_PROCEDURE_MAPPING)[name]
+        warnings.append(f"procedure file missing for {name}: {filename}")
+    save_manifest(entries, manifest_path)
+    return len(entries), warnings
+
+
+def _resolve_kit_repo_arg(arg: str | None) -> Path:
+    if arg:
+        return Path(arg).expanduser().resolve()
+    # Fall back to the active config — supports `python -m memory_kit_mcp.sync update`
+    # in deployments where the dev installed the kit and configured kit_repo.
+    from memory_kit_mcp.config import get_config
+
+    config = get_config()
+    if not config.kit_repo:
+        raise RuntimeError(
+            "kit_repo is not configured. Pass --kit-repo or set it in "
+            "~/.memory-kit/config.json."
+        )
+    return config.kit_repo
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m memory_kit_mcp.sync",
+        description="Manage the spec-drift manifest for memory-kit tools.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    upd = sub.add_parser("update", help="Recompute procedure hashes and rewrite the manifest.")
+    upd.add_argument("--kit-repo", help="Path to the SecondBrain source repo.")
+    upd.add_argument(
+        "--manifest",
+        help="Override the manifest path (defaults to the in-package sync.json).",
+    )
+    args = parser.parse_args(argv)
+
+    if args.cmd == "update":
+        kit_repo = _resolve_kit_repo_arg(args.kit_repo)
+        manifest_path = Path(args.manifest).expanduser().resolve() if args.manifest else MANIFEST_PATH
+        count, warnings = update(kit_repo, manifest_path)
+        print(f"Wrote {count} entries to {manifest_path}")
+        for w in warnings:
+            print(f"  warning: {w}", file=sys.stderr)
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
