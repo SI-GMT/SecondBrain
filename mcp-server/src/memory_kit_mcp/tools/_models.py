@@ -219,3 +219,59 @@ class ArcheoStackResult(BaseModel):
     files_modified: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     summary_md: str
+
+
+class MilestoneInfo(BaseModel):
+    """One milestone (tag) processed by mem_archeo_git (Phase 3)."""
+
+    tag: str  # e.g. "v0.8.0"
+    commit_sha: str  # full SHA
+    date: str  # YYYY-MM-DD
+    time: str  # HH:MM
+    author_name: str
+    author_email: str
+    subject: str  # short tag/commit subject
+    files_changed: int
+    insertions: int
+    deletions: int
+    archive_path: str = ""  # vault-relative path of the resulting archive (empty if skipped)
+    outcome: str = "skipped"  # 'created' | 'revised' | 'skipped'
+
+
+class ArcheoGitResult(BaseModel):
+    """Result of mem_archeo_git — Phase 3 Git history reconstruction."""
+
+    project: str
+    repo_path: str
+    level: str  # 'tags' (others deferred)
+    milestones_processed: int
+    archives_created: int
+    archives_revised: int
+    archives_skipped: int
+    milestones: list[MilestoneInfo] = Field(default_factory=list)
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    summary_md: str
+
+
+class ArcheoResult(BaseModel):
+    """Result of mem_archeo — triphasic archeo orchestrator.
+
+    Phase 1 (context) is intentionally skipped — semantic categorization is
+    LLM territory. Phase 2 (stack) and Phase 3 (git) are run sequentially
+    sharing a single Phase 0 topology scan.
+    """
+
+    project: str
+    repo_path: str
+    phase_1_skipped: bool = True
+    phase_1_message: str
+    stack: ArcheoStackResult
+    git: ArcheoGitResult
+    topology_path: str = ""  # vault-relative path of topology file (created or updated)
+    topology_outcome: str = "skipped"  # 'created' | 'updated' | 'skipped'
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    summary_md: str

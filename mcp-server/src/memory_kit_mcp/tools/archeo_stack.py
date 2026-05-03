@@ -46,6 +46,60 @@ else:  # pragma: no cover
 # ----------------------------------------------------------------------
 
 
+def execute_stack(
+    vault: Path,
+    repo: Path,
+    project: str | None,
+    depth: int = 2,
+    topology: Any = None,
+) -> ArcheoStackResult:
+    """Run the Phase 2 stack resolution. Module-level so the orchestrator
+    (mem_archeo) can call it without going through the MCP layer.
+
+    If `topology` is None, a fresh scan is performed; otherwise the passed
+    Topology object is reused (Phase 0 sharing per the orchestrator spec).
+    """
+    if topology is None:
+        try:
+            topology = scan(repo, depth=depth, vault=vault)
+        except NotAGitRepoError as e:
+            raise NotAGitRepoError(str(e)) from e
+
+    slug = _resolve_project_slug(vault, repo, project)
+    layers = _resolve_all_layers(repo, topology)
+
+    atoms_created = 0
+    atoms_revised = 0
+    atoms_skipped = 0
+    files_created: list[str] = []
+    files_modified: list[str] = []
+
+    for layer in layers:
+        outcome = _write_layer_atom(vault, slug, layer)
+        if outcome == "created":
+            atoms_created += 1
+            files_created.append(_layer_atom_path(vault, slug, layer.layer).as_posix())
+        elif outcome == "revised":
+            atoms_revised += 1
+            files_modified.append(_layer_atom_path(vault, slug, layer.layer).as_posix())
+        else:
+            atoms_skipped += 1
+
+    return ArcheoStackResult(
+        project=slug,
+        repo_path=str(repo),
+        layers_resolved=len(layers),
+        atoms_created=atoms_created,
+        atoms_revised=atoms_revised,
+        atoms_skipped=atoms_skipped,
+        layers=layers,
+        files_created=files_created,
+        files_modified=files_modified,
+        warnings=topology.warnings,
+        summary_md=_summary_md(slug, layers, atoms_created, atoms_revised, atoms_skipped),
+    )
+
+
 def register(mcp: FastMCP) -> None:
     """Register mem_archeo_stack with the FastMCP instance."""
 
@@ -66,46 +120,11 @@ def register(mcp: FastMCP) -> None:
         content_hash. Refuses non-Git directories with NotAGitRepoError.
         """
         config = get_config()
-        vault = config.vault
-
-        repo = Path(repo_path).expanduser().resolve()
-        try:
-            topology = scan(repo, depth=depth, vault=vault)
-        except NotAGitRepoError as e:
-            raise NotAGitRepoError(str(e)) from e
-
-        slug = _resolve_project_slug(vault, repo, project)
-        layers = _resolve_all_layers(repo, topology)
-
-        atoms_created = 0
-        atoms_revised = 0
-        atoms_skipped = 0
-        files_created: list[str] = []
-        files_modified: list[str] = []
-
-        for layer in layers:
-            outcome = _write_layer_atom(vault, slug, layer)
-            if outcome == "created":
-                atoms_created += 1
-                files_created.append(_layer_atom_path(vault, slug, layer.layer).as_posix())
-            elif outcome == "revised":
-                atoms_revised += 1
-                files_modified.append(_layer_atom_path(vault, slug, layer.layer).as_posix())
-            else:
-                atoms_skipped += 1
-
-        return ArcheoStackResult(
-            project=slug,
-            repo_path=str(repo),
-            layers_resolved=len(layers),
-            atoms_created=atoms_created,
-            atoms_revised=atoms_revised,
-            atoms_skipped=atoms_skipped,
-            layers=layers,
-            files_created=files_created,
-            files_modified=files_modified,
-            warnings=topology.warnings,
-            summary_md=_summary_md(slug, layers, atoms_created, atoms_revised, atoms_skipped),
+        return execute_stack(
+            vault=config.vault,
+            repo=Path(repo_path).expanduser().resolve(),
+            project=project,
+            depth=depth,
         )
 
 

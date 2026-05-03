@@ -16,9 +16,7 @@ ARCHEO_TOOLS = [
 
 # Tools still in stub mode (raise NotImplementedError). Updated as ports land.
 STILL_STUB_TOOLS = [
-    "mem_archeo",
     "mem_archeo_context",
-    "mem_archeo_git",
     "mem_archeo_atlassian",
 ]
 
