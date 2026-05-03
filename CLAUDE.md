@@ -12,13 +12,26 @@ Langue de travail : **français** (code, commentaires, messages, procédures). A
 
 ```
 core/procedures/              ← spec procédurale canonique, agnostique LLM
+                                (inclut _mcp-first.md depuis v0.8.0)
 adapters/                     ← traductions vers chaque plateforme
   claude-code/
     skills/*.template.md      ← frontmatter + {{PROCEDURE}} (placeholder)
     commands/*.md             ← slash commands user-facing (shims vers skills)
     claude-md-block.md        ← bloc injecté dans ~/.claude/CLAUDE.md
+mcp-server/                   ← serveur MCP Python (v0.8.0)
+  pyproject.toml              ← hatchling + fastmcp ≥2.13 + Pydantic v2
+  src/memory_kit_mcp/
+    server.py                 ← FastMCP instance + main() entry stdio
+    config.py                 ← lit ~/.memory-kit/config.json
+    tools/X.py                ← 24 outils mem_X (1-pour-1 avec les skills)
+    vault/                    ← primitives partagées (paths, frontmatter,
+                                atomic_io UTF-8/LF/hash, scanner)
+  tests/                      ← pytest, 114 tests, 94% coverage via
+                                fastmcp.Client in-memory
 memory/                       ← vault Obsidian local (non versionné avec le kit)
-deploy.ps1                    ← assemble adapters + core et installe dans ~/.claude/
+deploy.ps1                    ← assemble adapters + core, installe dans ~/.claude/,
+                                installe le serveur MCP via pipx, inject la
+                                déclaration MCP dans 7 cibles compatibles
 ```
 
 ## Règle d'or : single source of truth
@@ -26,6 +39,12 @@ deploy.ps1                    ← assemble adapters + core et installe dans ~/.c
 Toute logique procédurale vit dans `core/procedures/`. Les adapters n'ajoutent que du frontmatter et du formatage spécifique à leur plateforme. **Ne jamais dupliquer la procédure** dans un adapter — `deploy.ps1` la compose à la volée en substituant `{{PROCEDURE}}` par le contenu du fichier core correspondant.
 
 Si une procédure doit diverger entre plateformes, c'est le signe qu'il manque un paramètre ou une généralisation dans la spec canonique — pas qu'il faut la forker.
+
+**Depuis v0.8.0 (Phase 3 MCP)** : la procédure `core/procedures/mem-X.md` reste la **source de vérité fonctionnelle** et a maintenant un double emploi :
+- Lue par les LLM en mode **skills fallback** (CLI sans MCP, ou serveur indisponible).
+- Spec d'implémentation pour le module Python `mcp-server/src/memory_kit_mcp/tools/X.py` qui expose la logique comme outil MCP.
+
+Discipline de cohérence : tout changement dans une procédure doit s'accompagner d'un changement dans le module Python correspondant (et vice-versa) dans le même commit. Le bloc `_mcp-first.md` est prepended automatiquement par `deploy.ps1` au-dessus de chaque procédure résolue ; il indique au LLM d'invoquer `mcp__secondbrain-memory-kit__mem_X` si disponible, sinon d'exécuter la procédure ci-dessous.
 
 ## Workflow de développement
 
@@ -37,11 +56,26 @@ Si une procédure doit diverger entre plateformes, c'est le signe qu'il manque u
 
 Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-projects`, `mem-search`, `mem-rename-project`, `mem-merge-projects`, `mem-digest`, `mem-rollback-archive` (gestion du vault).
 
-## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, MCP)
+## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, etc.)
 
 Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, puis étendre `deploy.ps1` pour détecter l'installation de la plateforme et y déployer. **Ne jamais modifier `core/`** pour accommoder une plateforme — `core/` reste neutre.
 
-Phase 3 prévue : extraire la logique dans un serveur MCP `memory-kit`. Les adapters deviendront alors des thin wrappers qui délèguent au MCP ; une seule implémentation, tous les LLM compatibles.
+## Ajouter un nouvel outil MCP
+
+Pour qu'un nouveau skill `mem-Y` apparaisse aussi côté MCP server :
+1. Créer `mcp-server/src/memory_kit_mcp/tools/Y.py` avec une fonction `register(mcp)` qui définit `@mcp.tool() def mem_Y(...) -> ResultModel`.
+2. Étendre `tools/__init__.py` pour importer + appeler `Y.register(mcp)`.
+3. Ajouter le test correspondant dans `tests/test_Y.py` (utilise la fixture `client` de `conftest.py` qui pointe sur un vault temporaire).
+4. Tourner `pytest --cov-fail-under=80` pour vérifier.
+5. Vérifier que `core/procedures/mem-Y.md` décrit fonctionnellement le même comportement (source de vérité).
+
+## Ajouter une nouvelle cible MCP (CLI ou app desktop)
+
+Si une nouvelle CLI/app supporte MCP via un fichier de config dédié, étendre `Deploy-McpServer` dans `deploy.ps1` :
+- Si format JSON `{"mcpServers": {...}}` (pattern Claude Code, Copilot CLI, Claude Desktop, Gemini CLI), réutiliser `Add-McpServerToJsonConfig`.
+- Si format TOML `[mcp_servers.X]` (Codex), réutiliser `Add-McpServerToTomlConfig`.
+- Si format TOML `[[mcp_servers]]` (Vibe), réutiliser `Add-McpServerToVibeTomlConfig`.
+- Si format différent : créer une nouvelle fonction `Add-McpServerToXxxConfig` sur le même pattern (markers idempotents).
 
 ### Gemini CLI : TOML literal strings (`'''`) pour `prompt`
 

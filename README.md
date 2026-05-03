@@ -1,16 +1,19 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.8.0) + skills fallback transparente.
 
 [![License: MIT](https://img.shields.io/github/license/SI-GMT/SecondBrain?color=blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#prérequis)
 [![Shells](https://img.shields.io/badge/shells-PowerShell%207%2B%20%7C%20bash-5391FE)](#prérequis)
-[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot-8A2BE2)](#cli-supportées)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot%20%7C%20Desktop-8A2BE2)](#cli-supportées)
+[![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#mode-mcp-v080)
 [![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
 
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
+> **v0.8.0** — **Phase 3 MCP server**. Le serveur Python `secondbrain-memory-kit` (installé via `pipx install ./mcp-server`) expose les **24 skills `mem-*` comme outils MCP** consommables nativement par toute CLI ou app desktop compatible MCP. Stack : `fastmcp 2.x` + Pydantic v2 + hatchling + uv, **114 tests pytest, 94 % coverage** via `fastmcp.Client` in-memory. **7 cibles MCP** auto-configurées par `deploy.ps1` : Claude Code (`~/.claude.json`), Claude Desktop (`~/AppData/Roaming/Claude/claude_desktop_config.json`), Codex CLI (`~/.codex/config.toml`), **Codex Desktop** (héritage de Codex CLI), Copilot CLI (`~/.copilot/mcp-config.json`), Mistral Vibe (`~/.vibe/config.toml`), Gemini CLI (`~/.gemini/settings.json`). Pattern **MCP-first / skills-fallback** : un bloc `_mcp-first.md` injecté en tête de chaque procédure indique au LLM d'invoquer l'outil MCP s'il est disponible, sinon d'exécuter la procédure complète comme avant. Aucune coupure de compatibilité — les skills déployés en v0.5+ continuent de fonctionner sur les CLI sans MCP. Côté outils : 19 outils fonctionnels in-memory tested (`mem_recall`, `mem_archive`, `mem_list`, `mem_search`, `mem_digest`, 6 vault management, 2 hygiene, 6 ingestion) + 5 stubs `mem_archeo*` qui surfacent un fallback explicite vers les skills (port complet en v0.8.x). Une primitive `vault/atomic_io.py` garantit UTF-8 sans BOM, LF, rename atomique et hash check pour la concurrence multi-session.
+>
 > **v0.7.5** — **5e adapter : GitHub Copilot CLI**. Le kit se déploie maintenant dans `~/.copilot/` en plus des 4 CLI précédentes. Surface installée : 24 skills au format Anthropic dans `~/.copilot/skills/{nom}/SKILL.md` (chacun expose nativement son slash command `/mem-recall`, `/mem-archive`, …) + bloc MEMORY-KIT injecté dans `~/.copilot/copilot-instructions.md` (équivalent CLAUDE.md user-level) + `memory-kit.json` au niveau utilisateur. Override du config dir via `$COPILOT_HOME` supporté. Détection automatique par `deploy.ps1` / `deploy.sh` — rien à faire de plus pour un poste qui a déjà tourné `copilot` au moins une fois. Copilot CLI ne lit plus `~/.claude/skills/` depuis sa version 1.0.35, l'écriture explicite dans `~/.copilot/skills/` est donc nécessaire (et faite par l'adapter).
 >
 > **v0.7.4** — `mem-historize` + renforcements doctrinaux. (1) **Nouveau skill `mem-historize`** : déplace un projet terminé vers `10-episodes/archived/{slug}/` pour le sortir du scope par défaut des skills d'accès (`mem-recall`, `mem-list`, `mem-search`, `mem-digest`) et réduire la consommation tokens du briefing au démarrage. Réversible via `--revive`. Délégation à `scripts/mem-historize.py` (versionné, idempotent, pattern when-to-script). Patch atomique de `context.md` (phase, archived_at, display suffix `[archived]`) + `shutil.move` du dossier. (2) **Bloc doctrinal `core/procedures/_archived.md`** qui définit la règle de résolution (projets d'abord, archivés ensuite) et la matrice de comportement par skill (refuse / skip / collapse par défaut, override `--include-archived` / `--from-archived` / `--allow-archived` selon le contexte). 6 skills d'accès patchés (`mem-recall`, `mem-list`, `mem-search`, `mem-digest`, `mem-archive`, `mem-archeo*`). `rebuild-vault-index.py` rend une section `## Archived projects` séparée. i18n EN/FR/ES/DE/RU étendue. (3) **Renforcement `mem-promote-domain`** : mode CREATE vs EXTEND automatique (idempotent sur ré-invocation), nouvelles sources `--from-sub-zone` / `--from-tag` pour promouvoir des atomes existants hors `00-inbox/`, override anti-drift `--allow-2-items` documenté. Distinction move-vs-retag clarifiée (notes inbox déplacées, atomes transverses retaggés en place). (4) **Renforcement `_linking.md`** : invariant binding sur la résolution des wikilinks dans la prose persistée (DOIT résoudre au moment de l'écriture, sinon backticks ou TODO marqué) + politique de fix rétroactif sur archives immuables. Scanner patche le bug stem-resolution (`[[X.md]]` résout maintenant comme `[[X]]`).
@@ -35,6 +38,7 @@ SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fage
 
 - [Présentation](#présentation)
 - [Fonctionnement](#fonctionnement)
+- [Mode MCP (v0.8.0)](#mode-mcp-v080)
 - [Installation](#installation)
 - [Architecture](#architecture)
 - [Commandes](#commandes)
@@ -54,19 +58,23 @@ Les CLI LLM agentiques n'ont pas de mémoire entre les sessions. Après un `/cle
 
 SecondBrain installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau utilisateur (dans `~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/` ou `~/.copilot/` selon la CLI). Le contexte devient disponible depuis n'importe quel projet sur le poste.
 
+Depuis la **v0.8.0**, un serveur MCP `secondbrain-memory-kit` expose en plus les 24 skills comme outils MCP natifs — utilisés en priorité quand disponibles, avec fallback transparent vers les skills. Voir [Mode MCP](#mode-mcp-v080).
+
 **Gain mesurable** : la reprise de session consomme environ 2× moins de tokens qu'un re-briefing manuel équivalent.
 
-### CLI supportées
+### CLI et apps desktop supportées
 
-| CLI | Maturité | Surface d'installation |
-|---|---|---|
-| **Claude Code** | Référence, éprouvée en production | Skills + slash commands + bloc `CLAUDE.md` + permissions |
-| **Gemini CLI** | Fonctionnel, validé en conditions réelles | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
-| **Codex** | Fonctionnel, validé en conditions réelles | Prompts + skills |
-| **Mistral Vibe** | Fonctionnel, validé en conditions réelles | Skills dans `~/.vibe/skills/` + bloc injecté dans `~/.vibe/AGENTS.md` |
-| **GitHub Copilot CLI** | Fonctionnel (v0.7.5) | Skills dans `~/.copilot/skills/` (chacun expose son slash command natif) + bloc injecté dans `~/.copilot/copilot-instructions.md` |
+| Cible | Maturité | MCP (v0.8.0) | Skills fallback |
+|---|---|---|---|
+| **Claude Code** | Référence, éprouvée en production | ✅ `~/.claude.json` | Skills + slash commands + bloc `CLAUDE.md` + permissions |
+| **Claude Desktop** | Fonctionnel (v0.8.0) | ✅ `~/AppData/Roaming/Claude/claude_desktop_config.json` | (pas de skills, MCP only) |
+| **Codex CLI** | Fonctionnel, validé en conditions réelles | ✅ `~/.codex/config.toml` (`[mcp_servers.secondbrain-memory-kit]`) | Prompts + skills |
+| **Codex Desktop** | Fonctionnel (v0.8.0) | ✅ via héritage de Codex CLI | (partage de la config Codex CLI) |
+| **GitHub Copilot CLI** | Fonctionnel (v0.7.5) | ✅ `~/.copilot/mcp-config.json` | Skills dans `~/.copilot/skills/` + bloc dans `~/.copilot/copilot-instructions.md` |
+| **Mistral Vibe** | Fonctionnel, validé en conditions réelles | ✅ `~/.vibe/config.toml` (`[[mcp_servers]]`) | Skills dans `~/.vibe/skills/` + bloc dans `~/.vibe/AGENTS.md` |
+| **Gemini CLI** | Fonctionnel, validé en conditions réelles | ✅ `~/.gemini/settings.json` (`mcpServers`) | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
 
-Le script d'installation détecte automatiquement les CLI présentes sur le poste et ne déploie que les adapters correspondants.
+Le script d'installation détecte automatiquement les CLI/apps présentes sur le poste et ne déploie que les adapters correspondants. Le serveur MCP est installé une fois via `pipx`, puis sa déclaration est injectée dans la config MCP de chaque cible compatible.
 
 ---
 
@@ -88,12 +96,56 @@ Toutes les **instructions destinées au LLM** (procédures, frontmatter, tags, v
 
 ---
 
+## Mode MCP (v0.8.0)
+
+Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 24 skills `mem-*` comme outils MCP natifs consommables par toute CLI ou app desktop compatible MCP. Quand le serveur est démarré, l'agent invoque les outils en priorité (logique métier exécutée en Python, déterministe, économe en tokens). Sinon, il retombe automatiquement sur les skills classiques.
+
+### Stack et installation
+
+- **Framework** : `fastmcp` 2.x (standalone, pas le SDK officiel intégré) — choisi pour le `Client` in-memory qui rend les tests pytest triviaux sans subprocess stdio.
+- **Validation** : Pydantic v2 (args + retours typés), sérialisés automatiquement en `structuredContent` MCP.
+- **Build** : hatchling + uv (Python ≥3.12), packaging via `pipx install ./mcp-server`.
+- **Tests** : pytest + pytest-asyncio + pytest-cov, **114 tests, 94 % coverage**, fixture `vault_tmp` qui copie un mini-vault de référence dans `tmp_path` à chaque test.
+- **Transport** : stdio uniquement (lancé par le client CLI à chaque session).
+
+`deploy.ps1` / `deploy.sh` détecte `pipx`, installe ou met à jour `memory-kit-mcp`, écrit `~/.memory-kit/config.json` (vault, scope, langue, kit_repo), et inject la déclaration MCP dans les configs des cibles compatibles. En cas de WinError 32 (binaire verrouillé par une CLI active), l'upgrade est différé proprement et la version précédente reste fonctionnelle.
+
+### Inventaire des 24 outils
+
+| Catégorie | Outils MCP (snake_case) | État v0.8.0 |
+|---|---|---|
+| Cycle session | `mem_recall`, `mem_archive` | ✅ fonctionnels |
+| Inventaire | `mem_list`, `mem_search`, `mem_digest` | ✅ fonctionnels |
+| Vault management | `mem_rename`, `mem_merge`, `mem_reclass`, `mem_rollback_archive`, `mem_promote_domain`, `mem_historize` | ✅ fonctionnels |
+| Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (POC subset 4 catégories) |
+| Ingestion | `mem`, `mem_doc`, `mem_note`, `mem_principle`, `mem_goal`, `mem_person` | ✅ fonctionnels (`mem_doc` POC md/txt natif, autres formats via skills) |
+| Archeo | `mem_archeo`, `mem_archeo_context`, `mem_archeo_stack`, `mem_archeo_git`, `mem_archeo_atlassian` | ⏳ stubs MCP avec fallback explicite vers skills (port complet en v0.8.x) |
+
+Convention de nommage : `mem-X` (kebab côté skills/CLI/langage naturel) ↔ `mem_X` (snake côté outils MCP / Python). Les invocations utilisateur (slash commands, intents) ne changent pas.
+
+### Pattern MCP-first / skills-fallback
+
+Chaque procédure `core/procedures/mem-X.md` résolue par `deploy.ps1` est préfixée par un bloc `_mcp-first.md` qui indique :
+
+> Si l'outil `mcp__secondbrain-memory-kit__mem_X` est disponible, l'invoquer. Sinon, exécuter la procédure ci-dessous.
+
+Le LLM décide à l'invocation, sans intervention de l'utilisateur. Les CLI sans MCP (cas où l'utilisateur n'a pas installé `pipx`, ou serveur non démarré) gardent la même expérience qu'avant — les skills exécutent la procédure complète comme en v0.7.x.
+
+### Source de vérité
+
+`core/procedures/mem-X.md` reste la **source de vérité fonctionnelle**. Le module Python `mcp-server/src/memory_kit_mcp/tools/X.py` en est la traduction exécutable. Discipline de cohérence : tout changement dans une procédure doit s'accompagner d'un changement dans le module Python correspondant (et vice-versa) dans la même PR.
+
+Voir `docs/architecture/v0.8.0-mcp-server-cadrage.md` pour le cadrage complet (5 axes structurants, 13 sections).
+
+---
+
 ## Installation
 
 ### Prérequis
 
 - **PowerShell 7+** (`pwsh`) sur Windows, **ou** **bash** sur macOS/Linux/git-bash.
-- **Au moins une CLI supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/` ou `~/.copilot/`).
+- **Au moins une CLI ou app desktop supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`, `~/.copilot/`, `~/AppData/Roaming/Claude/` selon la cible).
+- **`pipx`** (recommandé) ou `pip` — pour installer le serveur MCP `secondbrain-memory-kit` via `deploy.ps1`. Sans `pipx`, le déploiement bascule sur `pip install --user` ; sans Python, le serveur MCP est skip et les CLI restent en mode skills classique. Voir [Mode MCP](#mode-mcp-v080).
 - **Obsidian** (optionnel) — pour visualiser le vault sous forme de graphe.
 - **`uv`** (optionnel) — requis uniquement pour `/mem-doc` sur les formats non-natifs (`.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html`). Voir [Formats supportés par `/mem-doc`](#formats-supportés-par-mem-doc). Installation : <https://docs.astral.sh/uv/>.
 
@@ -120,13 +172,16 @@ Le script détecte les CLI présentes, déploie l'adapter correspondant à chacu
 
 ### Surfaces installées par plateforme
 
-| CLI | Fichiers déployés |
-|---|---|
-| Claude Code | `~/.claude/commands/mem-*.md`, `~/.claude/skills/mem-*.md`, `memory-kit.json`, bloc dans `CLAUDE.md`, vault ajouté à `permissions.additionalDirectories` dans `settings.json` |
-| Gemini CLI | Extension dans `~/.gemini/extensions/memory-kit/`, `memory-kit.json`, activation dans `extension-enablement.json` |
-| Codex | `~/.codex/prompts/mem-*.md`, `~/.codex/skills/mem-*/SKILL.md`, `memory-kit.json` |
-| Mistral Vibe | `~/.vibe/AGENTS.md` (bloc injecté), `~/.vibe/skills/mem-*/SKILL.md` |
-| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` (bloc injecté), `~/.copilot/skills/mem-*/SKILL.md`, `memory-kit.json`. Override du config dir via `$COPILOT_HOME`. |
+| Cible | Skills fallback (déployés) | MCP server (v0.8.0) |
+|---|---|---|
+| Claude Code | `~/.claude/commands/mem-*.md`, `~/.claude/skills/mem-*.md`, `memory-kit.json`, bloc dans `CLAUDE.md`, vault ajouté à `permissions.additionalDirectories` dans `settings.json` | `~/.claude.json` → `mcpServers.secondbrain-memory-kit` |
+| Claude Desktop | (pas de skills) | `~/AppData/Roaming/Claude/claude_desktop_config.json` → `mcpServers.secondbrain-memory-kit` |
+| Codex CLI | `~/.codex/prompts/mem-*.md`, `~/.codex/skills/mem-*/SKILL.md`, `memory-kit.json` | `~/.codex/config.toml` → `[mcp_servers.secondbrain-memory-kit]` (markers `# MEMORY-KIT:START/END`) |
+| Codex Desktop | (partage de la config Codex CLI) | héritage `~/.codex/config.toml` |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` (bloc injecté), `~/.copilot/skills/mem-*/SKILL.md`, `memory-kit.json`. Override via `$COPILOT_HOME` | `~/.copilot/mcp-config.json` → `mcpServers.secondbrain-memory-kit` |
+| Mistral Vibe | `~/.vibe/AGENTS.md` (bloc injecté), `~/.vibe/skills/mem-*/SKILL.md` | `~/.vibe/config.toml` → `[[mcp_servers]]\nname = "secondbrain-memory-kit"` (markers) |
+| Gemini CLI | Extension dans `~/.gemini/extensions/memory-kit/`, `memory-kit.json`, activation dans `extension-enablement.json` | `~/.gemini/settings.json` → `mcpServers.secondbrain-memory-kit` |
+| **Tous (commun MCP)** | — | Binaire `memory-kit-mcp` installé via `pipx install ./mcp-server` + `~/.memory-kit/config.json` (vault, scope, langue, kit_repo) |
 
 ### Choix du vault et de la langue
 
@@ -193,6 +248,15 @@ SecondBrain/
 │   ├── codex/                  Prompts + skills
 │   ├── mistral-vibe/           Bloc AGENTS.md + skills (format Anthropic)
 │   └── copilot-cli/            Bloc copilot-instructions.md + skills (format Anthropic)
+├── mcp-server/                 Serveur MCP Python (v0.8.0)
+│   ├── pyproject.toml          hatchling + fastmcp ≥2.13 + Pydantic v2
+│   ├── src/memory_kit_mcp/
+│   │   ├── server.py           FastMCP instance + main() entry stdio
+│   │   ├── config.py           ~/.memory-kit/config.json loader
+│   │   ├── tools/              24 outils mem_* (1 fichier par tool)
+│   │   └── vault/              Primitives partagées (paths, frontmatter,
+│   │                           atomic_io, scanner)
+│   └── tests/                  pytest, 114 tests, 94% coverage
 ├── memory/                     Vault Obsidian local (non versionné — voir .gitignore)
 │   ├── index.md                Catalogue maître à la racine
 │   ├── 00-inbox/               Captation brute non qualifiée
@@ -367,8 +431,9 @@ python scripts/enforce-linking.py --vault ~/vault
 | Phase | État | Portée |
 |---|---|---|
 | **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI. |
+| **Phase 3** | **Terminée (v0.8.0)** | Serveur MCP `secondbrain-memory-kit` (Python, fastmcp 2.x). 24 outils MCP, 7 cibles auto-configurées (Claude Code/Desktop, Codex CLI/Desktop, Copilot CLI, Mistral Vibe, Gemini CLI). Pattern MCP-first / skills-fallback : les adapters skills restent en place et servent de fallback transparent. |
 | **Phase 2** | À venir | Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale ; promotion `CollectiveBrain` (flag `collective` déjà persisté en v0.5). |
-| **Phase 3** | À venir | Migration de la logique vers un serveur MCP `memory-kit`. Les adapters deviennent des shims délégant au MCP ; une seule implémentation pour toutes les CLI compatibles MCP. |
+| **Phase 3.x** | À venir | Port complet des 5 outils archeo (actuellement stubs MCP avec fallback skills) + intégration des doc-readers Python (`scripts/doc-readers/`) dans `mem_doc` pour PDF/DOCX/PPTX/XLSX/CSV/HTML. |
 
 ---
 
@@ -377,28 +442,40 @@ python scripts/enforce-linking.py --vault ~/vault
 Retirer les installations correspondant aux CLI déployées. Chemins par défaut ci-dessous ; adapter si `CLAUDE_CONFIG_DIR` (ou équivalent) est défini.
 
 ```powershell
-# Claude Code
+# Serveur MCP secondbrain-memory-kit (v0.8.0)
+pipx uninstall memory-kit-mcp
+Remove-Item "$HOME\.memory-kit\config.json" -Force
+# Retirer manuellement l'entrée mcpServers.secondbrain-memory-kit dans :
+#   $HOME\.claude.json
+#   $HOME\AppData\Roaming\Claude\claude_desktop_config.json
+#   $HOME\.copilot\mcp-config.json
+#   $HOME\.gemini\settings.json
+# Retirer manuellement la section MEMORY-KIT (entre markers # MEMORY-KIT:START/END) dans :
+#   $HOME\.codex\config.toml
+#   $HOME\.vibe\config.toml
+
+# Claude Code (skills fallback)
 Remove-Item "$HOME\.claude\commands\mem-*.md" -Force
 Remove-Item "$HOME\.claude\skills\mem-*.md" -Force
 Remove-Item "$HOME\.claude\memory-kit.json" -Force
 # Retirer manuellement le bloc MEMORY-KIT dans $HOME\.claude\CLAUDE.md
 # Retirer manuellement les patterns allow mem-* dans $HOME\.claude\settings.json
 
-# Gemini CLI
+# Gemini CLI (skills fallback)
 Remove-Item "$HOME\.gemini\extensions\memory-kit" -Recurse -Force
 Remove-Item "$HOME\.gemini\memory-kit.json" -Force
 # Retirer l'entrée memory-kit dans $HOME\.gemini\extension-enablement.json
 
-# Codex
+# Codex CLI (skills fallback)
 Remove-Item "$HOME\.codex\prompts\mem-*.md" -Force
 Remove-Item "$HOME\.codex\skills\mem-*" -Recurse -Force
 Remove-Item "$HOME\.codex\memory-kit.json" -Force
 
-# Mistral Vibe
+# Mistral Vibe (skills fallback)
 Remove-Item "$HOME\.vibe\skills\mem-*" -Recurse -Force
 # Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\AGENTS.md
 
-# GitHub Copilot CLI
+# GitHub Copilot CLI (skills fallback)
 Remove-Item "$HOME\.copilot\skills\mem-*" -Recurse -Force
 Remove-Item "$HOME\.copilot\memory-kit.json" -Force
 # Retirer manuellement le bloc MEMORY-KIT dans $HOME\.copilot\copilot-instructions.md
