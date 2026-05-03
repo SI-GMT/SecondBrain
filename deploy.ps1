@@ -1284,6 +1284,15 @@ function Deploy-McpServer {
         Add-McpServerToVibeTomlConfig -ConfigPath $vibeConfig -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Mistral Vibe'
     }
 
+    if ($DetectedConfigs.ContainsKey('Gemini')) {
+        # Gemini CLI lit ses serveurs MCP depuis ~/.gemini/settings.json
+        # section mcpServers.{name}.command/args (meme format que Claude Code,
+        # Copilot CLI, Claude Desktop). Champs extras 'trust' et 'description'
+        # acceptes mais non injectes (l'utilisateur peut les ajouter manuellement).
+        $geminiSettings = Join-Path $DetectedConfigs['Gemini'] 'settings.json'
+        Add-McpServerToJsonConfig -ConfigPath $geminiSettings -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Gemini CLI'
+    }
+
     # Cibles desktop : detection independante des CLI command-line. Leur config
     # MCP est lue par les apps desktop, pas par les binaires CLI.
     $claudeDesktopConfig = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'
@@ -1294,9 +1303,8 @@ function Deploy-McpServer {
         Write-Skip "Claude Desktop non detecte ($claudeDesktopDir absent)"
     }
 
-    # Gemini CLI : verifier le support MCP avant integration. Skip pour
-    # l'instant (pas implemente cote mcp-iris-connector non plus).
-    # Codex Desktop : chemin a investiguer (pas implemente).
+    # Codex Desktop : chemin a investiguer (pas detecte sur ce poste, attente
+    # info utilisateur sur le bon emplacement).
 }
 
 # ============================================================
