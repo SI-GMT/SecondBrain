@@ -64,12 +64,33 @@ Limitation connue de `deploy.sh` sous Git Bash Windows : les heredocs Python uti
 
 ## Discipline de cohérence `scripts/mem-health-scan.py` ↔ `memory_kit_mcp.health.scan`
 
-L'audit hygiène 8-catégories existe en deux endroits par construction :
+L'audit hygiène existe en deux endroits par construction :
 
 - **`mcp-server/src/memory_kit_mcp/health/scan.py`** — bibliothèque Python importable, source de vérité côté serveur MCP. Utilisée par `tools/health_scan.py` et `tools/health_repair.py`.
 - **`scripts/mem-health-scan.py`** — script versionné autonome (doctrine `_when-to-script.md`), utilisable sans `pip install memory-kit-mcp`. Maintient sa propre copie de la logique pour préserver l'usage standalone (utilisateurs en mode skills sans MCP server installé).
 
-Tout ajout ou modification de catégorie / heuristique doit être co-commité dans les deux endroits. Les noms de catégories canoniques sont alignés (`malformed-frontmatter | stray-zone-md | empty-md-at-root | missing-zone-index | missing-display | dangling-wikilinks | orphan-atoms | missing-archeo-hashes`). En cas de drift détecté, le script versionné est la source canonique des règles, la lib MCP doit s'aligner.
+Tout ajout ou modification de catégorie vault / heuristique doit être co-commité dans les deux endroits. Les noms de catégories canoniques sont alignés (`malformed-frontmatter | stray-zone-md | empty-md-at-root | missing-zone-index | missing-display | dangling-wikilinks | orphan-atoms | missing-archeo-hashes`). En cas de drift détecté, le script versionné est la source canonique des règles, la lib MCP doit s'aligner.
+
+**Divergence intentionnelle — 9e catégorie `mcp-tool-spec-drift` (v0.9.0)** : la lib MCP expose une catégorie supplémentaire qui audite **le kit repo** (`core/procedures/` vs `mcp-server/src/memory_kit_mcp/sync.json`), pas le vault. Le standalone n'a pas d'équivalent par design — il scanne des vaults sur des machines qui peuvent ne pas avoir le kit installé. Cette divergence est documentée dans l'en-tête des deux modules.
+
+## Discipline de cohérence `scripts/doc-readers/*.py` ↔ `memory_kit_mcp.readers.*`
+
+Les 6 readers de documents (PDF, DOCX, PPTX, XLSX, CSV, HTML) existent en deux endroits par construction (depuis v0.9.0) :
+
+- **`mcp-server/src/memory_kit_mcp/readers/`** — package Python interne au serveur MCP, dispatcher `read_document(path) -> tuple[str, list[str]]` + 6 modules avec API uniforme `extract(path)`. Imports lazy : si la dep manque, raise `DocReaderDependencyError` avec hint `pip install memory-kit-mcp[doc-readers]`. Utilisé par `tools/doc.py`.
+- **`scripts/doc-readers/{read_pdf,read_docx,read_pptx,read_xlsx,read_csv,read_html}.py`** — scripts versionés autonomes invoqués via `uv run` par la procédure skills `core/procedures/mem-doc.md`. Source canonique des heuristiques (seuil scan PDF=100 chars, MAX_ROWS=200/MAX_COLS=30 pour xlsx/csv, NOISE_TAGS html, fallback encodage utf-8-sig→utf-8→cp1252→latin-1, etc.).
+
+Tout ajout ou modification de seuil / dep / format doit être co-commité dans les deux endroits. La version standalone reste la référence canonique (cf. doctrine `_when-to-script.md`).
+
+## Manifest de spec-drift `mcp-server/src/memory_kit_mcp/sync.json`
+
+Le manifest `sync.json` (depuis v0.9.0) trace le hash SHA-256 du body (frontmatter strippé, LF normalisé) de chaque procédure `core/procedures/mem-X.md` au moment de la dernière re-synchronisation manuelle avec son module Python `tools/X.py`. La 9e catégorie `mcp-tool-spec-drift` du health-scan compare le hash courant à celui du manifest et émet un finding `info` si divergence — filet doctrinal contre la dérive silencieuse.
+
+Workflow lors d'une modification core ↔ Python :
+
+1. Modifier `core/procedures/mem-X.md` ET `mcp-server/src/memory_kit_mcp/tools/X.py` ensemble (même commit).
+2. Lancer `python -m memory_kit_mcp.sync update --kit-repo C:\_PROJETS\DEVOPS\SecondBrain` pour recalculer les hashes.
+3. Inclure `sync.json` dans le même commit. Le scanner ne flaggera pas tant que `sync.json` est aligné.
 
 ## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, etc.)
 
