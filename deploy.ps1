@@ -1080,7 +1080,8 @@ function Add-McpServerToJsonConfig {
         [Parameter(Mandatory=$true)][string]$ConfigPath,
         [Parameter(Mandatory=$true)][string]$ServerName,
         [Parameter(Mandatory=$true)][string]$Command,
-        [string]$Label = ''
+        [string]$Label = '',
+        [string[]]$LegacyServerNames = @()  # noms a supprimer (migration rename)
     )
     # Pattern commun Claude Code / Copilot CLI : { "mcpServers": { "{name}":
     # { "command": ..., "args": [] } } }. Idempotent : preserve le reste.
@@ -1105,6 +1106,16 @@ function Add-McpServerToJsonConfig {
         $existing['mcpServers'] = [ordered]@{}
     }
     $servers = $existing['mcpServers']
+
+    # Cleanup legacy : retire les noms obsoletes (migration rename, ex
+    # 'memory-kit' -> 'secondbrain-memory-kit'). Idempotent.
+    $labelTagPre = if ($Label) { " ($Label)" } else { '' }
+    foreach ($legacy in $LegacyServerNames) {
+        if ($legacy -ne $ServerName -and $servers.Contains($legacy)) {
+            $servers.Remove($legacy)
+            Write-Ok "$ConfigPath$labelTagPre : mcpServers.$legacy supprime (legacy)"
+        }
+    }
 
     $newServer = [ordered]@{
         command = $Command
@@ -1247,7 +1258,7 @@ function Deploy-McpServer {
         [Parameter(Mandatory=$true)][hashtable]$DetectedConfigs
     )
     Write-Host ''
-    Write-Step "> Deploiement : MCP server memory-kit (v0.8.0)"
+    Write-Step "> Deploiement : MCP server secondbrain-memory-kit (v0.8.0)"
 
     $installed = Install-McpServerPackage -KitRoot $KitRoot
     if (-not $installed) {
@@ -1266,22 +1277,22 @@ function Deploy-McpServer {
     # Inject MCP server dans les configs CLI compatibles
     if ($DetectedConfigs.ContainsKey('Claude')) {
         $claudeConfig = Join-Path $HOME '.claude.json'
-        Add-McpServerToJsonConfig -ConfigPath $claudeConfig -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Claude Code'
+        Add-McpServerToJsonConfig -ConfigPath $claudeConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Claude Code'
     }
     if ($DetectedConfigs.ContainsKey('Codex')) {
         $codexConfig = Join-Path $DetectedConfigs['Codex'] 'config.toml'
-        Add-McpServerToTomlConfig -ConfigPath $codexConfig -SectionName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Codex'
+        Add-McpServerToTomlConfig -ConfigPath $codexConfig -SectionName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -Label 'Codex'
     }
     if ($DetectedConfigs.ContainsKey('Copilot')) {
         $copilotMcpConfig = Join-Path $DetectedConfigs['Copilot'] 'mcp-config.json'
-        Add-McpServerToJsonConfig -ConfigPath $copilotMcpConfig -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Copilot CLI'
+        Add-McpServerToJsonConfig -ConfigPath $copilotMcpConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Copilot CLI'
     }
     if ($DetectedConfigs.ContainsKey('Vibe')) {
         # Mistral Vibe supporte MCP via ~/.vibe/config.toml (format
         # [[mcp_servers]] table d'arrays). Pattern verifie en lisant le
         # config existant de mcp-iris-connector qui s'y installe deja.
         $vibeConfig = Join-Path $DetectedConfigs['Vibe'] 'config.toml'
-        Add-McpServerToVibeTomlConfig -ConfigPath $vibeConfig -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Mistral Vibe'
+        Add-McpServerToVibeTomlConfig -ConfigPath $vibeConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -Label 'Mistral Vibe'
     }
 
     if ($DetectedConfigs.ContainsKey('Gemini')) {
@@ -1290,7 +1301,7 @@ function Deploy-McpServer {
         # Copilot CLI, Claude Desktop). Champs extras 'trust' et 'description'
         # acceptes mais non injectes (l'utilisateur peut les ajouter manuellement).
         $geminiSettings = Join-Path $DetectedConfigs['Gemini'] 'settings.json'
-        Add-McpServerToJsonConfig -ConfigPath $geminiSettings -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Gemini CLI'
+        Add-McpServerToJsonConfig -ConfigPath $geminiSettings -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Gemini CLI'
     }
 
     # Cibles desktop : detection independante des CLI command-line. Leur config
@@ -1298,7 +1309,7 @@ function Deploy-McpServer {
     $claudeDesktopConfig = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'
     $claudeDesktopDir = Split-Path -Parent $claudeDesktopConfig
     if (Test-Path $claudeDesktopDir) {
-        Add-McpServerToJsonConfig -ConfigPath $claudeDesktopConfig -ServerName 'memory-kit' -Command 'memory-kit-mcp' -Label 'Claude Desktop'
+        Add-McpServerToJsonConfig -ConfigPath $claudeDesktopConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Claude Desktop'
     } else {
         Write-Skip "Claude Desktop non detecte ($claudeDesktopDir absent)"
     }
@@ -1548,7 +1559,7 @@ if ($deployed.Count -gt 0) {
             'Claude Code'        { Write-Host "  [Claude Code]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
             'Gemini CLI'         { Write-Host "  [Gemini CLI]         /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
             'Codex (OpenAI)'     { Write-Host "  [Codex]              /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
-            'Mistral Vibe'       { Write-Host "  [Mistral Vibe]       dis 'charge mon contexte memoire' (Vibe expose le MCP memory-kit + skills mais pas de slash commands)" -ForegroundColor Cyan }
+            'Mistral Vibe'       { Write-Host "  [Mistral Vibe]       dis 'charge mon contexte memoire' (Vibe expose le MCP secondbrain-memory-kit + skills mais pas de slash commands)" -ForegroundColor Cyan }
             'GitHub Copilot CLI' { Write-Host "  [Copilot CLI]        /mem-recall (dans une nouvelle session)" -ForegroundColor Cyan }
         }
     }
