@@ -1,0 +1,7 @@
+description = "Universal ingestion router. Receives free-form content, segments it into atoms, and classifies each atom into the right vault zone via a heuristic cascade. Zero-friction default path. Trigger when the user says 'note this', 'save', 'capture this', 'add to memory' without specifying a zone."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Content to ingest. The router decides where it goes. Options: --scope personal|work, --zone X (force the zone), --project/--domain {slug} (force attachment), --no-confirm, --dry-run.
+'''

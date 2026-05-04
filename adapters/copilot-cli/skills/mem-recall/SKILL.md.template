@@ -1,0 +1,6 @@
+---
+name: mem-recall
+description: "Load a project's context from the memory vault to resume a previous session without re-briefing. AUTO-TRIGGER (without waiting for the user to type /mem-recall) as soon as the user expresses, in natural language — a resumption intent ('let's resume', 'let's continue', 'where were we on X', 'back to it') OR a need to query memory ('do you remember…', 'what did we decide about…', 'what did we do again?', 'remind me'). Also explicitly invocable via /mem-recall with an optional project name. If the target project is ambiguous, ask for confirmation before executing."
+---
+
+{{PROCEDURE}}

@@ -1,0 +1,6 @@
+---
+name: mem-historize
+description: "Move a finished project into the archived zone (10-episodes/archived/{slug}/) so it stays in the vault for long-term reference but is excluded by default from access skills (mem-recall, mem-list, mem-search, mem-digest). Reduces token consumption of the briefing at session start. Reversible via --revive. Delegates to scripts/mem-historize.py (versioned, idempotent, dry-run by default per the when-to-script doctrine). Patches context.md frontmatter (phase: archived, archived_at, display suffix [archived]) and moves the folder atomically. AUTO-TRIGGER when the user says — 'archive le projet X, c''est fini', 'mets ce projet de côté', 'archive ce projet terminé', 'historise ce projet', 'ressuscite X', 'remets X en actif'. The rule matrix governing how other skills treat archived projects lives in core/procedures/_archived.md."
+---
+
+{{PROCEDURE}}

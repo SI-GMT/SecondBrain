@@ -1,0 +1,13 @@
+# Normalisation des fins de ligne : LF dans le dépôt
+* text=auto eol=lf
+
+# Scripts Windows : CRLF à la sortie (attendu par cmd/powershell hérités)
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaires (au cas où)
+*.png binary
+*.jpg binary
+*.pdf binary
+*.zip binary

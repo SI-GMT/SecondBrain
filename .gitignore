@@ -1,0 +1,23 @@
+.DS_Store
+Thumbs.db
+
+# Le vault memoire est local a chaque poste : on ne versionne que le squelette
+memory/*
+!memory/index.md
+!memory/archives/
+!memory/projects/
+
+# Dans archives/ et projects/, on ne garde que le .gitkeep
+memory/archives/*
+!memory/archives/.gitkeep
+memory/projects/*
+!memory/projects/.gitkeep
+
+# Config Obsidian locale au poste
+memory/.obsidian/
+
+# Fichiers temporaires Obsidian
+*.tmp.*
+
+# Settings locaux Claude Code (par poste)
+.claude/settings.local.json

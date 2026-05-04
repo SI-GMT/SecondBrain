@@ -1,0 +1,7 @@
+description = "Ingest a principle (heuristic, red line, value, action rule) into 40-principles/. Explicit shortcut. The router infers the constraint level from the tone."
+prompt = '''
+{{PROCEDURE}}
+
+---
+Principle content. Options: --scope personal|work, --force red-line|heuristic|preference, --domain X, --project {slug}, --no-confirm, --dry-run.
+'''
