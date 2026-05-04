@@ -1001,6 +1001,85 @@ function Test-PipxAvailable {
     return $null -ne (Get-Command pipx -ErrorAction SilentlyContinue)
 }
 
+# Tente d'installer pipx automatiquement si absent. Strategie cascadee :
+# 1. winget (gestionnaire de paquets natif Windows 10+).
+# 2. scoop si dispo (frequent chez les devs Windows).
+# 3. Fallback universel : `python -m pip install --user pipx` (avec
+#    --break-system-packages si requis).
+# Apres install, ajoute le scripts dir Python au PATH de la session courante
+# si pipx n'est pas encore visible. Retour : $true si pipx dispo en sortie.
+function Install-Pipx {
+    if (Test-PipxAvailable) { return $true }
+    Write-Step "Installation automatique de pipx..."
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        $null = & winget install --id pypa.pipx -e --silent --accept-package-agreements --accept-source-agreements 2>&1
+        Update-PipxOnPath
+        if (Test-PipxAvailable) {
+            Write-Ok "pipx installe via winget"
+            return $true
+        }
+        Write-Warn2 "winget install pipx a echoue, tentative fallback pip --user..."
+    }
+
+    if (Get-Command scoop -ErrorAction SilentlyContinue) {
+        $null = & scoop install pipx 2>&1
+        Update-PipxOnPath
+        if (Test-PipxAvailable) {
+            Write-Ok "pipx installe via scoop"
+            return $true
+        }
+    }
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) { $python = Get-Command python3 -ErrorAction SilentlyContinue }
+    if (-not $python) {
+        Write-Warn2 "python introuvable — impossible d'installer pipx automatiquement"
+        return $false
+    }
+
+    & $python.Source -m pip install --user pipx 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        & $python.Source -m pip install --user --break-system-packages pipx 2>&1 | Out-Null
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "pipx installe via pip --user"
+        Update-PipxOnPath
+        if (Test-PipxAvailable) { return $true }
+        Write-Warn2 "pipx installe mais introuvable sur PATH apres ajout du scripts dir Python."
+        return $false
+    }
+    Write-Warn2 "Echec install automatique de pipx."
+    return $false
+}
+
+# pipx ensurepath ne touche que le profil utilisateur (registry) — pas le PATH
+# de la session courante. On ajoute le scripts dir Python (--user site-packages)
+# au PATH de la session pour que pipx soit appelable immediatement.
+function Update-PipxOnPath {
+    if (Test-PipxAvailable) {
+        & pipx ensurepath 2>&1 | Out-Null
+        return
+    }
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) { $python = Get-Command python3 -ErrorAction SilentlyContinue }
+    if (-not $python) { return }
+    $userBase = & $python.Source -c "import site; print(site.USER_BASE)" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $userBase) {
+        $scriptsDir = Join-Path $userBase 'Scripts'
+        if (Test-Path $scriptsDir) {
+            $env:PATH = "$scriptsDir;$env:PATH"
+        }
+        $binDir = Join-Path $userBase 'bin'
+        if (Test-Path $binDir) {
+            $env:PATH = "$binDir;$env:PATH"
+        }
+    }
+    if (Test-PipxAvailable) {
+        & pipx ensurepath 2>&1 | Out-Null
+    }
+}
+
 function Install-McpServerPackage {
     param(
         [Parameter(Mandatory=$true)][string]$KitRoot
@@ -1014,6 +1093,8 @@ function Install-McpServerPackage {
     # Si binaire deja sur PATH, on tolere un echec d'upgrade (WinError 32 :
     # binaire utilise par une session CLI active qui a charge le serveur MCP).
     $alreadyInstalled = $null -ne (Get-Command memory-kit-mcp -ErrorAction SilentlyContinue)
+
+    [void](Install-Pipx)
 
     if (Test-PipxAvailable) {
         Write-Step "Install/upgrade memory-kit-mcp via pipx..."
@@ -1036,7 +1117,7 @@ function Install-McpServerPackage {
         }
         Write-Step "Tentative fallback pip --user..."
     } else {
-        Write-Info "pipx non detecte. Recommande pour isoler le serveur : https://pipx.pypa.io"
+        Write-Warn2 "pipx indisponible apres tentative d'auto-install."
         if ($alreadyInstalled) {
             Write-Skip "Binaire memory-kit-mcp deja sur PATH — pas d'install pip --user."
             return $true
@@ -1266,10 +1347,27 @@ function Deploy-McpServer {
         return
     }
 
-    # Verifie que le binaire est sur le PATH (pipx ne l'ajoute pas toujours sans 'pipx ensurepath')
+    # Verifie que le binaire est sur le PATH. pipx ensurepath persiste l'ajout
+    # au profil utilisateur (registry Windows), mais le PATH de la session
+    # courante n'est pas rafraichi. On l'execute systematiquement et on
+    # injecte PIPX_BIN_DIR dans $env:PATH pour que la verification ci-dessous
+    # passe sans avoir a ouvrir un nouveau terminal.
     if (-not (Get-Command memory-kit-mcp -ErrorAction SilentlyContinue)) {
-        Write-Warn2 "Binaire 'memory-kit-mcp' non trouve sur PATH apres install."
-        Write-Info "Lance 'pipx ensurepath' (puis ouvre un nouveau terminal) ou ajoute le scripts dir Python au PATH."
+        Write-Step "Activation du PATH pipx (pipx ensurepath + injection session)..."
+        & pipx ensurepath 2>&1 | Out-Null
+        $pipxBinDir = & pipx environment --value PIPX_BIN_DIR 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $pipxBinDir) {
+            $pipxBinDir = Join-Path $HOME '.local\bin'
+        }
+        if (Test-Path $pipxBinDir) {
+            $env:PATH = "$pipxBinDir;$env:PATH"
+        }
+        if (Get-Command memory-kit-mcp -ErrorAction SilentlyContinue) {
+            Write-Ok "memory-kit-mcp accessible apres pipx ensurepath"
+        } else {
+            Write-Warn2 "Binaire 'memory-kit-mcp' introuvable meme apres pipx ensurepath."
+            Write-Info "Ouvre un nouveau terminal ou ajoute manuellement '$pipxBinDir' au PATH."
+        }
     }
 
     Write-McpServerConfig -VaultPath $VaultPath -KitRepo $KitRoot -Language $script:Language

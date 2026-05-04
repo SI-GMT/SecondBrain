@@ -292,14 +292,21 @@ resolve_language() {
     for s in "${supported[@]}"; do
         [[ "$s" == "$code" ]] && detected="$s" && break
     done
-    # Prompt si shell interactif
-    if [[ -t 0 && -t 1 ]]; then
-        echo "" >&2
-        _cyan "Conversational language for the LLM (the vault structure stays English)" >&2
-        printf '\033[0;90m  Supported: %s\033[0m\n' "${supported[*]}" >&2
-        printf '  Choose language [%s]: ' "$detected" >&2
-        local input
-        read -r input
+    # Prompt si controlling terminal accessible. On utilise /dev/tty plutot
+    # que [[ -t 0 && -t 1 ]] : la fonction est appelee dans un command
+    # substitution ($(resolve_language ...)) qui redirige stdout vers le pipe
+    # de capture, donc [[ -t 1 ]] est false alors que l'utilisateur est bien
+    # sur un terminal interactif. /dev/tty pointe toujours sur le terminal
+    # controlant, independamment des redirections de fd.
+    if [[ -r /dev/tty && -w /dev/tty ]]; then
+        {
+            echo ""
+            printf '\033[0;36m%s\033[0m\n' "Conversational language for the LLM (the vault structure stays English)"
+            printf '\033[0;90m  Supported: %s\033[0m\n' "${supported[*]}"
+            printf '  Choose language [%s]: ' "$detected"
+        } >/dev/tty
+        local input=""
+        read -r input </dev/tty || true
         if [[ -n "$input" ]]; then
             input="$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')"
             for s in "${supported[@]}"; do
@@ -308,7 +315,7 @@ resolve_language() {
                     return 0
                 fi
             done
-            _yellow "Unknown language '$input', falling back to '$detected'" >&2
+            printf '\033[1;33mUnknown language '\''%s'\'', falling back to '\''%s'\''\033[0m\n' "$input" "$detected" >/dev/tty
         fi
     fi
     echo "$detected"
@@ -1028,6 +1035,91 @@ ${block_content}"
 # Mistral Vibe + Claude Desktop). Codex Desktop herite de Codex CLI (meme
 # fichier ~/.codex/config.toml).
 
+# Tente d'installer pipx automatiquement si absent. Strategie cascadee :
+# 1. macOS + brew : `brew install pipx` (sans sudo, geste natif).
+# 2. Linux + gestionnaire systeme + sudo non-interactif : apt/dnf/pacman.
+# 3. Fallback universel : `python3 -m pip install --user pipx` (avec
+#    --break-system-packages si PEP 668 le requiert).
+# Apres install, ajoute ~/.local/bin au PATH de la session courante si pipx
+# n'est pas encore visible (pipx ensurepath ne touche que le profil shell).
+# Retour : 0 si pipx est dispo en sortie, 1 sinon.
+ensure_pipx() {
+    if command -v pipx &>/dev/null; then
+        return 0
+    fi
+    _cyan "Installation automatique de pipx..."
+
+    local os
+    os="$(uname -s)"
+
+    if [[ "$os" == "Darwin" ]] && command -v brew &>/dev/null; then
+        if brew install pipx >/dev/null 2>&1; then
+            _green "pipx installe via brew"
+            _ensure_pipx_on_path
+            command -v pipx &>/dev/null && return 0
+        else
+            _yellow "brew install pipx a echoue, tentative fallback pip --user..."
+        fi
+    fi
+
+    if [[ "$os" == "Linux" ]] && command -v sudo &>/dev/null; then
+        local pkg_cmd=""
+        if command -v apt-get &>/dev/null; then
+            pkg_cmd="apt-get install -y pipx"
+        elif command -v dnf &>/dev/null; then
+            pkg_cmd="dnf install -y pipx"
+        elif command -v pacman &>/dev/null; then
+            pkg_cmd="pacman -S --noconfirm python-pipx"
+        fi
+        if [[ -n "$pkg_cmd" ]] && sudo -n $pkg_cmd >/dev/null 2>&1; then
+            _green "pipx installe via gestionnaire systeme"
+            _ensure_pipx_on_path
+            command -v pipx &>/dev/null && return 0
+        fi
+    fi
+
+    local python_bin=""
+    if command -v python3 &>/dev/null; then
+        python_bin="python3"
+    elif command -v python &>/dev/null; then
+        python_bin="python"
+    fi
+    if [[ -z "$python_bin" ]]; then
+        _yellow "python introuvable — impossible d'installer pipx automatiquement"
+        return 1
+    fi
+
+    if "$python_bin" -m pip install --user pipx >/dev/null 2>&1; then
+        _green "pipx installe via pip --user"
+    elif "$python_bin" -m pip install --user --break-system-packages pipx >/dev/null 2>&1; then
+        _green "pipx installe via pip --user --break-system-packages"
+    else
+        _yellow "Echec install automatique de pipx."
+        return 1
+    fi
+    _ensure_pipx_on_path
+    command -v pipx &>/dev/null && return 0
+    _yellow "pipx installe mais introuvable sur PATH meme apres ajout ~/.local/bin."
+    return 1
+}
+
+# pipx ensurepath ajoute ~/.local/bin (ou equivalent) au profil shell, mais
+# pas au PATH de la session courante. On l'ajoute manuellement pour que la
+# suite du script puisse appeler pipx immediatement.
+_ensure_pipx_on_path() {
+    if ! command -v pipx &>/dev/null; then
+        for candidate in "$HOME/.local/bin" "/opt/homebrew/bin" "/usr/local/bin"; do
+            if [[ -x "$candidate/pipx" ]]; then
+                export PATH="$candidate:$PATH"
+                break
+            fi
+        done
+    fi
+    if command -v pipx &>/dev/null; then
+        pipx ensurepath >/dev/null 2>&1 || true
+    fi
+}
+
 install_mcp_server_package() {
     local kit_root="$1"
     local mcp_server_dir="$kit_root/mcp-server"
@@ -1040,6 +1132,8 @@ install_mcp_server_package() {
     if command -v memory-kit-mcp &>/dev/null; then
         already_installed=true
     fi
+
+    ensure_pipx || true
 
     if command -v pipx &>/dev/null; then
         _cyan "Install/upgrade memory-kit-mcp via pipx..."
@@ -1064,7 +1158,7 @@ install_mcp_server_package() {
         fi
         _cyan "Tentative fallback pip --user..."
     else
-        _info "pipx non detecte. Recommande pour isoler le serveur : https://pipx.pypa.io"
+        _yellow "pipx indisponible apres tentative d'auto-install."
         if [[ "$already_installed" == "true" ]]; then
             _gray "Binaire memory-kit-mcp deja sur PATH — pas d'install pip --user."
             return 0
@@ -1358,8 +1452,24 @@ deploy_mcp_server() {
     fi
 
     if ! command -v memory-kit-mcp &>/dev/null; then
-        _yellow "Binaire 'memory-kit-mcp' non trouve sur PATH apres install."
-        _info "Lance 'pipx ensurepath' (puis ouvre un nouveau terminal) ou ajoute le scripts dir Python au PATH."
+        # pipx ensurepath persiste l'ajout au profil shell (.bashrc/.zshrc).
+        # On l'exécute systématiquement et on rafraîchit le PATH de la
+        # session courante via PIPX_BIN_DIR pour que la verification ci-dessous
+        # passe sans avoir à ouvrir un nouveau terminal.
+        _cyan "Activation du PATH pipx (pipx ensurepath + injection session)..."
+        pipx ensurepath >/dev/null 2>&1 || true
+        local pipx_bin_dir=""
+        pipx_bin_dir="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+        [[ -z "$pipx_bin_dir" ]] && pipx_bin_dir="$HOME/.local/bin"
+        if [[ -d "$pipx_bin_dir" ]]; then
+            export PATH="$pipx_bin_dir:$PATH"
+        fi
+        if command -v memory-kit-mcp &>/dev/null; then
+            _green "memory-kit-mcp accessible apres pipx ensurepath"
+        else
+            _yellow "Binaire 'memory-kit-mcp' introuvable meme apres pipx ensurepath."
+            _info "Ouvre un nouveau terminal ou ajoute manuellement '$pipx_bin_dir' au PATH."
+        fi
     fi
 
     write_mcp_server_config "$vault_path" "$kit_root" "$LANGUAGE"
