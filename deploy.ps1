@@ -23,13 +23,31 @@
     Chemin absolu du vault memoire. Si omis : auto-detection depuis l'install
     existante, puis fallback sur {racine du kit}/memory.
 
+.PARAMETER Language
+    Langue conversationnelle du LLM (en, fr, es, de, ru). Si omise : detection
+    systeme puis prompt interactif.
+
 .PARAMETER Force
     Ecrase memory-kit.json meme s'il existe deja.
+
+.PARAMETER SkipObsidianStyle
+    Ne deploie pas les configs canoniques Obsidian (graph palette).
+
+.PARAMETER ForceObsidianStyle
+    Force le deploy Obsidian style meme si Obsidian semble ouvert.
+
+.PARAMETER SkipMcpServer
+    Ne deploie pas le serveur MCP Python (CLI restent en mode skills fallback).
+
+.PARAMETER Help
+    Affiche cette aide et quitte. Alias : -h, -?, --help, --?.
 
 .EXAMPLE
     .\deploy.ps1
     .\deploy.ps1 -VaultPath "D:\mes-notes\cerveau"
+    .\deploy.ps1 -Language fr
     .\deploy.ps1 -Force
+    .\deploy.ps1 -h
 #>
 
 [CmdletBinding()]
@@ -40,8 +58,18 @@ param(
     [switch]$Force,
     [switch]$SkipObsidianStyle,
     [switch]$ForceObsidianStyle,
-    [switch]$SkipMcpServer
+    [switch]$SkipMcpServer,
+    [Alias('h')]
+    [switch]$Help
 )
+
+# Aide via -?, -h, -Help, --help. Note : -? est intercepte par PowerShell
+# avant que le script demarre (Get-Help auto). PowerShell 7+ traduit aussi
+# --param en -param, donc --help => -Help via l'alias ci-dessus.
+if ($Help) {
+    Get-Help $PSCommandPath -Full
+    exit 0
+}
 
 $ErrorActionPreference = 'Stop'
 

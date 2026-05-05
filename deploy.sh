@@ -67,8 +67,8 @@ while [[ $# -gt 0 ]]; do
             SKIP_MCP_SERVER=true
             shift
             ;;
-        -h|--help)
-            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server]"
+        -h|--help|-\?|--\?)
+            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server] [-h|--help|-?|--?]"
             echo ""
             echo "  --vault-path             Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
             echo "  --language               Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
@@ -76,6 +76,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-obsidian-style    Ne deploie pas les configs canoniques Obsidian (graph palette)"
             echo "  --force-obsidian-style   Force le deploy Obsidian style meme si Obsidian semble ouvert"
             echo "  --skip-mcp-server        Ne deploie pas le serveur MCP Python (CLI restent en mode skills fallback)"
+            echo "  -h, --help, -?, --?      Affiche cette aide et quitte"
             exit 0
             ;;
         *)
