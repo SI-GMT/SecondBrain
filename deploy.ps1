@@ -1122,20 +1122,81 @@ function Install-McpServerPackage {
     # binaire utilise par une session CLI active qui a charge le serveur MCP).
     $alreadyInstalled = $null -ne (Get-Command memory-kit-mcp -ErrorAction SilentlyContinue)
 
+    # Determine la version cible (depuis pyproject.toml du kit) et la version
+    # actuellement installee via pipx (si applicable). Permet de signaler
+    # CLAIREMENT a l'utilisateur quand une session active bloque l'upgrade,
+    # plutot que de masquer l'obsolescence avec un "upgrade differe" silencieux.
+    $targetVersion = $null
+    $pyprojectPath = Join-Path $mcpServerDir 'pyproject.toml'
+    if (Test-Path $pyprojectPath) {
+        $versionLine = Select-String -Path $pyprojectPath -Pattern '^\s*version\s*=\s*"([^"]+)"' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($versionLine) {
+            $targetVersion = $versionLine.Matches[0].Groups[1].Value
+        }
+    }
+    $installedVersion = $null
+    if ($alreadyInstalled -and (Test-PipxAvailable)) {
+        $pipxList = & pipx list --short 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $line = $pipxList | Where-Object { $_ -match '^memory-kit-mcp\s+(\S+)' } | Select-Object -First 1
+            if ($line -match '^memory-kit-mcp\s+(\S+)') {
+                $installedVersion = $matches[1]
+            }
+        }
+    }
+
     [void](Install-Pipx)
 
     if (Test-PipxAvailable) {
         Write-Step "Install/upgrade memory-kit-mcp via pipx..."
+        if ($targetVersion -and $installedVersion -and ($targetVersion -ne $installedVersion)) {
+            Write-Info "Pipx package version: $installedVersion installed, $targetVersion required."
+        }
         $pipxOutput = & pipx install --force $mcpServerDir 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Ok "memory-kit-mcp installe via pipx"
+            Write-Ok "memory-kit-mcp installe via pipx (version $targetVersion)"
             return $true
         }
+
         # WinError 32 = fichier utilise (CLI active a charge le serveur).
-        # Si binaire deja installe, on accepte : la version precedente reste OK.
-        if ($alreadyInstalled -and ($pipxOutput -match 'WinError 32|cannot access|in use|deleteme')) {
-            Write-Skip "memory-kit-mcp deja installe — upgrade differe (binaire utilise par une CLI active)"
-            Write-Info "Pour forcer l'upgrade : ferme toutes les sessions Claude Code/Codex/Copilot puis relance."
+        # Si la version installee MATCH la version cible, l'echec d'upgrade est
+        # un no-op fonctionnel — accepte sans bruit.
+        $isInUseError = ($pipxOutput -match 'WinError 32|cannot access|in use|deleteme')
+        $versionsMatch = ($targetVersion -and $installedVersion -and ($targetVersion -eq $installedVersion))
+        if ($alreadyInstalled -and $isInUseError -and $versionsMatch) {
+            Write-Skip "memory-kit-mcp deja a la bonne version ($installedVersion) — upgrade no-op"
+            return $true
+        }
+
+        # Si l'upgrade est REQUIS (versions divergent) et qu'on a un WinError
+        # par fichier en cours d'usage : kill les processus memory-kit-mcp*
+        # actifs (clients MCP qui ont charge le serveur via stdio), puis retry.
+        # Les CLI clients (Claude Code, Codex, ...) reconnecteront automatiquement
+        # leur connexion MCP au prochain appel d'outil — l'interruption est
+        # transparente cote utilisateur final.
+        if ($alreadyInstalled -and $isInUseError) {
+            $mcpProcs = Get-Process -Name memory-kit-mcp -ErrorAction SilentlyContinue
+            if ($mcpProcs) {
+                Write-Info "Upgrade requis ($installedVersion -> $targetVersion). Fermeture de $($mcpProcs.Count) process(s) memory-kit-mcp actif(s)..."
+                Write-Info "Les sessions CLI (Claude Code / Codex / Copilot / Vibe / Desktop) reconnecteront automatiquement au prochain outil MCP appele."
+                $mcpProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 800
+            }
+            $pipxOutput2 = & pipx install --force $mcpServerDir 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "memory-kit-mcp upgrade vers $targetVersion (apres fermeture des sessions actives)"
+                return $true
+            }
+            # Echec persistant apres kill — cas rare (binaire verrouille par
+            # autre chose qu'un process MCP). On signale clairement.
+            Write-Warn2 "Upgrade encore bloque apres fermeture des process MCP. Sortie pipx :"
+            Write-Host "    $pipxOutput2" -ForegroundColor DarkGray
+            Write-Warn2 "Le serveur MCP reste sur la version $installedVersion. Tente : reboot du poste, puis relance deploy.ps1."
+            return $true
+        }
+        Write-Warn2 "pipx install a echoue (exit $LASTEXITCODE)."
+        if ($alreadyInstalled) {
+            Write-Info "Binaire memory-kit-mcp deja sur PATH — utilisation de la version existante."
             return $true
         }
         Write-Warn2 "pipx install a echoue (exit $LASTEXITCODE)."

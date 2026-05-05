@@ -1,6 +1,6 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.5, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.6, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
@@ -13,6 +13,8 @@
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
 ## Quoi de neuf
+
+**v0.9.6 — hotfix Deploy-McpServer auto-kill des sessions actives**. Le `Deploy-McpServer` v0.9.5 et antérieurs traitaient `WinError 32` (fichier `memory-kit-mcp.exe` en cours d'usage par une session CLI active) comme un succès silencieux, ce qui laissait les utilisateurs bloqués sur d'anciennes versions sans le savoir. Symptôme : un utilisateur installant le kit en v0.8.0 puis upgradant le repo restait sur v0.8.0 indéfiniment tant qu'il avait une session Claude Code ouverte pendant le deploy. Fix : le hook détecte les versions divergentes (target dans `pyproject.toml` vs installée via `pipx list --short`), tue automatiquement les process `memory-kit-mcp` actifs (les clients MCP reconnectent automatiquement au prochain appel d'outil), retry l'install, et **n'avale plus l'erreur silencieusement** — message explicite si l'upgrade reste impossible. Plus aucune responsabilité côté utilisateur — le deploy gère le cycle de vie du serveur.
 
 **v0.9.5 — hotfix hook deploy v0.9.4**. Le hook de migration de v0.9.4 appelait `python -m memory_kit_mcp.migrate`, mais le serveur étant installé via `pipx` dans son propre venv isolé, le module est invisible depuis le Python global de l'utilisateur — d'où le `ModuleNotFoundError: No module named 'memory_kit_mcp'` rencontré par les pilotes. Fix : nouvel entry point CLI `memory-kit-migrate` (auto-installé par `pipx install memory-kit-mcp` au même titre que `memory-kit-mcp`). Les hooks `deploy.ps1`/`deploy.sh` utilisent désormais cette commande + fallback `pipx environment --value PIPX_BIN_DIR` si le PATH n'est pas encore rechargé dans la session deploy en cours.
 

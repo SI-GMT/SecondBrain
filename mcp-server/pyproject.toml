@@ -1,6 +1,6 @@
 [project]
 name = "memory-kit-mcp"
-version = "0.9.5"
+version = "0.9.6"
 description = "Persistent Markdown vault MCP server for SecondBrain"
 readme = "README.md"
 requires-python = ">=3.12"

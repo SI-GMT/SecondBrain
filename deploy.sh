@@ -1134,22 +1134,74 @@ install_mcp_server_package() {
         already_installed=true
     fi
 
+    # Determine la version cible (depuis pyproject.toml du kit) et la version
+    # actuellement installee via pipx (si applicable). Permet de signaler
+    # CLAIREMENT a l'utilisateur quand une session active bloque l'upgrade.
+    local target_version=""
+    if [[ -f "$mcp_server_dir/pyproject.toml" ]]; then
+        target_version="$(grep -E '^[[:space:]]*version[[:space:]]*=' "$mcp_server_dir/pyproject.toml" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
+    fi
+    local installed_version=""
+    if [[ "$already_installed" == "true" ]] && command -v pipx &>/dev/null; then
+        installed_version="$(pipx list --short 2>/dev/null | awk '$1 == "memory-kit-mcp" {print $2; exit}')"
+    fi
+
     ensure_pipx || true
 
     if command -v pipx &>/dev/null; then
         _cyan "Install/upgrade memory-kit-mcp via pipx..."
+        if [[ -n "$target_version" && -n "$installed_version" && "$target_version" != "$installed_version" ]]; then
+            _info "Pipx package version: $installed_version installed, $target_version required."
+        fi
         local pipx_output
         if pipx_output="$(pipx install --force "$mcp_server_dir" 2>&1)"; then
-            _green "memory-kit-mcp installe via pipx"
+            _green "memory-kit-mcp installe via pipx (version $target_version)"
             return 0
         fi
-        # Tolerance : si binaire deja installe et echec lie a un fichier en
-        # cours d'utilisation (CLI active a charge le serveur via stdio), on
-        # accepte la version precedente.
-        if [[ "$already_installed" == "true" ]] && \
-           printf '%s' "$pipx_output" | grep -qiE "in use|cannot access|deleteme|text file busy|winerror 32"; then
-            _gray "memory-kit-mcp deja installe — upgrade differe (binaire utilise par une CLI active)"
-            _info "Pour forcer l'upgrade : ferme toutes les sessions Claude Code/Codex/Copilot/Vibe puis relance."
+
+        # Detect file-in-use error (mostly Windows under Git Bash; rare on
+        # macOS/Linux but possible if a process holds a lock).
+        local is_in_use=false
+        if printf '%s' "$pipx_output" | grep -qiE "in use|cannot access|deleteme|text file busy|winerror 32"; then
+            is_in_use=true
+        fi
+        local versions_match=false
+        if [[ -n "$target_version" && -n "$installed_version" && "$target_version" == "$installed_version" ]]; then
+            versions_match=true
+        fi
+
+        # No-op safe : versions identiques, fichier verrouille → accepte.
+        if [[ "$already_installed" == "true" && "$is_in_use" == "true" && "$versions_match" == "true" ]]; then
+            _gray "memory-kit-mcp deja a la bonne version ($installed_version) — upgrade no-op"
+            return 0
+        fi
+
+        # Upgrade requis et fichier verrouille : kill les process memory-kit-mcp*
+        # actifs (clients MCP qui ont charge le serveur via stdio), puis retry.
+        # Les CLI clients reconnecteront automatiquement au prochain appel d'outil.
+        if [[ "$already_installed" == "true" && "$is_in_use" == "true" ]]; then
+            local pids
+            pids="$(pgrep -f 'memory-kit-mcp|memory_kit_mcp\.server' 2>/dev/null | tr '\n' ' ' || true)"
+            if [[ -n "$pids" ]]; then
+                local pid_count
+                pid_count="$(printf '%s\n' "$pids" | wc -w | tr -d ' ')"
+                _info "Upgrade requis ($installed_version -> $target_version). Fermeture de $pid_count process(s) memory-kit-mcp actif(s)..."
+                _info "Les sessions CLI (Claude Code / Codex / Copilot / Vibe / Desktop) reconnecteront au prochain outil MCP appele."
+                # shellcheck disable=SC2086
+                kill $pids 2>/dev/null || true
+                sleep 1
+                # Force kill si process encore vivants
+                # shellcheck disable=SC2086
+                kill -9 $pids 2>/dev/null || true
+            fi
+            local pipx_output2
+            if pipx_output2="$(pipx install --force "$mcp_server_dir" 2>&1)"; then
+                _green "memory-kit-mcp upgrade vers $target_version (apres fermeture des sessions actives)"
+                return 0
+            fi
+            _yellow "Upgrade encore bloque apres fermeture des process MCP. Sortie pipx :"
+            printf '    \033[0;90m%s\033[0m\n' "$pipx_output2"
+            _yellow "Le serveur MCP reste sur la version $installed_version. Tente : reboot du poste, puis relance deploy.sh."
             return 0
         fi
         _yellow "pipx install a echoue."
