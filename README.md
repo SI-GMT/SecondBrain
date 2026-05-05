@@ -14,7 +14,7 @@ SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fage
 
 ## Quoi de neuf
 
-**v0.9.2 — passage sous licence AGPL-3.0-or-later** + scrub des références personnelles dans la doc (paths absolus, exemples nominatifs anonymisés). Périmètre fonctionnel inchangé depuis v0.9.1 : MCP complet, 22 outils archeo / vault / hygiène / ingestion natifs Python + 2 stubs assumés par design. 224 tests, 83 % coverage. Le passage à l'AGPL est volontaire pour protéger l'innovation SI-GMT contre l'appropriation commerciale par SaaS fermé — voir section [Licence et crédits](#licence-et-crédits).
+**v0.9.2 — passage sous licence AGPL-3.0-or-later** + scrub du projet. Périmètre fonctionnel inchangé depuis v0.9.1 : MCP complet, 22 outils archeo / vault / hygiène / ingestion natifs Python + 2 stubs assumés par design. 224 tests, 83 % coverage. Plus de détails section [Licence et crédits](#licence-et-crédits).
 
 **Détails de la release et historique complet** : [Releases GitHub](https://github.com/SI-GMT/SecondBrain/releases) · [`docs/architecture/`](./docs/architecture/) pour les cadrages versionnés (un par release majeure depuis v0.5).
 
@@ -494,7 +494,7 @@ Les versions antérieures publiées sous licence MIT (v0.1.0 → v0.9.1) **reste
 
 ### Concept original — Raphaël Fages / Fractality Studio
 
-SecondBrain est l'adaptation d'un concept développé à l'origine par **Raphaël Fages** au sein de son agence [Fractality Studio](https://fractality.studio/) : structurer la mémoire d'un agent LLM comme un *second cerveau* personnel, avec un cycle de prise de notes et de relecture analogue à un rythme biologique veille-sommeil.
+SecondBrain est l'adaptation d'un concept proposé à l'origine par **Raphaël Fages** au sein de son agence [Fractality Studio](https://fractality.studio/) : structurer la mémoire d'un agent LLM comme un *second cerveau* personnel, avec un cycle de prise de notes et de relecture analogue à un rythme biologique veille-sommeil.
 
 Les principes fondateurs suivants viennent directement de ce travail initial :
 
@@ -502,7 +502,7 @@ Les principes fondateurs suivants viennent directement de ce travail initial :
 - Le triptyque **archive immuable / contexte mutable / historique chronologique** permet à la fois la traçabilité et la reprise rapide.
 - Le déclenchement par langage naturel — et pas seulement par commande explicite — rend le cycle ergonomique pour l'utilisateur final.
 
-L'implémentation présente dans ce dépôt adapte ces principes au contexte SI Groupe Mondial Tissus : support multi-CLI, vault Obsidian, procédures factorisées en une source unique de vérité, déploiement PowerShell + bash, refonte brain-centric (v0.5), schéma anglais + i18n conversationnel (v0.5.2), préparation aux Phases 2 (déploiement équipe) et 3 (serveur MCP).
+L'implémentation présente dans ce dépôt adapte et étend ces principes au contexte du SI du Groupe Mondial Tissus : support multi-CLI, vault Obsidian, procédures factorisées en une source unique de vérité, déploiement PowerShell + bash, refonte brain-centric (v0.5), schéma anglais + i18n conversationnel (v0.5.2), préparation aux Phases 2 (déploiement équipe) et 3 (serveur MCP).
 
 ### Double nommage
 
