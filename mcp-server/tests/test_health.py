@@ -409,6 +409,64 @@ def test_skill_description_gemini_not_audited(
     assert not [f for f in findings if f.category == "skill-description-too-long"]
 
 
+# ---------- missing-zone-index-entry (11th category, v0.9.4) ----------
+
+
+async def test_missing_zone_index_entry_detected(
+    client: Client, vault_tmp: Path
+) -> None:
+    """Atom present in 40-principles/ but absent from 40-principles/index.md → finding."""
+    target = vault_tmp / "40-principles" / "work" / "ghost-principle.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {"slug": "ghost-principle", "zone": "principles", "display": "ghost-principle",
+         "kind": "principle", "scope": "work", "project": "alpha"},
+        "# ghost\n",
+    )
+    # Ensure the zone index exists but does NOT mention the atom (stub form).
+    idx = vault_tmp / "40-principles" / "index.md"
+    idx.write_text(
+        "---\nzone: meta\ntype: zone-index\ndisplay: \"40-principles — index\"\n"
+        "tags: [zone/meta, type/zone-index, target-zone/40-principles]\n---\n\n"
+        "# 40-principles — Index\n\n_Hub of the zone._\n",
+        encoding="utf-8",
+    )
+    res = await client.call_tool(
+        "mem_health_scan", {"category": "missing-zone-index-entry"}
+    )
+    matches = [f for f in res.data.findings if f.category == "missing-zone-index-entry"]
+    assert any("ghost-principle" in f.path for f in matches)
+
+
+async def test_missing_zone_index_entry_auto_fixable(
+    client: Client, vault_tmp: Path
+) -> None:
+    """mem_health_repair --apply regenerates the zone index, including the atom."""
+    target = vault_tmp / "40-principles" / "work" / "fix-me.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {"slug": "fix-me", "zone": "principles", "display": "fix-me",
+         "kind": "principle", "scope": "work", "project": "alpha"},
+        "# fix me\n",
+    )
+    # Stub-only zone index
+    idx = vault_tmp / "40-principles" / "index.md"
+    idx.write_text(
+        "---\nzone: meta\ntype: zone-index\ndisplay: \"40-principles — index\"\n"
+        "tags: [zone/meta, type/zone-index]\n---\n\n# 40-principles — Index\n",
+        encoding="utf-8",
+    )
+
+    res = await client.call_tool("mem_health_repair", {"apply": True})
+    assert res.data.dry_run is False
+    assert res.data.fixes_applied >= 1
+
+    body = (vault_tmp / "40-principles" / "index.md").read_text(encoding="utf-8")
+    assert "fix-me" in body
+
+
 # ---------- mem_health_repair ----------
 
 

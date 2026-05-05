@@ -28,6 +28,7 @@ from memory_kit_mcp.tools import (
     init_project,
     list as list_tool,
     merge,
+    migrate,
     note,
     person,
     principle,
@@ -70,6 +71,8 @@ def register_all(mcp: FastMCP) -> None:
     # Hygiene
     health_scan.register(mcp)
     health_repair.register(mcp)
+    # Schema migrations (v0.9.4)
+    migrate.register(mcp)
     # Ingestion
     note.register(mcp)
     principle.register(mcp)

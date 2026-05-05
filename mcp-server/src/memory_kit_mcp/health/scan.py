@@ -41,6 +41,14 @@ Read-only. Detects 10 categories of issues:
                                   Gemini excluded (TOML format). Skipped
                                   silently when ``kit_repo`` or
                                   ``adapters/`` is absent.
+- missing-zone-index-entry (warn) Atom in a transverse zone (20-knowledge,
+                                  40-principles, 50-goals, 60-people) is
+                                  not listed in its ``{zone}/index.md``.
+                                  v0.9.4 architecture: zone index is the
+                                  authoritative listing of transverse atoms
+                                  (root index points to zone indexes).
+                                  Auto-fixable by ``mem_health_repair``
+                                  (regenerates the affected zone index).
 
 The function returns Pydantic HealthFinding objects (defined in
 tools._models) so the MCP tool layer can serialize them directly.
@@ -75,6 +83,7 @@ CATEGORIES: tuple[str, ...] = (
     "missing-archeo-hashes",
     "mcp-tool-spec-drift",
     "skill-description-too-long",
+    "missing-zone-index-entry",
 )
 
 # Adapters audited for the skill-description-too-long check. Each entry is a
@@ -482,6 +491,42 @@ def scan_vault(
                             f"Vibe / Copilot. Trim the description before deploying.",
                             auto_fixable=False,
                         ))
+
+    # ---- 9. missing-zone-index-entry ------------------------------------
+    # v0.9.4 architecture: each transverse zone (20-knowledge, 40-principles,
+    # 50-goals, 60-people) has its own index.md that lists every atom of the
+    # zone, grouped by attached project. An atom is "missing from index" if
+    # the zone index file does not reference its relative path. Auto-fixable
+    # by regenerating the zone index.
+    if cat_active("missing-zone-index-entry"):
+        from memory_kit_mcp.vault.zone_index import ATOM_ZONES, scan_zone_atoms
+
+        for zone in ATOM_ZONES:
+            zone_dir = vault / zone
+            if not zone_dir.is_dir():
+                continue
+            zone_index_path = zone_dir / "index.md"
+            if not zone_index_path.is_file():
+                # The whole zone index is missing — already reported by the
+                # missing-zone-index category above. Don't double-report.
+                continue
+            try:
+                zone_index_text = zone_index_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                errors.append((str(zone_index_path), str(e)))
+                continue
+            atoms = scan_zone_atoms(vault, zone)
+            for atom_path, _atom_fm in atoms:
+                rel = atom_path.relative_to(vault).as_posix()
+                # Index references the atom either by relpath or by stem in a
+                # markdown link `[stem](relpath)`.
+                if rel not in zone_index_text and atom_path.stem not in zone_index_text:
+                    findings_by_cat["missing-zone-index-entry"].append(_finding(
+                        "missing-zone-index-entry", "warning", rel,
+                        f"Atom not listed in `{zone}/index.md`. "
+                        f"Run `mem_health_repair --apply` to regenerate the zone index.",
+                        auto_fixable=True,
+                    ))
 
     # ---- Flatten in canonical category order ----------------------------
     findings: list[HealthFinding] = []

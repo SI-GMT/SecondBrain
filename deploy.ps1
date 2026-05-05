@@ -1665,6 +1665,40 @@ if (-not $SkipMcpServer) {
 }
 
 # ============================================================
+# 6.7. Vault schema migrations (v0.9.4, opt-out via -SkipMigrations)
+# ============================================================
+# Detect pending vault schema migrations and run them automatically.
+# Idempotent: a vault already on the target schema version is skipped.
+# An auto-backup is taken before any apply (capped at 500 MiB; user must
+# pass --skip-backup if their vault is bigger).
+
+if (-not $SkipMcpServer) {
+    Write-Host ''
+    Write-Step "Vault schema migrations..."
+    $python = Get-Command python3 -ErrorAction SilentlyContinue
+    if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
+    if ($python) {
+        # First a dry-run to see if anything is pending.
+        $migrateDry = & $python.Source -m memory_kit_mcp.migrate --quiet 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 "Migration dry-run failed (will skip auto-apply): $migrateDry"
+        } elseif ($migrateDry -match "No pending migrations|Nothing to migrate") {
+            Write-Skip "Vault schema already up to date."
+        } else {
+            Write-Info "Pending migrations detected — applying with auto-backup..."
+            & $python.Source -m memory_kit_mcp.migrate --apply
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn2 "Migration failed. Check the output above. Backup is preserved under ~/.memory-kit/backups/."
+            } else {
+                Write-Ok "Vault migrations applied successfully."
+            }
+        }
+    } else {
+        Write-Skip "Python not found — skipping vault migrations. Run manually: python -m memory_kit_mcp.migrate --apply"
+    }
+}
+
+# ============================================================
 # 7. Resume final
 # ============================================================
 

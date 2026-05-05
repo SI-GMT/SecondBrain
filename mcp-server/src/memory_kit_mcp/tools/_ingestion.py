@@ -50,10 +50,22 @@ def write_atom(
     path: Path,
     fm: dict[str, Any],
     body: str,
+    vault: Path | None = None,
 ) -> Path:
-    """Atomic write with hash-uniqueness on path. Returns the actual path written."""
+    """Atomic write with hash-uniqueness on path. Returns the actual path written.
+
+    If ``vault`` is provided AND the atom lands in a transverse-atom zone
+    (20-knowledge / 40-principles / 50-goals / 60-people), the corresponding
+    ``{zone}/index.md`` is regenerated to include the new atom. Caller passes
+    ``vault=None`` to skip this step (rare — only used by tools that handle
+    the zone index update separately).
+    """
     actual = ensure_unique_path(path)
     frontmatter.write(actual, fm, body)
+    if vault is not None:
+        # Lazy import to avoid circular dep (vault/zone_index → vault/frontmatter)
+        from memory_kit_mcp.vault.zone_index import update_zone_index_for_atom
+        update_zone_index_for_atom(vault, actual)
     return actual
 
 

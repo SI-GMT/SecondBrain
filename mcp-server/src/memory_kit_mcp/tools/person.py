@@ -52,7 +52,7 @@ def register(mcp: FastMCP) -> None:
         )
         body = f"# {name}\n\n{notes.strip()}\n" if notes.strip() else f"# {name}\n"
         target = config.vault / "60-people" / relation / f"{slug}.md"
-        actual = write_atom(target, fm, body)
+        actual = write_atom(target, fm, body, vault=config.vault)
         return IngestionResult(
             skill="mem_person",
             success=True,

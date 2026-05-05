@@ -77,6 +77,10 @@
       "procedure": "mem-health-repair.md",
       "last_synced_hash": "b89e56d6ebec9874ea2765d6719b1b824d1e2fd401ca814e2437c1b3a378440a"
     },
+    "mem_migrate": {
+      "procedure": "mem-migrate.md",
+      "last_synced_hash": "7765243ac2899efc2a2cb1bc0bd4bc7e4e8a9201503187958b8b637ea0bb6645"
+    },
     "mem_note": {
       "procedure": "mem-note.md",
       "last_synced_hash": "ae347643c125cab0b0d9a0c29d37fb28472422c0f7071ca7f53fe76a82ecc242"

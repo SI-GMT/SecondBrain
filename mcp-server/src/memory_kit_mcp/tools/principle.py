@@ -45,7 +45,7 @@ def register(mcp: FastMCP) -> None:
         )
         body = f"# {title}\n\n{content.strip()}\n"
         target = config.vault / "40-principles" / scope / f"{slug}.md"
-        actual = write_atom(target, fm, body)
+        actual = write_atom(target, fm, body, vault=config.vault)
         return IngestionResult(
             skill="mem_principle",
             success=True,

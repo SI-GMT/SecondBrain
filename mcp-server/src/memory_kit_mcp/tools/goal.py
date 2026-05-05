@@ -50,7 +50,7 @@ def register(mcp: FastMCP) -> None:
         )
         body = f"# {title}\n\n{content.strip()}\n" if content.strip() else f"# {title}\n"
         target = config.vault / "50-goals" / horizon / f"{slug}.md"
-        actual = write_atom(target, fm, body)
+        actual = write_atom(target, fm, body, vault=config.vault)
         return IngestionResult(
             skill="mem_goal",
             success=True,

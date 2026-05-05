@@ -306,40 +306,24 @@ def render_index(vault: Path, lang: str, strings: dict) -> str:
                 lines.append(f'- [{p.stem}]({rel})')
             lines.append('')
 
-    # Sections: Principles / Knowledge / Goals / People — grouped by project
-    section_map = [
-        ('40-principles', 'section_principles', 'empty_principles'),
-        ('20-knowledge',  'section_knowledge',  'empty_knowledge'),
-        ('50-goals',      'section_goals',      'empty_goals'),
-        ('60-people',     'section_people',     'empty_people'),
-    ]
-    unattached_label = s.get('unattached_label', '(unattached)')
-    for zone, section_key, empty_key in section_map:
-        atoms = scan_atoms(vault, zone)
-        section_title = s.get(section_key, zone)
-        lines.append(f'## {section_title}')
+    # v0.9.4 — transverse-atom listings moved out of the root index.
+    # Each `{zone}/index.md` (40-principles, 20-knowledge, 50-goals, 60-people)
+    # now carries the per-atom listing. Root index keeps a one-line pointer to
+    # each transverse zone for navigation.
+    transverse_zones = ['40-principles', '20-knowledge', '50-goals', '60-people']
+    if any((vault / z).is_dir() for z in transverse_zones):
+        lines.append(f"## {s.get('section_transverse', 'Transverse atoms')}")
         lines.append('')
-        if not atoms:
-            lines.append(s.get(empty_key, '(none yet)'))
-            lines.append('')
-            continue
-        grouped = group_atoms_by_project(atoms)
-        # Order: known project slugs first (alphabetical), then unattached
-        attached = sorted(k for k in grouped.keys() if k)
-        for project in attached:
-            lines.append(f'### {project}')
-            lines.append('')
-            for p in sorted(grouped[project], key=lambda x: x.name):
-                rel = p.relative_to(vault).as_posix()
-                lines.append(f'- [{p.stem}]({rel})')
-            lines.append('')
-        if None in grouped:
-            lines.append(f'### {unattached_label}')
-            lines.append('')
-            for p in sorted(grouped[None], key=lambda x: x.name):
-                rel = p.relative_to(vault).as_posix()
-                lines.append(f'- [{p.stem}]({rel})')
-            lines.append('')
+        for z in transverse_zones:
+            if not (vault / z).is_dir():
+                continue
+            atoms = scan_atoms(vault, z)
+            count = len(atoms)
+            label = zone_labels.get(z, '')
+            extra = f' — {count} atom(s)' if count else ''
+            label_str = f' ({label})' if label else ''
+            lines.append(f'- [{z}/index.md]({z}/index.md){label_str}{extra}')
+        lines.append('')
 
     return '\n'.join(lines)
 
@@ -355,7 +339,17 @@ def _today():
 # root index.md links to. Replaces the old `[{zone}]({zone}/)` that produced
 # ghost graph nodes + empty MDs at the vault root when clicked in Obsidian.
 
-def render_zone_index(zone: str, lang: str, strings: dict) -> str:
+_TRANSVERSE_ATOM_ZONES = ('20-knowledge', '40-principles', '50-goals', '60-people')
+
+def render_zone_index(zone: str, lang: str, strings: dict, vault: Path | None = None) -> str:
+    """Render `{zone}/index.md`.
+
+    For transverse-atom zones (knowledge / principles / goals / people), v0.9.4
+    moved the per-atom listing FROM the root index INTO each zone index. The
+    listing is grouped by attached project (or "Unattached" for orphan atoms).
+    For non-transverse zones (00-inbox, 30-procedures, 70-cognition, 99-meta,
+    10-episodes), the index keeps the historical stub format (back-link only).
+    """
     s = strings.get('index', {})
     zone_labels = s.get('zone_labels', {})
     label = zone_labels.get(zone, '')
@@ -382,33 +376,68 @@ def render_zone_index(zone: str, lang: str, strings: dict) -> str:
         f'> Back to [[index|vault index]].',
         '',
     ]
+
+    if zone in _TRANSVERSE_ATOM_ZONES and vault is not None:
+        atoms = scan_atoms(vault, zone)
+        if atoms:
+            grouped = group_atoms_by_project(atoms)
+            unattached_label = s.get('unattached_label', '(unattached)')
+            lines.append(f"## {s.get('section_atoms_by_project', 'By project')}")
+            lines.append('')
+            attached = sorted(k for k in grouped.keys() if k)
+            for project in attached:
+                lines.append(f'### {project}')
+                lines.append('')
+                for p in sorted(grouped[project], key=lambda x: x.name):
+                    rel = p.relative_to(vault).as_posix()
+                    lines.append(f'- [{p.stem}]({rel})')
+                lines.append('')
+            if None in grouped:
+                lines.append(f'### {unattached_label}')
+                lines.append('')
+                for p in sorted(grouped[None], key=lambda x: x.name):
+                    rel = p.relative_to(vault).as_posix()
+                    lines.append(f'- [{p.stem}]({rel})')
+                lines.append('')
+        else:
+            lines.append('_(none yet — atoms ingested via mem_note / mem_principle / '
+                         'mem_goal / mem_person will appear here automatically)_')
+            lines.append('')
+
     return '\n'.join(lines)
 
 def ensure_zone_indexes(vault: Path, lang: str, strings: dict, dry_run: bool) -> list[str]:
-    """Create {zone}/index.md for each zone if missing. Idempotent: never
-    overwrites an existing file (a user may have customised the hub).
-    Returns the list of zones for which an index was created."""
-    created = []
+    """Create or refresh {zone}/index.md for each zone.
+
+    v0.9.4: for transverse-atom zones (knowledge / principles / goals / people),
+    the index is **always rewritten** to reflect the current atoms (the listing
+    is the source of truth, not user-customisable). For other zones, the old
+    behaviour is preserved (idempotent stub creation; never overwrites).
+
+    Returns the list of zones for which an index was written or rewritten.
+    """
+    written = []
     for zone in ZONES:
         zone_dir = vault / zone
         if not zone_dir.exists():
-            # The zone itself does not exist yet (vault not scaffolded for
-            # this zone). Skip silently — scaffold-vault.py should create it
-            # before rebuild is called.
             continue
         idx_path = zone_dir / 'index.md'
-        if idx_path.exists():
+        is_transverse = zone in _TRANSVERSE_ATOM_ZONES
+        if idx_path.exists() and not is_transverse:
+            # Non-transverse zones: preserve user customisations.
             continue
-        content = render_zone_index(zone, lang, strings)
+        content = render_zone_index(zone, lang, strings, vault=vault)
         if dry_run:
-            print(f"[dry-run] Would create {idx_path}")
+            verb = "rewrite" if is_transverse and idx_path.exists() else "create"
+            print(f"[dry-run] Would {verb} {idx_path}")
         else:
             tmp = idx_path.with_suffix('.md.tmp')
             tmp.write_text(content, encoding='utf-8', newline='\n')
             tmp.replace(idx_path)
-            print(f"[OK] Created zone index {zone}/index.md")
-        created.append(zone)
-    return created
+            verb = "Rewrote" if is_transverse and idx_path.exists() else "Created"
+            print(f"[OK] {verb} zone index {zone}/index.md")
+        written.append(zone)
+    return written
 
 # ============================================================
 # Main

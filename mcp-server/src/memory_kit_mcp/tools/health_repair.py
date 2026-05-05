@@ -24,7 +24,7 @@ from memory_kit_mcp.health.scan import scan_vault
 from memory_kit_mcp.tools._models import HealthRepairResult
 from memory_kit_mcp.vault import frontmatter
 
-_AUTO_FIXABLE_CATEGORIES = {"missing-display"}
+_AUTO_FIXABLE_CATEGORIES = {"missing-display", "missing-zone-index-entry"}
 
 
 def _derive_display(rel: Path, fm: dict[str, Any]) -> str:
@@ -87,13 +87,44 @@ def register(mcp: FastMCP) -> None:
         modified: list[str] = []
 
         if apply:
+            # missing-display: iterate per finding (one frontmatter rewrite each).
             for f in fixable:
+                if f.category != "missing-display":
+                    continue
                 ok, path = _fix_missing_display(vault, f.path)
                 if ok:
                     applied += 1
                     modified.append(str(vault / path))
                 else:
                     skipped += 1
+
+            # missing-zone-index-entry: regenerate the affected zone index
+            # ONCE per zone (not once per atom — single rewrite covers all
+            # missing entries in that zone). Atoms that gain coverage by
+            # the rewrite all count as "applied".
+            from memory_kit_mcp.vault.zone_index import (
+                ATOM_ZONES,
+                regenerate_zone_index,
+            )
+
+            zone_findings = [
+                f for f in fixable if f.category == "missing-zone-index-entry"
+            ]
+            zones_to_regen: set[str] = set()
+            for f in zone_findings:
+                # f.path is vault-relative POSIX, e.g. '40-principles/work/sec/foo.md'
+                first_segment = f.path.split("/", 1)[0]
+                if first_segment in ATOM_ZONES:
+                    zones_to_regen.add(first_segment)
+            for zone in sorted(zones_to_regen):
+                index_path = regenerate_zone_index(vault, zone)
+                modified.append(str(index_path))
+                # Each atom that was missing from this zone is now indexed
+                # → count as applied. Failure to add some atoms (very rare,
+                # e.g. unreadable file) would surface in next scan.
+                applied += sum(
+                    1 for f in zone_findings if f.path.startswith(f"{zone}/")
+                )
 
         # Remaining = non-fixable findings + (fixable that weren't applied)
         remaining = (

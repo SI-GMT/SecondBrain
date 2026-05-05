@@ -59,7 +59,7 @@ def register(mcp: FastMCP) -> None:
         )
         body = f"# {title_seed}\n\n{content.strip()}\n"
         target = config.vault / "00-inbox" / f"{slug}.md"
-        actual = write_atom(target, fm, body)
+        actual = write_atom(target, fm, body, vault=config.vault)
         return IngestionResult(
             skill="mem",
             success=True,

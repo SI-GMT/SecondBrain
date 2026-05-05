@@ -1799,6 +1799,40 @@ if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
 fi
 
 # ============================================================
+# 6.7. Vault schema migrations (v0.9.4, opt-out via --skip-mcp-server)
+# ============================================================
+# Detect pending vault schema migrations and run them automatically.
+# Idempotent: a vault already on the target schema version is skipped.
+# An auto-backup is taken before any apply (capped at 500 MiB; user must
+# pass --skip-backup if their vault is bigger).
+
+if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
+    echo ""
+    printf '\033[0;36m%s\033[0m\n' "Vault schema migrations..."
+    PYTHON_BIN=""
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="python"
+    fi
+    if [[ -n "$PYTHON_BIN" ]]; then
+        MIGRATE_DRY="$($PYTHON_BIN -m memory_kit_mcp.migrate --quiet 2>&1)" || true
+        if [[ "$MIGRATE_DRY" =~ "No pending migrations" ]] || [[ "$MIGRATE_DRY" =~ "Nothing to migrate" ]]; then
+            printf '  \033[0;90m[--] %s\033[0m\n' "Vault schema already up to date."
+        else
+            printf '  \033[0;36m[i]  %s\033[0m\n' "Pending migrations detected — applying with auto-backup..."
+            if $PYTHON_BIN -m memory_kit_mcp.migrate --apply; then
+                printf '  \033[0;32m[OK] %s\033[0m\n' "Vault migrations applied successfully."
+            else
+                printf '  \033[1;33m[!]  %s\033[0m\n' "Migration failed. Check the output above. Backup is preserved under ~/.memory-kit/backups/."
+            fi
+        fi
+    else
+        printf '  \033[0;90m[--] %s\033[0m\n' "Python not found — skipping vault migrations. Run manually: python -m memory_kit_mcp.migrate --apply"
+    fi
+fi
+
+# ============================================================
 # 7. Resume final
 # ============================================================
 

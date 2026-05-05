@@ -1,6 +1,6 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.2, **release production stabilisée sous AGPL-3.0-or-later**) + skills fallback transparente.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.4, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
@@ -13,6 +13,8 @@
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
 ## Quoi de neuf
+
+**v0.9.4 — index de zone intermédiaires + migration framework**. Les listings d'atomes transverses (Principles / Knowledge / Goals / People) qui vivaient dans `index.md` racine migrent vers les `{zone}/index.md` (référentiel annexe par zone, plus léger). L'index racine garde Zones / Projets / Domaines / Archives uniquement. Les outils d'ingestion (`mem_note`, `mem_principle`, `mem_goal`, `mem_person`, `mem`) mettent à jour automatiquement l'index de zone à chaque écriture — fini les atomes orphelins par défaut. Nouvelle 11ᵉ catégorie health-scan `missing-zone-index-entry` (auto-fixable). Framework de migration versionné (`vault_schema_version` dans `~/.memory-kit/config.json`) avec backup auto avant apply, outil MCP `mem_migrate` (dry-run par défaut, 31 outils au total), CLI `python -m memory_kit_mcp.migrate`, hook automatique dans `deploy.ps1`/`deploy.sh` qui applique les migrations pendantes. **ACTION PILOTES** : la migration `v1_zone_indexes` se déclenche automatiquement au prochain `deploy.ps1`/`deploy.sh`. Backup auto pris avant. Aucune intervention manuelle nécessaire.
 
 **v0.9.3 — combler les trous UX (6 nouveaux outils MCP)**. Ajout de `mem_init_project` (bootstrap projet/domaine vide, débloque les CLI MCP-only qui ne pouvaient pas créer un projet sans accès filesystem direct), `mem_read_archive` / `mem_read_context` / `mem_read_history` / `mem_get_topology` (lecture directe des fichiers vault sans synthèse), `mem_update_phase` (raccourci pour bumper la phase sans réécrire le context). 30 outils MCP exposés au total (24 → 30). Périmètre fonctionnel inchangé sur le reste depuis v0.9.1.
 
@@ -101,7 +103,7 @@ Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 
 
 `deploy.ps1` / `deploy.sh` détecte `pipx`, installe ou met à jour `memory-kit-mcp`, écrit `~/.memory-kit/config.json` (vault, scope, langue, kit_repo), et inject la déclaration MCP dans les configs des cibles compatibles. En cas de WinError 32 (binaire verrouillé par une CLI active), l'upgrade est différé proprement et la version précédente reste fonctionnelle.
 
-### Inventaire des 30 outils
+### Inventaire des 31 outils
 
 | Catégorie | Outils MCP (snake_case) | État |
 |---|---|---|
@@ -109,7 +111,8 @@ Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 
 | Inventaire | `mem_list`, `mem_search`, `mem_digest` | ✅ fonctionnels |
 | Vault management | `mem_init_project`, `mem_rename`, `mem_merge`, `mem_reclass`, `mem_rollback_archive`, `mem_promote_domain`, `mem_historize`, `mem_update_phase` | ✅ fonctionnels |
 | Lecture directe (v0.9.3) | `mem_read_archive`, `mem_read_context`, `mem_read_history`, `mem_get_topology` | ✅ fonctionnels — bridge pour CLI MCP-only sans accès filesystem direct |
-| Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (10 catégories — 8 vault + 2 kit-repo audits) |
+| Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (11 catégories — 9 vault + 2 kit-repo audits, dont la nouvelle `missing-zone-index-entry` v0.9.4 auto-fixable) |
+| Schema migrations (v0.9.4) | `mem_migrate` | ✅ framework versionné, dry-run par défaut, auto-backup avant apply, hook deploy automatique |
 | Ingestion | `mem`, `mem_doc`, `mem_note`, `mem_principle`, `mem_goal`, `mem_person` | ✅ fonctionnels (`mem_doc` natif sur md/txt + dispatcher PDF/DOCX/PPTX/XLSX/CSV/HTML via extra `[doc-readers]`) |
 | Archeo | `mem_archeo`, `mem_archeo_stack`, `mem_archeo_git` | ✅ fonctionnels (Phase 0 + Phase 2 + Phase 3 complète : tags / releases / merges / commits + branch-first) |
 | Archeo skill-only par design | `mem_archeo_context`, `mem_archeo_atlassian` | ⚠️ stubs MCP intentionnels — **pas un manque** : Phase 1 = classification sémantique LLM, Atlassian = MCP client-side plus riche qu'un port `httpx` maison |
