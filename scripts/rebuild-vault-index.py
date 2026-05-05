@@ -160,12 +160,15 @@ def read_archived_at(vault: Path, slug: str) -> str:
 
 def scan_atoms(vault: Path, zone: str) -> list[tuple[Path, dict]]:
     """Scan a zone (40-principles, 20-knowledge, 50-goals, 60-people) and
-    return a list of (path, frontmatter)."""
+    return a list of (path, frontmatter). Excludes the zone hub `index.md`
+    itself (it's the listing surface, not an atom of the zone)."""
     base = vault / zone
     if not base.exists():
         return []
     out = []
     for f in sorted(base.rglob('*.md')):
+        if f.name == 'index.md':
+            continue
         if any(p.startswith('.') for p in f.parts):
             continue
         try:
