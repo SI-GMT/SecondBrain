@@ -1,6 +1,6 @@
 [project]
 name = "memory-kit-mcp"
-version = "0.9.4"
+version = "0.9.5"
 description = "Persistent Markdown vault MCP server for SecondBrain"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -30,6 +30,7 @@ Issues = "https://github.com/SI-GMT/SecondBrain/issues"
 
 [project.scripts]
 memory-kit-mcp = "memory_kit_mcp.server:main"
+memory-kit-migrate = "memory_kit_mcp.migrate:main"
 
 [project.optional-dependencies]
 dev = [

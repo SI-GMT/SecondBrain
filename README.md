@@ -1,6 +1,6 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.4, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.5, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
@@ -13,6 +13,8 @@
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
 ## Quoi de neuf
+
+**v0.9.5 — hotfix hook deploy v0.9.4**. Le hook de migration de v0.9.4 appelait `python -m memory_kit_mcp.migrate`, mais le serveur étant installé via `pipx` dans son propre venv isolé, le module est invisible depuis le Python global de l'utilisateur — d'où le `ModuleNotFoundError: No module named 'memory_kit_mcp'` rencontré par les pilotes. Fix : nouvel entry point CLI `memory-kit-migrate` (auto-installé par `pipx install memory-kit-mcp` au même titre que `memory-kit-mcp`). Les hooks `deploy.ps1`/`deploy.sh` utilisent désormais cette commande + fallback `pipx environment --value PIPX_BIN_DIR` si le PATH n'est pas encore rechargé dans la session deploy en cours.
 
 **v0.9.4 — index de zone intermédiaires + migration framework**. Les listings d'atomes transverses (Principles / Knowledge / Goals / People) qui vivaient dans `index.md` racine migrent vers les `{zone}/index.md` (référentiel annexe par zone, plus léger). L'index racine garde Zones / Projets / Domaines / Archives uniquement. Les outils d'ingestion (`mem_note`, `mem_principle`, `mem_goal`, `mem_person`, `mem`) mettent à jour automatiquement l'index de zone à chaque écriture — fini les atomes orphelins par défaut. Nouvelle 11ᵉ catégorie health-scan `missing-zone-index-entry` (auto-fixable). Framework de migration versionné (`vault_schema_version` dans `~/.memory-kit/config.json`) avec backup auto avant apply, outil MCP `mem_migrate` (dry-run par défaut, 31 outils au total), CLI `python -m memory_kit_mcp.migrate`, hook automatique dans `deploy.ps1`/`deploy.sh` qui applique les migrations pendantes. **ACTION PILOTES** : la migration `v1_zone_indexes` se déclenche automatiquement au prochain `deploy.ps1`/`deploy.sh`. Backup auto pris avant. Aucune intervention manuelle nécessaire.
 

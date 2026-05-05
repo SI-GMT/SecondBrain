@@ -1675,18 +1675,41 @@ if (-not $SkipMcpServer) {
 if (-not $SkipMcpServer) {
     Write-Host ''
     Write-Step "Vault schema migrations..."
-    $python = Get-Command python3 -ErrorAction SilentlyContinue
-    if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
-    if ($python) {
-        # First a dry-run to see if anything is pending.
-        $migrateDry = & $python.Source -m memory_kit_mcp.migrate --quiet 2>&1
+
+    # Resolve the migrate command. Priority:
+    # 1. memory-kit-migrate on PATH (pipx entry-point installed by Deploy-McpServer)
+    # 2. fallback to {pipx-bin-dir}/memory-kit-migrate.exe (PATH not yet refreshed
+    #    in this shell session)
+    $migrateCmd = $null
+    $migrateOnPath = Get-Command memory-kit-migrate -ErrorAction SilentlyContinue
+    if ($migrateOnPath) {
+        $migrateCmd = $migrateOnPath.Source
+    } else {
+        # Fallback: ask pipx for its bin dir and look for the entry point there.
+        $pipxBinDir = $null
+        $pipxCmd = Get-Command pipx -ErrorAction SilentlyContinue
+        if ($pipxCmd) {
+            try {
+                $pipxBinDir = (& $pipxCmd.Source environment --value PIPX_BIN_DIR 2>$null).Trim()
+            } catch {
+                $pipxBinDir = $null
+            }
+        }
+        if ($pipxBinDir -and (Test-Path $pipxBinDir)) {
+            $candidate = Join-Path $pipxBinDir 'memory-kit-migrate.exe'
+            if (Test-Path $candidate) { $migrateCmd = $candidate }
+        }
+    }
+
+    if ($migrateCmd) {
+        $migrateDry = & $migrateCmd --quiet 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Warn2 "Migration dry-run failed (will skip auto-apply): $migrateDry"
         } elseif ($migrateDry -match "No pending migrations|Nothing to migrate") {
             Write-Skip "Vault schema already up to date."
         } else {
             Write-Info "Pending migrations detected — applying with auto-backup..."
-            & $python.Source -m memory_kit_mcp.migrate --apply
+            & $migrateCmd --apply
             if ($LASTEXITCODE -ne 0) {
                 Write-Warn2 "Migration failed. Check the output above. Backup is preserved under ~/.memory-kit/backups/."
             } else {
@@ -1694,7 +1717,7 @@ if (-not $SkipMcpServer) {
             }
         }
     } else {
-        Write-Skip "Python not found — skipping vault migrations. Run manually: python -m memory_kit_mcp.migrate --apply"
+        Write-Skip "memory-kit-migrate not found (pipx package not installed yet?). Run manually: memory-kit-migrate --apply"
     }
 }
 

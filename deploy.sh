@@ -1809,26 +1809,33 @@ fi
 if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
     echo ""
     printf '\033[0;36m%s\033[0m\n' "Vault schema migrations..."
-    PYTHON_BIN=""
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON_BIN="python3"
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON_BIN="python"
+
+    # Resolve the migrate command (entry-point installed by pipx).
+    # Priority: memory-kit-migrate on PATH, then {pipx-bin-dir}/memory-kit-migrate
+    MIGRATE_CMD=""
+    if command -v memory-kit-migrate >/dev/null 2>&1; then
+        MIGRATE_CMD="memory-kit-migrate"
+    elif command -v pipx >/dev/null 2>&1; then
+        PIPX_BIN_DIR="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+        if [[ -n "$PIPX_BIN_DIR" && -x "$PIPX_BIN_DIR/memory-kit-migrate" ]]; then
+            MIGRATE_CMD="$PIPX_BIN_DIR/memory-kit-migrate"
+        fi
     fi
-    if [[ -n "$PYTHON_BIN" ]]; then
-        MIGRATE_DRY="$($PYTHON_BIN -m memory_kit_mcp.migrate --quiet 2>&1)" || true
+
+    if [[ -n "$MIGRATE_CMD" ]]; then
+        MIGRATE_DRY="$($MIGRATE_CMD --quiet 2>&1)" || true
         if [[ "$MIGRATE_DRY" =~ "No pending migrations" ]] || [[ "$MIGRATE_DRY" =~ "Nothing to migrate" ]]; then
             printf '  \033[0;90m[--] %s\033[0m\n' "Vault schema already up to date."
         else
             printf '  \033[0;36m[i]  %s\033[0m\n' "Pending migrations detected — applying with auto-backup..."
-            if $PYTHON_BIN -m memory_kit_mcp.migrate --apply; then
+            if "$MIGRATE_CMD" --apply; then
                 printf '  \033[0;32m[OK] %s\033[0m\n' "Vault migrations applied successfully."
             else
                 printf '  \033[1;33m[!]  %s\033[0m\n' "Migration failed. Check the output above. Backup is preserved under ~/.memory-kit/backups/."
             fi
         fi
     else
-        printf '  \033[0;90m[--] %s\033[0m\n' "Python not found — skipping vault migrations. Run manually: python -m memory_kit_mcp.migrate --apply"
+        printf '  \033[0;90m[--] %s\033[0m\n' "memory-kit-migrate not found (pipx package not installed yet?). Run manually: memory-kit-migrate --apply"
     fi
 fi
 
