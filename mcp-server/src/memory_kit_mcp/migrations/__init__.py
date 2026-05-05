@@ -246,12 +246,12 @@ def run_pending(
     # Final summary
     if dry_run:
         report.summary = (
-            f"Dry-run from version {current} → target {target}. "
+            f"Dry-run from version {current} -> target {target}. "
             f"{len([s for s in report.steps if s.needed])} step(s) would run."
         )
     else:
         report.summary = (
-            f"Migrated from version {current} → {report.to_version}. "
+            f"Migrated from version {current} -> {report.to_version}. "
             f"{sum(1 for s in report.steps if s.applied)} step(s) applied. "
             + (f"Backup at {report.backup_path}." if report.backup_path else "")
         )

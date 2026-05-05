@@ -1,6 +1,6 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.6, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.7, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
@@ -13,6 +13,8 @@
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
 
 ## Quoi de neuf
+
+**v0.9.7 — hotfix UnicodeEncodeError sur Windows cp1252**. Le CLI `memory-kit-migrate` plantait sur Windows avec `UnicodeEncodeError: 'charmap' codec can't encode character '→'` parce que Python utilise par défaut cp1252 pour stdout sur Windows et la flèche `→` n'est pas dans cp1252. Fix double : (1) `_force_utf8_console()` reconfigue stdout/stderr en UTF-8 avec `errors='replace'` au démarrage du CLI (Python 3.7+, no-op sur les systèmes déjà en UTF-8), (2) remplacement défensif de `→` par `->` et de `✓`/`·` par `[x]`/`[ ]` dans les summaries pour éliminer la dépendance à l'encoding console.
 
 **v0.9.6 — hotfix Deploy-McpServer auto-kill des sessions actives**. Le `Deploy-McpServer` v0.9.5 et antérieurs traitaient `WinError 32` (fichier `memory-kit-mcp.exe` en cours d'usage par une session CLI active) comme un succès silencieux, ce qui laissait les utilisateurs bloqués sur d'anciennes versions sans le savoir. Symptôme : un utilisateur installant le kit en v0.8.0 puis upgradant le repo restait sur v0.8.0 indéfiniment tant qu'il avait une session Claude Code ouverte pendant le deploy. Fix : le hook détecte les versions divergentes (target dans `pyproject.toml` vs installée via `pipx list --short`), tue automatiquement les process `memory-kit-mcp` actifs (les clients MCP reconnectent automatiquement au prochain appel d'outil), retry l'install, et **n'avale plus l'erreur silencieusement** — message explicite si l'upgrade reste impossible. Plus aucune responsabilité côté utilisateur — le deploy gère le cycle de vie du serveur.
 

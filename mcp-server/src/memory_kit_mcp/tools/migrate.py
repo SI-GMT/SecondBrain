@@ -94,7 +94,7 @@ def _render_summary(report: MigrationRunReport) -> str:
     lines.append("### Steps")
     lines.append("")
     for step in report.steps:
-        marker = "✓" if step.applied else ("→" if step.needed else "·")
+        marker = "[x]" if step.applied else ("[!]" if step.needed else "[ ]")
         lines.append(f"- {marker} **v{step.target_version}** (`{step.module}`) — "
                      f"needed={step.needed}, applied={step.applied}")
         if step.files_modified:

@@ -22,7 +22,27 @@ from memory_kit_mcp.config import _resolve_config_path, get_config
 from memory_kit_mcp.migrations import CURRENT_SCHEMA_VERSION, run_pending
 
 
+def _force_utf8_console() -> None:
+    """Reconfigure stdout/stderr to UTF-8 with replacement on Windows.
+
+    Default Python on Windows uses cp1252 for stdout, which crashes on any
+    character outside that codepage (e.g. ``→`` in summaries, accented
+    French in messages). We reconfigure on entry — supported since Python
+    3.7 — with ``errors='replace'`` so even unexpected characters degrade
+    to ``?`` rather than raise. No-op on systems already running UTF-8.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                # Best-effort; if reconfigure isn't supported (e.g. piped
+                # through a wrapper), fall through silently.
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_console()
     parser = argparse.ArgumentParser(
         prog="python -m memory_kit_mcp.migrate",
         description="Run pending vault schema migrations.",
