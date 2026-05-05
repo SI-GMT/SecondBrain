@@ -19,22 +19,28 @@ from memory_kit_mcp.tools import (
     archive,
     digest,
     doc,
+    get_topology,
     goal,
     health_repair,
     health_scan,
     historize,
     ingest,
+    init_project,
     list as list_tool,
     merge,
     note,
     person,
     principle,
     promote_domain,
+    read_archive,
+    read_context,
+    read_history,
     recall,
     reclass,
     rename,
     rollback_archive,
     search,
+    update_phase,
 )
 
 
@@ -48,12 +54,19 @@ def register_all(mcp: FastMCP) -> None:
     search.register(mcp)
     digest.register(mcp)
     # Vault management
+    init_project.register(mcp)
     rename.register(mcp)
     merge.register(mcp)
     reclass.register(mcp)
     rollback_archive.register(mcp)
     promote_domain.register(mcp)
     historize.register(mcp)
+    update_phase.register(mcp)
+    # Direct file readers (v0.9.3 — bridge for MCP-only CLI clients)
+    read_archive.register(mcp)
+    read_context.register(mcp)
+    read_history.register(mcp)
+    get_topology.register(mcp)
     # Hygiene
     health_scan.register(mcp)
     health_repair.register(mcp)

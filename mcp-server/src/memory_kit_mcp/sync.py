@@ -52,12 +52,19 @@ TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
     ("mem_search", "mem-search.md"),
     ("mem_digest", "mem-digest.md"),
     # Vault management
+    ("mem_init_project", "mem-init-project.md"),
     ("mem_rename", "mem-rename.md"),
     ("mem_merge", "mem-merge.md"),
     ("mem_reclass", "mem-reclass.md"),
     ("mem_rollback_archive", "mem-rollback-archive.md"),
     ("mem_promote_domain", "mem-promote-domain.md"),
     ("mem_historize", "mem-historize.md"),
+    ("mem_update_phase", "mem-update-phase.md"),
+    # Direct file readers
+    ("mem_read_archive", "mem-read-archive.md"),
+    ("mem_read_context", "mem-read-context.md"),
+    ("mem_read_history", "mem-read-history.md"),
+    ("mem_get_topology", "mem-get-topology.md"),
     # Hygiene
     ("mem_health_scan", "mem-health-scan.md"),
     ("mem_health_repair", "mem-health-repair.md"),

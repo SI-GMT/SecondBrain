@@ -14,7 +14,9 @@ SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fage
 
 ## Quoi de neuf
 
-**v0.9.2 — passage sous licence AGPL-3.0-or-later** + scrub du projet. Périmètre fonctionnel inchangé depuis v0.9.1 : MCP complet, 22 outils archeo / vault / hygiène / ingestion natifs Python + 2 stubs assumés par design. 224 tests, 83 % coverage. Plus de détails section [Licence et crédits](#licence-et-crédits).
+**v0.9.3 — combler les trous UX (6 nouveaux outils MCP)**. Ajout de `mem_init_project` (bootstrap projet/domaine vide, débloque les CLI MCP-only qui ne pouvaient pas créer un projet sans accès filesystem direct), `mem_read_archive` / `mem_read_context` / `mem_read_history` / `mem_get_topology` (lecture directe des fichiers vault sans synthèse), `mem_update_phase` (raccourci pour bumper la phase sans réécrire le context). 30 outils MCP exposés au total (24 → 30). Périmètre fonctionnel inchangé sur le reste depuis v0.9.1.
+
+**v0.9.2 — passage sous licence AGPL-3.0-or-later** + scrub du projet. Périmètre fonctionnel inchangé depuis v0.9.1 : MCP complet, 22 outils archeo / vault / hygiène / ingestion natifs Python + 2 stubs assumés par design. Plus de détails section [Licence et crédits](#licence-et-crédits).
 
 **Détails de la release et historique complet** : [Releases GitHub](https://github.com/SI-GMT/SecondBrain/releases) · [`docs/architecture/`](./docs/architecture/) pour les cadrages versionnés (un par release majeure depuis v0.5).
 
@@ -99,13 +101,14 @@ Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 
 
 `deploy.ps1` / `deploy.sh` détecte `pipx`, installe ou met à jour `memory-kit-mcp`, écrit `~/.memory-kit/config.json` (vault, scope, langue, kit_repo), et inject la déclaration MCP dans les configs des cibles compatibles. En cas de WinError 32 (binaire verrouillé par une CLI active), l'upgrade est différé proprement et la version précédente reste fonctionnelle.
 
-### Inventaire des 24 outils
+### Inventaire des 30 outils
 
-| Catégorie | Outils MCP (snake_case) | État v0.8.0 |
+| Catégorie | Outils MCP (snake_case) | État |
 |---|---|---|
 | Cycle session | `mem_recall`, `mem_archive` | ✅ fonctionnels |
 | Inventaire | `mem_list`, `mem_search`, `mem_digest` | ✅ fonctionnels |
-| Vault management | `mem_rename`, `mem_merge`, `mem_reclass`, `mem_rollback_archive`, `mem_promote_domain`, `mem_historize` | ✅ fonctionnels |
+| Vault management | `mem_init_project`, `mem_rename`, `mem_merge`, `mem_reclass`, `mem_rollback_archive`, `mem_promote_domain`, `mem_historize`, `mem_update_phase` | ✅ fonctionnels |
+| Lecture directe (v0.9.3) | `mem_read_archive`, `mem_read_context`, `mem_read_history`, `mem_get_topology` | ✅ fonctionnels — bridge pour CLI MCP-only sans accès filesystem direct |
 | Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (10 catégories — 8 vault + 2 kit-repo audits) |
 | Ingestion | `mem`, `mem_doc`, `mem_note`, `mem_principle`, `mem_goal`, `mem_person` | ✅ fonctionnels (`mem_doc` natif sur md/txt + dispatcher PDF/DOCX/PPTX/XLSX/CSV/HTML via extra `[doc-readers]`) |
 | Archeo | `mem_archeo`, `mem_archeo_stack`, `mem_archeo_git` | ✅ fonctionnels (Phase 0 + Phase 2 + Phase 3 complète : tags / releases / merges / commits + branch-first) |

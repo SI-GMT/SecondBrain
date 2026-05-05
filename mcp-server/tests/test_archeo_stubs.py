@@ -38,8 +38,13 @@ async def test_all_archeo_tools_appear_in_inventory(client: Client) -> None:
         assert name in tool_names, f"{name} missing from MCP inventory"
 
 
-async def test_total_tool_count_is_24(client: Client) -> None:
-    """Sanity check: the v0.8.0 milestone is 24 mem_* tools registered."""
+async def test_total_tool_count_is_30(client: Client) -> None:
+    """Sanity check: the v0.9.3 milestone is 30 mem_* tools registered.
+
+    History: 24 in v0.8.0 (initial Phase 3 MCP) → 30 in v0.9.3 (added
+    mem_init_project, mem_update_phase, mem_read_archive, mem_read_context,
+    mem_read_history, mem_get_topology to close UX gaps).
+    """
     tools = await client.list_tools()
     mem_tools = [t for t in tools if t.name == "mem" or t.name.startswith("mem_")]
-    assert len(mem_tools) == 24, f"expected 24 mem_* tools, got {len(mem_tools)}: {[t.name for t in mem_tools]}"
+    assert len(mem_tools) == 30, f"expected 30 mem_* tools, got {len(mem_tools)}: {[t.name for t in mem_tools]}"

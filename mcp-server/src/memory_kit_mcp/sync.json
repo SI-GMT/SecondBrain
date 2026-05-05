@@ -21,6 +21,10 @@
       "procedure": "mem-digest.md",
       "last_synced_hash": "6bd318435223430c0b895bda3590b2a9c44d8bd16c7706a4ab41cf5596e8ea5a"
     },
+    "mem_init_project": {
+      "procedure": "mem-init-project.md",
+      "last_synced_hash": "7019bfc616e8dceae88b77c1595d97475ed8c02ecadad9d76912e8a576f49757"
+    },
     "mem_rename": {
       "procedure": "mem-rename.md",
       "last_synced_hash": "7a1e0fe466c91340fecf58d05897f6aa41c61447851470e92cec0b4b8a89e948"
@@ -44,6 +48,26 @@
     "mem_historize": {
       "procedure": "mem-historize.md",
       "last_synced_hash": "cf1089c3f2472b75ddbdc4ef34b635e3e0f3dfedd3e6df2a47339d4b80e35bf2"
+    },
+    "mem_update_phase": {
+      "procedure": "mem-update-phase.md",
+      "last_synced_hash": "f13ed73703ba6a53901b4c4ac5aaf96c8ce432227cd2067f85609df7efd515db"
+    },
+    "mem_read_archive": {
+      "procedure": "mem-read-archive.md",
+      "last_synced_hash": "97304899efccb061d9d72b1a8797f749f8b18c1b70a664c9625e5699e4c4f0b1"
+    },
+    "mem_read_context": {
+      "procedure": "mem-read-context.md",
+      "last_synced_hash": "b65e012e830b1fc11e4d3f6697aaded37a246c7c05fa5e8852708bce6f8d4c94"
+    },
+    "mem_read_history": {
+      "procedure": "mem-read-history.md",
+      "last_synced_hash": "c9fed10c32e9a5caed1d5a38bd1294b55819be6332a722c14b758b0cc1114ffb"
+    },
+    "mem_get_topology": {
+      "procedure": "mem-get-topology.md",
+      "last_synced_hash": "094cb41f5f34067562ba0f8ba3099b237ede21cacf55ad181835459a892e9a52"
     },
     "mem_health_scan": {
       "procedure": "mem-health-scan.md",

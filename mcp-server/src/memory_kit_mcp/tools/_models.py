@@ -6,6 +6,8 @@ structuredContent (typed) and text (Markdown rendering) for the client LLM.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -190,6 +192,45 @@ class IngestionResult(BaseModel):
     atoms_created: int
     files_created: list[str] = Field(default_factory=list)
     target_zone: str
+    summary_md: str
+
+
+# ---------- Read tools (v0.9.3 — direct vault file readers) ----------
+
+
+class VaultReadResult(BaseModel):
+    """Generic result for read-only access to a vault Markdown file.
+
+    Used by ``mem_read_archive``, ``mem_read_context``, ``mem_read_history`` —
+    every tool that needs to surface the raw content of a single vault file
+    with its parsed frontmatter, without going through ``mem_recall``'s full
+    briefing synthesis.
+    """
+
+    path: str = Field(..., description="Vault-relative POSIX path of the file read.")
+    slug: str = Field(..., description="Project or domain slug the file belongs to.")
+    kind: str = Field(..., description="'project' or 'domain' or 'archive' or 'context' or 'history'.")
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+    body: str = Field("", description="Full body of the file, frontmatter stripped.")
+    summary_md: str = Field("", description="Short Markdown summary describing what was read.")
+
+
+class TopologyReadResult(BaseModel):
+    """Result of ``mem_get_topology`` — surface the persisted topology snapshot
+    of a project (``99-meta/repo-topology/{slug}.md``) without re-scanning the
+    repo. Useful for LLM-driven tasks (Phase 1 archeo, semantic analysis) that
+    want the topology metadata without the cost of a fresh scan.
+    """
+
+    project: str
+    topology_path: str = Field("", description="Vault-relative path. Empty if no topology persisted.")
+    exists: bool = False
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+    body: str = ""
+    repo_path: str = ""
+    repo_remote: str = ""
+    content_hash: str = ""
+    last_archive: str = ""
     summary_md: str
 
 
