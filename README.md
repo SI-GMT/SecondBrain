@@ -10,7 +10,7 @@
 [![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#mode-mcp-v080)
 [![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
 
-SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée chez SI Groupe Mondial Tissus.
+SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée au sein du SI du Groupe Mondial Tissus.
 
 ## Quoi de neuf
 
