@@ -180,6 +180,65 @@ tags: [zone/meta, type/repo-topology, project/<slug>]
 
 When a persisted topology already exists for the project and the caller wants a **fresh scan**, the caller must explicitly opt in (e.g. orchestrator's `--rescan` flag). Otherwise the persisted topology is loaded and used as-is, which is faster.
 
+#### T6.0.1. Body structure — canonical sections
+
+The body of the persisted topology follows this exact section order. The
+`## Atomes dérivés des phases archeo` section MUST be split into the **four
+sub-sections** below, even if some are empty (write `_(none)_` as the body).
+Mixing Phase 1 / Phase 2 / Phase 3 outputs in a single bucket is a doctrine
+violation flagged by `mem-health-scan` (`topology-archives-out-of-sync`).
+
+```markdown
+# Topology — {slug}
+
+_Scanned at: {ISO-8601 timestamp} (depth {N})._
+
+## Repo metadata
+- **Path** : `{repo_path}`
+- **Remote** : {repo_remote-or-"(no remote)"}
+
+## Categories
+{per-category file/dir listing}
+
+## Stack résolue (Phase 2)
+{layer: techno-summary lines, or "(Phase 2 not run)"}
+
+## Workspaces
+{monorepo workspace list, or omit if not a monorepo}
+
+## Phases archeo couvertes
+- Phase 0 (topology scan) — {date}
+- Phase 1 (archeo-context) — {N} atoms — last pass: {date}     # if run
+- Phase 2 (archeo-stack)   — {N} layers — last pass: {date}    # if run
+- Phase 3 (archeo-git)     — {N} archives — last pass: {date}  # if run
+
+## Atomes dérivés des phases archeo
+
+### Phase 1 — archeo-context
+{wikilinks to atoms with source: archeo-context AND project: {slug}}
+
+### Phase 2 — archeo-stack
+{wikilinks to atoms with source: archeo-stack AND project: {slug}}
+
+### Phase 3 — archeo-git (archives)
+{wikilinks to files in 10-episodes/projects/{slug}/archives/}
+
+### Phase 3 — archeo-git (derived atoms)
+{wikilinks to atoms with source: archeo-git AND project: {slug} that live
+ outside 10-episodes/.../archives/ — these are the Principle/Concept/Goal
+ sections surfaced by Phase 3 milestones, residing in 40-principles/,
+ 20-knowledge/ or 50-goals/. Each MUST also appear in the derived_atoms
+ field of its parent archive.}
+
+## Branch topologies         # only if branch topologies exist
+{wikilinks to 99-meta/repo-topology/{slug}-branches/*}
+```
+
+The four Phase sub-sections are mandatory section headings even when empty
+— this gives Obsidian a stable graph structure and lets `mem-health-scan`
+detect orphans (atoms produced but not listed) and ghosts (atoms listed but
+no longer existing) deterministically.
+
 ### T6.1. Branch-first topology files (v0.7.1)
 
 When the orchestrator or a sub-skill runs in **branch-first mode**, it writes an additional topology file dedicated to the branch:

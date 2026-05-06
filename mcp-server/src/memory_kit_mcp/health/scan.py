@@ -1,14 +1,15 @@
-"""Vault hygiene scan — 10-category audit (shared library).
+"""Vault hygiene scan — 15-category audit (shared library).
 
 Spec: core/procedures/mem-health-scan.md
-Mirrors: scripts/mem-health-scan.py (versioned standalone CLI) for the first
-8 categories. Categories 9 and 10 (``mcp-tool-spec-drift`` and
-``skill-description-too-long``) are mcp-only by design: they audit the
-*kit repo* (core/procedures vs ``sync.json``, then ``adapters/`` SKILL.md
-templates), not the vault. The standalone — which scans vaults from machines
-without the kit installed — has no equivalent.
+Mirrors: scripts/mem-health-scan.py (versioned standalone CLI) for the
+12 vault categories. Categories ``mcp-tool-spec-drift``,
+``skill-description-too-long`` and ``missing-zone-index-entry`` are mcp-only
+by design: they audit the *kit repo* (core/procedures vs ``sync.json``, then
+``adapters/`` SKILL.md templates) or rely on the vault zone-index machinery
+that is bundled with the MCP server. The standalone — which scans vaults
+from machines without the kit installed — has no equivalent for those.
 
-Read-only. Detects 10 categories of issues:
+Read-only. Detects 15 categories of issues:
 
 - malformed-frontmatter  (error)  YAML frontmatter that fails to parse.
 - stray-zone-md          (warn)   Empty MD at vault root named after a
@@ -49,6 +50,29 @@ Read-only. Detects 10 categories of issues:
                                   (root index points to zone indexes).
                                   Auto-fixable by ``mem_health_repair``
                                   (regenerates the affected zone index).
+- missing-universal-frontmatter (warn) v0.10.0. Atom outside 00-inbox/ and
+                                  99-meta/ without one of the universal
+                                  MUST fields (scope, collective, modality).
+                                  Documented in _frontmatter-universal.md.
+                                  Surfaced after a less-rigorous LLM
+                                  adapter produced batches of atoms with
+                                  all three fields silently missing.
+- missing-archeo-context-origin (warn) v0.10.0. Atom with source: archeo-*
+                                  without context_origin OR with a
+                                  context_origin not pointing to the
+                                  required anchor (topology for
+                                  archeo-context/stack, milestone archive
+                                  for archeo-git derived atoms).
+- archeo-derived-orphan         (warn) v0.10.0. Atom with source: archeo-git
+                                  living outside 10-episodes/.../archives/
+                                  but not referenced in derived_atoms of
+                                  any milestone archive. The bidirectional
+                                  link is broken (cf. mem-archeo-git.md §6).
+- topology-archives-out-of-sync (info) v0.10.0. Topology in 99-meta/repo-
+                                  topology/{slug}.md does not list one or
+                                  more existing archives in 10-episodes/
+                                  projects/{slug}/archives/ under its
+                                  'Atomes dérivés' section.
 
 The function returns Pydantic HealthFinding objects (defined in
 tools._models) so the MCP tool layer can serialize them directly.
@@ -84,7 +108,17 @@ CATEGORIES: tuple[str, ...] = (
     "mcp-tool-spec-drift",
     "skill-description-too-long",
     "missing-zone-index-entry",
+    "missing-universal-frontmatter",
+    "missing-archeo-context-origin",
+    "archeo-derived-orphan",
+    "topology-archives-out-of-sync",
 )
+
+# Universal frontmatter MUST fields per _frontmatter-universal.md
+# (excluding inbox + meta zones which have their own minimal schemas).
+UNIVERSAL_MUST: tuple[str, ...] = ("scope", "collective", "modality")
+
+ARCHEO_SOURCES: tuple[str, ...] = ("archeo-context", "archeo-stack", "archeo-git")
 
 # Adapters audited for the skill-description-too-long check. Each entry is a
 # (adapter-name, glob relative to ``kit_repo/adapters/{adapter}/``).
@@ -526,6 +560,170 @@ def scan_vault(
                         f"Atom not listed in `{zone}/index.md`. "
                         f"Run `mem_health_repair --apply` to regenerate the zone index.",
                         auto_fixable=True,
+                    ))
+
+    # ---- 10. missing-universal-frontmatter ------------------------------
+    # An atom outside 00-inbox/ and 99-meta/ MUST carry scope, collective and
+    # modality (per _frontmatter-universal.md). LLM-driven runs by adapters
+    # less rigorous than the reference client silently drop these because
+    # YAML parses fine without them. Detect the drift here.
+    if cat_active("missing-universal-frontmatter"):
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            if not parts:
+                continue
+            zone_dir = parts[0]
+            if zone_dir in ("00-inbox", "99-meta"):
+                continue
+            if fm.get("zone") == "meta":
+                continue
+            if p.name in ("context.md", "history.md"):
+                continue
+            if fm.get("type") == "zone-index":
+                continue
+            missing = [k for k in UNIVERSAL_MUST if k not in fm]
+            if missing:
+                findings_by_cat["missing-universal-frontmatter"].append(_finding(
+                    "missing-universal-frontmatter", "warning", rel,
+                    f"Missing universal MUST field(s): {', '.join(missing)}. "
+                    f"See _frontmatter-universal.md.",
+                    auto_fixable=False,
+                ))
+
+    # ---- 11. missing-archeo-context-origin ------------------------------
+    # archeo-context and archeo-stack atoms MUST point to the topology.
+    # archeo-git derived atoms (outside archives/) MUST point to a milestone
+    # archive. archeo-git archives themselves are exempt.
+    if cat_active("missing-archeo-context-origin"):
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            src = fm.get("source")
+            if not isinstance(src, str) or src not in ARCHEO_SOURCES:
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            if (src == "archeo-git"
+                    and len(parts) >= 4
+                    and parts[0] == "10-episodes"
+                    and parts[3] == "archives"):
+                continue
+            origin = fm.get("context_origin")
+            if not origin or not isinstance(origin, str):
+                findings_by_cat["missing-archeo-context-origin"].append(_finding(
+                    "missing-archeo-context-origin", "warning", rel,
+                    f"Missing `context_origin` for source: {src}. "
+                    f"See _frontmatter-archeo.md.",
+                    auto_fixable=False,
+                ))
+                continue
+            slug = fm.get("project") or fm.get("domain")
+            if src in ("archeo-context", "archeo-stack"):
+                expected = f"[[99-meta/repo-topology/{slug}]]"
+                if origin != expected:
+                    findings_by_cat["missing-archeo-context-origin"].append(_finding(
+                        "missing-archeo-context-origin", "warning", rel,
+                        f"`context_origin` is {origin!r}, expected {expected!r}.",
+                        auto_fixable=False,
+                    ))
+            elif src == "archeo-git":
+                if not (origin.startswith("[[") and origin.endswith("]]")):
+                    findings_by_cat["missing-archeo-context-origin"].append(_finding(
+                        "missing-archeo-context-origin", "warning", rel,
+                        f"`context_origin` is not a wikilink: {origin!r}.",
+                        auto_fixable=False,
+                    ))
+
+    # ---- 12. archeo-derived-orphan --------------------------------------
+    # archeo-git atoms living outside archives/ MUST be referenced in the
+    # `derived_atoms:` list of a milestone archive. Otherwise the bidirectional
+    # link is broken (cf. mem-archeo-git.md §6).
+    if cat_active("archeo-derived-orphan"):
+        derived_set: set[str] = set()
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            rel_str = p.relative_to(vault).as_posix()
+            parts = Path(rel_str).parts
+            if not (len(parts) >= 4
+                    and parts[0] == "10-episodes"
+                    and parts[3] == "archives"
+                    and fm.get("source") == "archeo-git"):
+                continue
+            derived = fm.get("derived_atoms", [])
+            if not isinstance(derived, list):
+                continue
+            for entry in derived:
+                if not isinstance(entry, str):
+                    continue
+                m = WIKILINK_RE.match(entry)
+                target = m.group(1).strip() if m else entry.strip("[] ")
+                derived_set.add(target.split("/")[-1])
+
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            if fm.get("source") != "archeo-git":
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            if (len(parts) >= 4
+                    and parts[0] == "10-episodes"
+                    and parts[3] == "archives"):
+                continue
+            if p.stem not in derived_set:
+                findings_by_cat["archeo-derived-orphan"].append(_finding(
+                    "archeo-derived-orphan", "warning", rel,
+                    "Atom has source: archeo-git but is not listed in "
+                    "`derived_atoms` of any milestone archive. Bidirectional "
+                    "link is broken — see mem-archeo-git.md §6.",
+                    auto_fixable=False,
+                ))
+
+    # ---- 13. topology-archives-out-of-sync ------------------------------
+    # For each persisted topology, ensure that all archives present in
+    # 10-episodes/projects/{slug}/archives/ are referenced in the body
+    # (typically under '## Atomes dérivés des phases archeo').
+    if cat_active("topology-archives-out-of-sync"):
+        topo_dir = vault / "99-meta" / "repo-topology"
+        if topo_dir.is_dir():
+            for topo_file in topo_dir.glob("*.md"):
+                if topo_file.is_dir():
+                    continue
+                if topo_file in malformed_paths:
+                    continue
+                fm, body = file_fm.get(topo_file, ({}, ""))
+                if fm.get("type") != "repo-topology":
+                    continue
+                slug = fm.get("project")
+                if not slug:
+                    continue
+                arch_dir = (vault / "10-episodes" / "projects" / slug
+                            / "archives")
+                if not arch_dir.is_dir():
+                    continue
+                archives = sorted(
+                    p.stem for p in arch_dir.glob("*.md") if p.is_file()
+                )
+                if not archives:
+                    continue
+                body_targets: set[str] = set()
+                for m in WIKILINK_RE.finditer(strip_code(body)):
+                    target = m.group(1).strip()
+                    body_targets.add(target.split("/")[-1])
+                missing_arch = [a for a in archives if a not in body_targets]
+                if missing_arch:
+                    rel = topo_file.relative_to(vault).as_posix()
+                    findings_by_cat["topology-archives-out-of-sync"].append(_finding(
+                        "topology-archives-out-of-sync", "info", rel,
+                        f"{len(missing_arch)} archive(s) not referenced in "
+                        f"topology body: {missing_arch[0]}"
+                        + (f" + {len(missing_arch)-1} more"
+                           if len(missing_arch) > 1 else ""),
+                        auto_fixable=False,
                     ))
 
     # ---- Flatten in canonical category order ----------------------------

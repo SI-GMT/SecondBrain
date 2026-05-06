@@ -2,6 +2,8 @@
 
 Every file in the vault outside `00-inbox/` and `99-meta/` carries the **6 universal fields** below. Other fields are specific to each zone (see spec section 7 of the cadrage document).
 
+For atoms produced by `mem-archeo-*` skills (`source: archeo-context | archeo-stack | archeo-git`), see also `_frontmatter-archeo.md` which extends this block with the archeo-specific MUST fields and the pre-write checklist. The two blocks are complementary: every archeo atom carries the 6 universal fields below **and** the source-specific MUST fields from `_frontmatter-archeo`.
+
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `date` | `YYYY-MM-DD` | yes | File creation date. Updates tolerated on `context.md` and long notes. |

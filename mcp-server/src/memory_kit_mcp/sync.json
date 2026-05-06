@@ -111,15 +111,15 @@
     },
     "mem_archeo_context": {
       "procedure": "mem-archeo-context.md",
-      "last_synced_hash": "317ded3c138d71ef6473203e2678506336bc6d09de72b67b63fe5b248c8180ff"
+      "last_synced_hash": "62e0c17eac0ded0f3b1abc1d7811ad464c7bcdb3f72c876d0884cb4f123d334f"
     },
     "mem_archeo_stack": {
       "procedure": "mem-archeo-stack.md",
-      "last_synced_hash": "40ad575ba6a658b558f630ed1cbdbc4a8c1b5dd5898f01cb3214c138a9003932"
+      "last_synced_hash": "078a869e6411455e3e461d0428cd376da6d3162d2afb3f1c30028bea0618499a"
     },
     "mem_archeo_git": {
       "procedure": "mem-archeo-git.md",
-      "last_synced_hash": "d2828b5eab45160ad08f796a952ff77bc4d8b2a129672b59a4ce707fbbf73e7c"
+      "last_synced_hash": "2161cf401aa9ac125b6b6718aed186cd38a84b2ce88b8a8eeed828ea83077f8a"
     },
     "mem_archeo_atlassian": {
       "procedure": "mem-archeo-atlassian.md",

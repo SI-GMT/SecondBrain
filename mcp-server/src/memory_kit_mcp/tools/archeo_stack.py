@@ -800,16 +800,21 @@ def _write_layer_atom(vault: Path, slug: str, layer: LayerResolution) -> str:
         "project": slug,
         "context_origin": f"[[99-meta/repo-topology/{slug}]]",
         "zone": "knowledge",
-        "kind": "architecture",
+        "type": "architecture",
         "scope": "work",
+        "collective": False,
+        "modality": "left",
         "tags": [
-            "kind/architecture",
+            "type/architecture",
             "zone/knowledge",
             "scope/work",
+            "modality/left",
+            "source/archeo-stack",
             f"project/{slug}",
             f"detected_layer/{layer.layer}",
+            "category/sync",
         ],
-        "display": f"{slug} — stack {layer.layer}",
+        "display": f"architecture: {slug}-stack-{layer.layer}",
     }
 
     if target.is_file():

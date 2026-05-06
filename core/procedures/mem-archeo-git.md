@@ -225,44 +225,20 @@ Call the router with:
 - `Hint source`: `archeo-git`.
 - `Metadata`: resolved project/domain, **`source_milestone: {tag|sha|range}`**, `commit_sha`, `friction_detected: true|false`, scope.
 
-**Frontmatter MUST fields** for the resulting milestone archive (the router writes these — verify before completing the milestone):
+**Frontmatter checklist for the resulting milestone archive — walk `_frontmatter-archeo.md` line by line before invoking the router**. The block below is included verbatim in this procedure and is the single canonical contract for archeo atoms (universal + archeo-specific MUST fields, exhaustive). **No silent omission tolerated** — any missing MUST field is a malformed archive.
 
-```yaml
-date: <YYYY-MM-DD>
-time: "<HH:MM>"
-zone: episodes
-kind: project
-scope: work
-collective: false
-modality: left
-type: archive
-project: {slug}
-source: archeo-git                       # MUST — single occurrence, never duplicated
-source_milestone: <tag|sha|range>        # MUST
-commit_sha: <sha>                        # MUST — primary commit (the tag's commit, the merge commit, or the last commit of the window)
-friction_detected: true | false          # MUST — boolean, never omitted
-content_hash: <sha256>                   # MUST — SHA-256 of body (after frontmatter, LF + UTF-8 no BOM)
-previous_atom: <wikilink-or-empty>       # MUST — empty "" if not a revision
-topology_snapshot_hash: <sha256-or-empty>     # set by mem-archive when triggered from full-mode; otherwise empty ""
-previous_topology_hash: <sha256-or-empty>     # idem
-tags: [<see _frontmatter-universal>]
-```
+{{INCLUDE _frontmatter-archeo}}
 
-**Additional MUST fields in branch-first mode (v0.7.1)** :
-
-```yaml
-branch: <branch-name>                    # MUST in branch-first mode — original branch name (not sanitized)
-branch_base: <ref>                       # MUST — the divergence ref (typically main or master)
-branch_base_sha: <sha>                   # MUST — sha of the merge-base commit
-author_email: <email>                    # MUST when granularity is --by-author
-author_name: <name>                      # MUST when granularity is --by-author
-co_authors: [<email>, ...]               # MUST — list of Co-Authored-By emails aggregated for the group; empty list [] if none
-granularity: by-author | by-merge | by-window    # MUST in branch-first mode
-```
-
-In standard (non-branch-first) mode, these branch-* fields are **set to empty string** for the scalar fields and `[]` for `co_authors`, never omitted — they are part of the canonical schema for `archeo-git` archives in v0.7.1.
+In standard (non-branch-first) mode, the branch-* fields (`branch`, `branch_base`, `branch_base_sha`) are **set to empty string `''`**, never omitted — they are part of the canonical schema for `archeo-git` archives in v0.7.1. Same for `co_authors: []` (empty list, never omitted).
 
 **No duplicate keys.** YAML doesn't tolerate duplicate top-level keys reliably — duplicates are parser-implementation-defined. The router MUST emit each key exactly once. If two values are conceptually needed (e.g. multiple commits in a window), use a list (`source_commits: [...]`) rather than two `commit_sha:` keys.
+
+**Bidirectional `derived_atoms` link is mandatory.** For each transverse atom this milestone produces (Principle, Concept, Goal sections of the body), the writer MUST :
+
+1. Set the transverse atom's `context_origin` to `[[<milestone-archive-name-without-md>]]`.
+2. Append the transverse atom's wikilink to the milestone archive's `derived_atoms:` field.
+
+If a transverse atom has `source: archeo-git` but is not referenced in any milestone's `derived_atoms`, it is an `archeo-derived-orphan` (detected by `mem-health-scan`). The link must be bidirectional or the atom is malformed.
 
 {{INCLUDE _router}}
 

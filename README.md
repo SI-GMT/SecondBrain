@@ -1,6 +1,6 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.9.7, **production stabilisée sous AGPL-3.0-or-later**, 31 outils MCP) + skills fallback transparente.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.10.0, **production stabilisée sous AGPL-3.0-or-later**, 32 outils MCP) + skills fallback transparente.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
@@ -14,19 +14,17 @@ SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fage
 
 ## Quoi de neuf
 
-**v0.9.7 — hotfix UnicodeEncodeError sur Windows cp1252**. Le CLI `memory-kit-migrate` plantait sur Windows avec `UnicodeEncodeError: 'charmap' codec can't encode character '→'` parce que Python utilise par défaut cp1252 pour stdout sur Windows et la flèche `→` n'est pas dans cp1252. Fix double : (1) `_force_utf8_console()` reconfigue stdout/stderr en UTF-8 avec `errors='replace'` au démarrage du CLI (Python 3.7+, no-op sur les systèmes déjà en UTF-8), (2) remplacement défensif de `→` par `->` et de `✓`/`·` par `[x]`/`[ ]` dans les summaries pour éliminer la dépendance à l'encoding console.
+**v0.10.0 — durcissement frontmatter cross-LLM**. Réponse aux atomes silencieusement malformés produits par les adapters LLM moins rigoureux que le client de référence (frontmatter universel omis, `context_origin` absent, `derived_atoms` non rétroliés — autant de YAML qui parse fine mais que `mem_recall` ne reconnaît pas). Trois renforts coordonnés : (1) nouveau bloc doctrinal `core/procedures/_frontmatter-archeo.md` — checklist exhaustive 31 fields × 5 sources + pre-write LLM walkthrough, inclus par les 3 procédures `mem-archeo-*` ; (2) `mem-health-scan` étendu de 11 à **15 catégories** (12 vault + 3 kit-only) — détecte `missing-universal-frontmatter`, `missing-archeo-context-origin`, `archeo-derived-orphan`, `topology-archives-out-of-sync` ; (3) nouvel outil MCP `mem_archeo_context_finalize` — **32 tools au total** : le LLM hands off ses spans pré-classifiés, Python force le frontmatter canonique, idempotence automatique. Bonus : bug fix `mem_archeo_stack` (manquait `collective`/`modality`/`type` canonique).
 
-**v0.9.6 — hotfix Deploy-McpServer auto-kill des sessions actives**. Le `Deploy-McpServer` v0.9.5 et antérieurs traitaient `WinError 32` (fichier `memory-kit-mcp.exe` en cours d'usage par une session CLI active) comme un succès silencieux, ce qui laissait les utilisateurs bloqués sur d'anciennes versions sans le savoir. Symptôme : un utilisateur installant le kit en v0.8.0 puis upgradant le repo restait sur v0.8.0 indéfiniment tant qu'il avait une session Claude Code ouverte pendant le deploy. Fix : le hook détecte les versions divergentes (target dans `pyproject.toml` vs installée via `pipx list --short`), tue automatiquement les process `memory-kit-mcp` actifs (les clients MCP reconnectent automatiquement au prochain appel d'outil), retry l'install, et **n'avale plus l'erreur silencieusement** — message explicite si l'upgrade reste impossible. Plus aucune responsabilité côté utilisateur — le deploy gère le cycle de vie du serveur.
+**v0.9.7** — Hotfix `UnicodeEncodeError` sur Windows cp1252 pour le CLI `memory-kit-migrate` (UTF-8 reconfig + fallback ASCII des glyphes).
 
-**v0.9.5 — hotfix hook deploy v0.9.4**. Le hook de migration de v0.9.4 appelait `python -m memory_kit_mcp.migrate`, mais le serveur étant installé via `pipx` dans son propre venv isolé, le module est invisible depuis le Python global de l'utilisateur — d'où le `ModuleNotFoundError: No module named 'memory_kit_mcp'` rencontré par les pilotes. Fix : nouvel entry point CLI `memory-kit-migrate` (auto-installé par `pipx install memory-kit-mcp` au même titre que `memory-kit-mcp`). Les hooks `deploy.ps1`/`deploy.sh` utilisent désormais cette commande + fallback `pipx environment --value PIPX_BIN_DIR` si le PATH n'est pas encore rechargé dans la session deploy en cours.
+**v0.9.6** — Hotfix `Deploy-McpServer` : auto-kill des process `memory-kit-mcp` actifs lors de l'upgrade (résout le piège `WinError 32` qui laissait les pilotes bloqués sur une vieille version).
 
-**v0.9.4 — index de zone intermédiaires + migration framework**. Les listings d'atomes transverses (Principles / Knowledge / Goals / People) qui vivaient dans `index.md` racine migrent vers les `{zone}/index.md` (référentiel annexe par zone, plus léger). L'index racine garde Zones / Projets / Domaines / Archives uniquement. Les outils d'ingestion (`mem_note`, `mem_principle`, `mem_goal`, `mem_person`, `mem`) mettent à jour automatiquement l'index de zone à chaque écriture — fini les atomes orphelins par défaut. Nouvelle 11ᵉ catégorie health-scan `missing-zone-index-entry` (auto-fixable). Framework de migration versionné (`vault_schema_version` dans `~/.memory-kit/config.json`) avec backup auto avant apply, outil MCP `mem_migrate` (dry-run par défaut, 31 outils au total), CLI `python -m memory_kit_mcp.migrate`, hook automatique dans `deploy.ps1`/`deploy.sh` qui applique les migrations pendantes. **ACTION PILOTES** : la migration `v1_zone_indexes` se déclenche automatiquement au prochain `deploy.ps1`/`deploy.sh`. Backup auto pris avant. Aucune intervention manuelle nécessaire.
+**v0.9.5** — Hotfix hook deploy : entry point CLI `memory-kit-migrate` auto-installé par pipx (résout `ModuleNotFoundError` sur installs via venv isolé).
 
-**v0.9.3 — combler les trous UX (6 nouveaux outils MCP)**. Ajout de `mem_init_project` (bootstrap projet/domaine vide, débloque les CLI MCP-only qui ne pouvaient pas créer un projet sans accès filesystem direct), `mem_read_archive` / `mem_read_context` / `mem_read_history` / `mem_get_topology` (lecture directe des fichiers vault sans synthèse), `mem_update_phase` (raccourci pour bumper la phase sans réécrire le context). 30 outils MCP exposés au total (24 → 30). Périmètre fonctionnel inchangé sur le reste depuis v0.9.1.
+**v0.9.4** — Indexes de zone intermédiaires (`{zone}/index.md`) + framework de migration vault versionné avec auto-backup. 11ᵉ catégorie health-scan `missing-zone-index-entry` (auto-fixable).
 
-**v0.9.2 — passage sous licence AGPL-3.0-or-later** + scrub du projet. Périmètre fonctionnel inchangé depuis v0.9.1 : MCP complet, 22 outils archeo / vault / hygiène / ingestion natifs Python + 2 stubs assumés par design. Plus de détails section [Licence et crédits](#licence-et-crédits).
-
-**Détails de la release et historique complet** : [Releases GitHub](https://github.com/SI-GMT/SecondBrain/releases) · [`docs/architecture/`](./docs/architecture/) pour les cadrages versionnés (un par release majeure depuis v0.5).
+**Historique antérieur (v0.5 → v0.9.3)** : voir [Releases GitHub](https://github.com/SI-GMT/SecondBrain/releases) et [`docs/architecture/`](./docs/architecture/) pour les cadrages versionnés.
 
 ---
 
@@ -104,12 +102,12 @@ Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 
 - **Framework** : `fastmcp` 2.x (standalone, pas le SDK officiel intégré) — choisi pour le `Client` in-memory qui rend les tests pytest triviaux sans subprocess stdio.
 - **Validation** : Pydantic v2 (args + retours typés), sérialisés automatiquement en `structuredContent` MCP.
 - **Build** : hatchling + uv (Python ≥3.12), packaging via `pipx install ./mcp-server`.
-- **Tests** : pytest + pytest-asyncio + pytest-cov, **114 tests, 94 % coverage**, fixture `vault_tmp` qui copie un mini-vault de référence dans `tmp_path` à chaque test.
+- **Tests** : pytest + pytest-asyncio + pytest-cov, **294 tests** (v0.10.0), fixture `vault_tmp` qui copie un mini-vault de référence dans `tmp_path` à chaque test.
 - **Transport** : stdio uniquement (lancé par le client CLI à chaque session).
 
 `deploy.ps1` / `deploy.sh` détecte `pipx`, installe ou met à jour `memory-kit-mcp`, écrit `~/.memory-kit/config.json` (vault, scope, langue, kit_repo), et inject la déclaration MCP dans les configs des cibles compatibles. En cas de WinError 32 (binaire verrouillé par une CLI active), l'upgrade est différé proprement et la version précédente reste fonctionnelle.
 
-### Inventaire des 31 outils
+### Inventaire des 32 outils
 
 | Catégorie | Outils MCP (snake_case) | État |
 |---|---|---|
@@ -117,11 +115,12 @@ Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 
 | Inventaire | `mem_list`, `mem_search`, `mem_digest` | ✅ fonctionnels |
 | Vault management | `mem_init_project`, `mem_rename`, `mem_merge`, `mem_reclass`, `mem_rollback_archive`, `mem_promote_domain`, `mem_historize`, `mem_update_phase` | ✅ fonctionnels |
 | Lecture directe (v0.9.3) | `mem_read_archive`, `mem_read_context`, `mem_read_history`, `mem_get_topology` | ✅ fonctionnels — bridge pour CLI MCP-only sans accès filesystem direct |
-| Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (11 catégories — 9 vault + 2 kit-repo audits, dont la nouvelle `missing-zone-index-entry` v0.9.4 auto-fixable) |
+| Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (**15 catégories** v0.10.0 — 12 vault + 3 kit-repo audits, dont les 4 nouvelles `missing-universal-frontmatter`, `missing-archeo-context-origin`, `archeo-derived-orphan`, `topology-archives-out-of-sync`) |
 | Schema migrations (v0.9.4) | `mem_migrate` | ✅ framework versionné, dry-run par défaut, auto-backup avant apply, hook deploy automatique |
 | Ingestion | `mem`, `mem_doc`, `mem_note`, `mem_principle`, `mem_goal`, `mem_person` | ✅ fonctionnels (`mem_doc` natif sur md/txt + dispatcher PDF/DOCX/PPTX/XLSX/CSV/HTML via extra `[doc-readers]`) |
 | Archeo | `mem_archeo`, `mem_archeo_stack`, `mem_archeo_git` | ✅ fonctionnels (Phase 0 + Phase 2 + Phase 3 complète : tags / releases / merges / commits + branch-first) |
-| Archeo skill-only par design | `mem_archeo_context`, `mem_archeo_atlassian` | ⚠️ stubs MCP intentionnels — **pas un manque** : Phase 1 = classification sémantique LLM, Atlassian = MCP client-side plus riche qu'un port `httpx` maison |
+| Archeo Phase 1 finalisation (v0.10.0) | `mem_archeo_context_finalize` | ✅ fonctionnel — LLM hands off ses spans pré-classifiés, Python force le frontmatter universel + archeo (cf. `_frontmatter-archeo.md`) |
+| Archeo skill-only par design | `mem_archeo_context`, `mem_archeo_atlassian` | ⚠️ stubs MCP intentionnels — **pas un manque** : Phase 1 = classification sémantique LLM (mais voir `mem_archeo_context_finalize` pour la finalisation Python) ; Atlassian = MCP client-side plus riche qu'un port `httpx` maison |
 
 Convention de nommage : `mem-X` (kebab côté skills/CLI/langage naturel) ↔ `mem_X` (snake côté outils MCP / Python). Les invocations utilisateur (slash commands, intents) ne changent pas.
 
@@ -255,10 +254,10 @@ SecondBrain/
 │   ├── src/memory_kit_mcp/
 │   │   ├── server.py           FastMCP instance + main() entry stdio
 │   │   ├── config.py           ~/.memory-kit/config.json loader
-│   │   ├── tools/              24 outils mem_* (1 fichier par tool)
+│   │   ├── tools/              32 outils mem_* (1 fichier par tool)
 │   │   └── vault/              Primitives partagées (paths, frontmatter,
 │   │                           atomic_io, scanner)
-│   └── tests/                  pytest, 114 tests, 94% coverage
+│   └── tests/                  pytest, 294 tests (v0.10.0)
 ├── memory/                     Vault Obsidian local (non versionné — voir .gitignore)
 │   ├── index.md                Catalogue maître à la racine
 │   ├── 00-inbox/               Captation brute non qualifiée

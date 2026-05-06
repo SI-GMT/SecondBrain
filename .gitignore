@@ -22,3 +22,12 @@ memory/.obsidian/
 # Settings locaux Claude Code (par poste)
 .claude/settings.local.json
 .claude/
+
+# Python build / cache
+__pycache__/
+*.pyc
+.venv/
+
+# uv lockfile (mcp-server is distributed as a library via pipx — lockfile
+# is a consumer concern, not committed to the kit repo).
+mcp-server/uv.lock

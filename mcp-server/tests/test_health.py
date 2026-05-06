@@ -507,3 +507,251 @@ async def test_health_repair_idempotent(client: Client, vault_tmp: Path) -> None
     assert res.data.fixes_applied == 0 or all(
         "no-display.md" not in m for m in res.data.files_modified
     )
+
+
+# ---------- missing-universal-frontmatter (12th category, v0.9.x) ----------
+
+
+async def test_health_scan_detects_missing_universal_frontmatter(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An atom outside inbox/meta missing scope/collective/modality is flagged."""
+    target = vault_tmp / "40-principles" / "work" / "methodology" / "weak.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {
+            "zone": "principles",
+            "type": "principle",
+            "project": "alpha",
+            "display": "principle: weak",
+            # scope, collective, modality DELIBERATELY missing
+        },
+        "# Weak principle\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "missing-universal-frontmatter" and "weak" in f.path
+    ]
+    assert matches, "expected a missing-universal-frontmatter finding"
+    assert "scope" in matches[0].message
+    assert "collective" in matches[0].message
+    assert "modality" in matches[0].message
+
+
+async def test_health_scan_meta_zone_exempt_from_universal_check(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An atom with zone: meta is exempt regardless of where it lives."""
+    target = vault_tmp / "20-knowledge" / "ghost-meta.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {"zone": "meta", "type": "doctrine", "display": "ghost"},
+        "# meta-typed atom in a non-meta folder\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "missing-universal-frontmatter" and "ghost-meta" in f.path
+    ]
+    assert not matches, "zone: meta atoms should not trigger universal-frontmatter check"
+
+
+# ---------- missing-archeo-context-origin (13th category, v0.9.x) ----------
+
+
+async def test_health_scan_detects_missing_archeo_context_origin(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An archeo-context atom without context_origin is flagged."""
+    target = vault_tmp / "40-principles" / "work" / "no-origin.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {
+            "zone": "principles", "type": "principle", "project": "alpha",
+            "scope": "work", "collective": False, "modality": "left",
+            "source": "archeo-context", "source_doc": "CLAUDE.md",
+            "display": "principle: no-origin",
+            # context_origin DELIBERATELY missing
+        },
+        "# No origin\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "missing-archeo-context-origin" and "no-origin" in f.path
+    ]
+    assert matches
+
+
+async def test_health_scan_detects_wrong_archeo_context_origin(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An archeo-stack atom with a context_origin that doesn't point to topology."""
+    target = vault_tmp / "20-knowledge" / "wrong-origin.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {
+            "zone": "knowledge", "type": "architecture", "project": "alpha",
+            "scope": "work", "collective": False, "modality": "left",
+            "source": "archeo-stack",
+            "context_origin": "[[some-random-anchor]]",  # wrong target
+            "display": "knowledge: wrong-origin",
+        },
+        "# Wrong origin\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "missing-archeo-context-origin" and "wrong-origin" in f.path
+    ]
+    assert matches
+    assert "expected" in matches[0].message
+
+
+async def test_health_scan_archeo_git_archive_exempt_from_origin_check(
+    client: Client, vault_tmp: Path
+) -> None:
+    """archeo-git archives (in archives/) don't need context_origin."""
+    arch_dir = vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        arch_dir / "2026-05-06-12h00-alpha-archeo-git-window-2026-05-06.md",
+        {
+            "date": "2026-05-06", "time": "12:00",
+            "zone": "episodes", "kind": "project", "project": "alpha",
+            "scope": "work", "collective": False, "modality": "left",
+            "type": "archive", "source": "archeo-git",
+            "milestone_kind": "window", "source_milestone": "window-2026-05-06",
+            "commit_sha": "abc", "friction_detected": False,
+            "branch": "", "branch_base": "", "branch_base_sha": "",
+            "display": "alpha — 2026-05-06 archive",
+            "derived_atoms": [],
+            # context_origin deliberately absent — archives don't need it
+        },
+        "# Archive\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "missing-archeo-context-origin"
+        and "alpha-archeo-git-window" in f.path
+    ]
+    assert not matches
+
+
+# ---------- archeo-derived-orphan (14th category, v0.9.x) ----------
+
+
+async def test_health_scan_detects_archeo_derived_orphan(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An archeo-git atom outside archives/ not referenced anywhere is flagged."""
+    target = vault_tmp / "40-principles" / "work" / "orphan-derived.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        target,
+        {
+            "zone": "principles", "type": "principle", "project": "alpha",
+            "scope": "work", "collective": False, "modality": "left",
+            "source": "archeo-git", "source_milestone": "window-X",
+            "context_origin": "[[some-archive]]",
+            "display": "principle: orphan-derived",
+        },
+        "# Orphan derived\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-derived-orphan" and "orphan-derived" in f.path
+    ]
+    assert matches
+
+
+async def test_health_scan_archeo_derived_linked_via_archive(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An archeo-git derived atom listed in an archive's derived_atoms is OK."""
+    arch_dir = vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    derived_target = vault_tmp / "40-principles" / "work" / "linked-derived.md"
+    derived_target.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        derived_target,
+        {
+            "zone": "principles", "type": "principle", "project": "alpha",
+            "scope": "work", "collective": False, "modality": "left",
+            "source": "archeo-git",
+            "context_origin": "[[2026-05-06-12h00-alpha-archeo-git-window]]",
+            "display": "principle: linked-derived",
+        },
+        "# Linked derived\n",
+    )
+    frontmatter.write(
+        arch_dir / "2026-05-06-12h00-alpha-archeo-git-window.md",
+        {
+            "date": "2026-05-06", "time": "12:00", "zone": "episodes",
+            "kind": "project", "project": "alpha", "scope": "work",
+            "collective": False, "modality": "left", "type": "archive",
+            "source": "archeo-git", "milestone_kind": "window",
+            "source_milestone": "window", "commit_sha": "abc",
+            "friction_detected": False, "branch": "",
+            "branch_base": "", "branch_base_sha": "",
+            "display": "alpha — archive",
+            "derived_atoms": ["[[40-principles/work/linked-derived]]"],
+        },
+        "# Archive\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-derived-orphan" and "linked-derived" in f.path
+    ]
+    assert not matches
+
+
+# ---------- topology-archives-out-of-sync (15th category, v0.9.x) ----------
+
+
+async def test_health_scan_detects_topology_archives_out_of_sync(
+    client: Client, vault_tmp: Path
+) -> None:
+    """A topology that doesn't reference an existing archive is flagged."""
+    arch_dir = vault_tmp / "10-episodes" / "projects" / "ghost" / "archives"
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        arch_dir / "2026-05-06-12h00-ghost-archive.md",
+        {
+            "date": "2026-05-06", "time": "12:00", "zone": "episodes",
+            "kind": "project", "project": "ghost", "scope": "work",
+            "collective": False, "modality": "left", "type": "archive",
+            "source": "archeo-git", "milestone_kind": "window",
+            "source_milestone": "w", "commit_sha": "abc",
+            "friction_detected": False, "branch": "",
+            "branch_base": "", "branch_base_sha": "",
+            "display": "ghost — archive", "derived_atoms": [],
+        },
+        "# Archive\n",
+    )
+    topo = vault_tmp / "99-meta" / "repo-topology" / "ghost.md"
+    topo.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        topo,
+        {
+            "date": "2026-05-06", "zone": "meta", "type": "repo-topology",
+            "project": "ghost", "repo_path": "/x", "repo_remote": "",
+            "content_hash": "x", "previous_topology_hash": "",
+            "last_archive": "", "display": "ghost — topology",
+        },
+        "# Topology — ghost\n\n## Atomes dérivés\n\n_(none yet)_\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "topology-archives-out-of-sync" and "ghost.md" in f.path
+    ]
+    assert matches

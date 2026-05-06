@@ -2,29 +2,53 @@
 """
 mem-health-scan.py — audit the SecondBrain vault for hygiene defects.
 
-Read-only. Detects 8 categories of issues:
+Read-only. Detects 12 categories of issues:
 
-  - malformed-frontmatter  (error)  YAML frontmatter that fails to parse —
-                                    typically unquoted [TAG] flow-sequences
-                                    or stray colons. Detected first so it
-                                    does NOT cascade into other categories
-                                    as false positives.
-  - stray-zone-md          (warn)   Empty MD at vault root named after a
-                                    numbered zone (e.g. 20-knowledge.md).
-                                    Created by Obsidian on click of a
-                                    dangling wiki-link target.
-  - empty-md-at-root       (warn)   Other empty MDs at vault root.
-  - missing-zone-index     (warn)   Zone folder exists but lacks its
-                                    {zone}/index.md hub.
-  - missing-display        (info)   Frontmatter without `display:` where
-                                    universal conventions require it.
-  - dangling-wikilinks     (info)   [[X]] references whose target is not
-                                    present anywhere in the vault.
-  - orphan-atoms           (warn)   Transverse atoms with no project/domain
-                                    attachment AND zero incoming wikilinks.
-  - missing-archeo-hashes  (warn)   Atoms with source: archeo-* missing
-                                    `content_hash` or (for repo-topology)
-                                    `previous_topology_hash`.
+  - malformed-frontmatter         (error) YAML frontmatter that fails to parse —
+                                          typically unquoted [TAG] flow-sequences
+                                          or stray colons. Detected first so it
+                                          does NOT cascade into other categories
+                                          as false positives.
+  - stray-zone-md                 (warn)  Empty MD at vault root named after a
+                                          numbered zone (e.g. 20-knowledge.md).
+                                          Created by Obsidian on click of a
+                                          dangling wiki-link target.
+  - empty-md-at-root              (warn)  Other empty MDs at vault root.
+  - missing-zone-index            (warn)  Zone folder exists but lacks its
+                                          {zone}/index.md hub.
+  - missing-display               (info)  Frontmatter without `display:` where
+                                          universal conventions require it.
+  - dangling-wikilinks            (info)  [[X]] references whose target is not
+                                          present anywhere in the vault.
+  - orphan-atoms                  (warn)  Transverse atoms with no project/domain
+                                          attachment AND zero incoming wikilinks.
+  - missing-archeo-hashes         (warn)  Atoms with source: archeo-* missing
+                                          `content_hash` or (for repo-topology)
+                                          `previous_topology_hash`.
+  - missing-universal-frontmatter (warn)  v0.10.0. Atom outside 00-inbox/ and
+                                          99-meta/ without one of the universal
+                                          MUST fields (scope, collective,
+                                          modality). Documented in
+                                          _frontmatter-universal.md. Surfaced
+                                          after a less-rigorous LLM adapter
+                                          produced batches of atoms with all
+                                          three fields silently missing.
+  - missing-archeo-context-origin (warn)  v0.10.0. Atom with source: archeo-*
+                                          without context_origin OR with a
+                                          context_origin not pointing to the
+                                          required anchor (topology for
+                                          archeo-context/stack, milestone
+                                          archive for archeo-git derived).
+  - archeo-derived-orphan         (warn)  v0.10.0. Atom with source: archeo-git
+                                          living outside 10-episodes/.../archives/
+                                          but not referenced in derived_atoms
+                                          of any milestone archive. The
+                                          bidirectional link is broken.
+  - topology-archives-out-of-sync (info)  v0.10.0. Topology in 99-meta/repo-
+                                          topology/{slug}.md does not list one
+                                          or more existing archives in
+                                          10-episodes/projects/{slug}/archives/
+                                          under its 'Atomes dérivés' section.
 
 Persists a structured report at {vault}/99-meta/health/scan-{ts}.md unless
 --no-write is passed. Prints a parseable summary on stdout.
@@ -79,7 +103,37 @@ CATEGORIES = [
     "dangling-wikilinks",
     "orphan-atoms",
     "missing-archeo-hashes",
+    "missing-universal-frontmatter",
+    "missing-archeo-context-origin",
+    "archeo-derived-orphan",
+    "topology-archives-out-of-sync",
 ]
+
+# Severity defaults per category (used by the report renderer + exit code logic).
+SEVERITIES = {
+    "malformed-frontmatter": "error",
+    "stray-zone-md": "warn",
+    "empty-md-at-root": "warn",
+    "missing-zone-index": "warn",
+    "missing-display": "info",
+    "dangling-wikilinks": "info",
+    "orphan-atoms": "warn",
+    "missing-archeo-hashes": "warn",
+    "missing-universal-frontmatter": "warn",
+    "missing-archeo-context-origin": "warn",
+    "archeo-derived-orphan": "warn",
+    "topology-archives-out-of-sync": "info",
+}
+
+# Universal frontmatter MUST fields per _frontmatter-universal.md
+# (excluding inbox + meta zones which have their own minimal schemas).
+UNIVERSAL_MUST = ("scope", "collective", "modality")
+
+# Archeo source -> required context_origin anchor pattern.
+# archeo-git atoms have two flavors: archives (in 10-episodes/.../archives/) which
+# don't carry context_origin (they ARE the milestone), and derived atoms (transverse)
+# which MUST carry context_origin pointing to a milestone archive.
+ARCHEO_SOURCES = ("archeo-context", "archeo-stack", "archeo-git")
 
 WIKILINK_RE = re.compile(r"(?<!!)\[\[([^\]\|#]+)(?:\|[^\]]*)?\]\]")
 
@@ -361,6 +415,178 @@ def collect_findings(vault: Path, zones_filter, only_filter):
                     findings["missing-archeo-hashes"].append((
                         "warn", rel, "missing `previous_topology_hash` key",
                         "inject-archeo-hashes",
+                    ))
+
+    # ---- 2.8 missing-universal-frontmatter ---------------------------------
+    # An atom outside 00-inbox/ and 99-meta/ MUST carry scope, collective and
+    # modality (per _frontmatter-universal.md). LLM-driven runs by adapters
+    # less rigorous than the reference client silently drop these because
+    # YAML parses fine without them. Catch the drift here.
+    if cat_active("missing-universal-frontmatter"):
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            if not parts:
+                continue
+            zone_dir = parts[0]
+            # 00-inbox: minimal schema by design. 99-meta: neutral, no scope/etc.
+            if zone_dir in ("00-inbox", "99-meta"):
+                continue
+            # zone: meta atoms are exempt regardless of where they live (vault
+            # root index.md, zone hubs, etc.).
+            if fm.get("zone") == "meta":
+                continue
+            # context.md / history.md inherit from project — exempt
+            if p.name in ("context.md", "history.md"):
+                continue
+            # zone-index hubs are meta even when they live in non-meta folders
+            if fm.get("type") == "zone-index":
+                continue
+            missing = [k for k in UNIVERSAL_MUST if k not in fm]
+            if missing:
+                findings["missing-universal-frontmatter"].append((
+                    "warn", rel,
+                    f"missing universal MUST field(s): {', '.join(missing)}",
+                    "inject-universal-frontmatter",
+                ))
+
+    # ---- 2.9 missing-archeo-context-origin ---------------------------------
+    # archeo-context and archeo-stack atoms MUST carry
+    #   context_origin: "[[99-meta/repo-topology/{slug}]]"
+    # archeo-git atoms living outside archives/ (= derived atoms) MUST carry
+    #   context_origin: "[[<milestone-archive-name>]]"
+    # archeo-git atoms inside archives/ are the milestones themselves and do
+    # not require context_origin.
+    if cat_active("missing-archeo-context-origin"):
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            src = fm.get("source")
+            if not isinstance(src, str) or src not in ARCHEO_SOURCES:
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            # archeo-git archives (the milestone files) — exempt
+            if (src == "archeo-git"
+                    and len(parts) >= 4
+                    and parts[0] == "10-episodes"
+                    and parts[3] == "archives"):
+                continue
+            origin = fm.get("context_origin")
+            if not origin or not isinstance(origin, str):
+                findings["missing-archeo-context-origin"].append((
+                    "warn", rel, f"missing `context_origin` for source: {src}",
+                    "inject-context-origin",
+                ))
+                continue
+            slug = fm.get("project") or fm.get("domain")
+            # archeo-context / archeo-stack: must point to topology
+            if src in ("archeo-context", "archeo-stack"):
+                expected = f"[[99-meta/repo-topology/{slug}]]"
+                if origin != expected:
+                    findings["missing-archeo-context-origin"].append((
+                        "warn", rel,
+                        f"`context_origin` is {origin!r}, expected {expected!r}",
+                        "inject-context-origin",
+                    ))
+            # archeo-git derived: must be a wikilink (we don't validate the
+            # target archive exists here — that's archeo-derived-orphan's job)
+            elif src == "archeo-git":
+                if not (origin.startswith("[[") and origin.endswith("]]")):
+                    findings["missing-archeo-context-origin"].append((
+                        "warn", rel,
+                        f"`context_origin` is not a wikilink: {origin!r}",
+                        "inject-context-origin",
+                    ))
+
+    # ---- 2.10 archeo-derived-orphan ----------------------------------------
+    # Build the set of all wikilink targets referenced by milestone archives'
+    # `derived_atoms:` field, then flag any source: archeo-git atom living
+    # outside archives/ that is not in that set.
+    if cat_active("archeo-derived-orphan"):
+        derived_set = set()  # set of basenames (file stems)
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            parts = Path(rel := p.relative_to(vault).as_posix()).parts
+            if not (len(parts) >= 4 and parts[0] == "10-episodes"
+                    and parts[3] == "archives"
+                    and fm.get("source") == "archeo-git"):
+                continue
+            derived = fm.get("derived_atoms", [])
+            if not isinstance(derived, list):
+                continue
+            for entry in derived:
+                if not isinstance(entry, str):
+                    continue
+                # Strip [[...]] and optional |display
+                m = WIKILINK_RE.match(entry)
+                target = m.group(1).strip() if m else entry.strip("[] ")
+                derived_set.add(target.split("/")[-1])
+
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            if fm.get("source") != "archeo-git":
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            # archives themselves are not orphans
+            if (len(parts) >= 4 and parts[0] == "10-episodes"
+                    and parts[3] == "archives"):
+                continue
+            if p.stem not in derived_set:
+                findings["archeo-derived-orphan"].append((
+                    "warn", rel,
+                    "atom has source: archeo-git but is not listed in "
+                    "derived_atoms of any milestone archive",
+                    "fix-derived-link",
+                ))
+
+    # ---- 2.11 topology-archives-out-of-sync --------------------------------
+    # For each persisted topology, ensure that all archives present in
+    # 10-episodes/projects/{slug}/archives/ are referenced in the body of
+    # the topology file (typically under '## Atomes dérivés').
+    if cat_active("topology-archives-out-of-sync"):
+        topo_dir = vault / "99-meta" / "repo-topology"
+        if topo_dir.is_dir():
+            for topo_file in topo_dir.glob("*.md"):
+                if topo_file.is_dir():
+                    continue
+                if topo_file in malformed_paths:
+                    continue
+                fm, body = file_fm.get(topo_file, ({}, ""))
+                if fm.get("type") != "repo-topology":
+                    continue
+                slug = fm.get("project")
+                if not slug:
+                    continue
+                arch_dir = (vault / "10-episodes" / "projects" / slug
+                            / "archives")
+                if not arch_dir.is_dir():
+                    continue
+                archives = sorted(
+                    p.stem for p in arch_dir.glob("*.md") if p.is_file()
+                )
+                if not archives:
+                    continue
+                # Look for each archive basename in the body wikilinks
+                body_targets = set()
+                for m in WIKILINK_RE.finditer(strip_code(body)):
+                    target = m.group(1).strip()
+                    body_targets.add(target.split("/")[-1])
+                missing_arch = [a for a in archives if a not in body_targets]
+                if missing_arch:
+                    rel = topo_file.relative_to(vault).as_posix()
+                    findings["topology-archives-out-of-sync"].append((
+                        "info", rel,
+                        f"{len(missing_arch)} archive(s) not referenced in "
+                        f"topology body: {missing_arch[0]}"
+                        + (f" + {len(missing_arch)-1} more"
+                           if len(missing_arch) > 1 else ""),
+                        "rebuild-topology-derived-section",
                     ))
 
     return findings, errors

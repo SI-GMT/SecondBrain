@@ -1,21 +1,26 @@
 """mem_health_scan — Audit vault hygiene + kit-repo spec drift + skill descriptions.
 
 Spec: core/procedures/mem-health-scan.md
-Scripted reference: scripts/mem-health-scan.py (8 vault categories only)
+Scripted reference: scripts/mem-health-scan.py (12 vault categories)
 
 Thin wrapper over the shared library memory_kit_mcp.health.scan, which
-implements the canonical 10-category audit:
+implements the canonical 15-category audit:
 
-- malformed-frontmatter      (error)
-- stray-zone-md              (warning)
-- empty-md-at-root           (warning)
-- missing-zone-index         (warning)
-- missing-display            (info, auto-fixable)
-- dangling-wikilinks         (info)
-- orphan-atoms               (warning)
-- missing-archeo-hashes      (warning)
-- mcp-tool-spec-drift        (info)  — mcp-only; needs kit_repo + sync.json.
-- skill-description-too-long (warning) — mcp-only; needs kit_repo + adapters/.
+- malformed-frontmatter         (error)
+- stray-zone-md                 (warning)
+- empty-md-at-root              (warning)
+- missing-zone-index            (warning)
+- missing-display               (info, auto-fixable)
+- dangling-wikilinks            (info)
+- orphan-atoms                  (warning)
+- missing-archeo-hashes         (warning)
+- mcp-tool-spec-drift           (info)    — mcp-only; needs kit_repo + sync.json.
+- skill-description-too-long    (warning) — mcp-only; needs kit_repo + adapters/.
+- missing-zone-index-entry      (warning) — mcp-only; auto-fixable.
+- missing-universal-frontmatter (warning) — v0.9.x; scope/collective/modality.
+- missing-archeo-context-origin (warning) — v0.9.x; archeo-* atoms.
+- archeo-derived-orphan         (warning) — v0.9.x; broken bidirectional link.
+- topology-archives-out-of-sync (info)    — v0.9.x; topology vs archives drift.
 
 Read-only — no writes. mem_health_repair applies fixes.
 """
@@ -73,16 +78,19 @@ def register(mcp: FastMCP) -> None:
                 "malformed-frontmatter | stray-zone-md | empty-md-at-root | "
                 "missing-zone-index | missing-display | dangling-wikilinks | "
                 "orphan-atoms | missing-archeo-hashes | mcp-tool-spec-drift | "
-                "skill-description-too-long. None = all."
+                "skill-description-too-long | missing-zone-index-entry | "
+                "missing-universal-frontmatter | missing-archeo-context-origin | "
+                "archeo-derived-orphan | topology-archives-out-of-sync. "
+                "None = all."
             ),
         ),
     ) -> HealthScanResult:
         """Audit vault hygiene + kit-repo spec drift + adapter SKILL.md description lengths. Read-only — no writes.
 
-        Covers the 10 canonical categories defined in core/procedures/mem-health-scan.md.
-        Use mem_health_repair to apply auto-fixes (currently: missing-display only;
-        stray-zone-md and empty-md-at-root are auto-fixable in principle but the
-        repair tool requires opt-in for delete operations).
+        Covers the 15 canonical categories defined in core/procedures/mem-health-scan.md.
+        Use mem_health_repair to apply auto-fixes (currently: missing-display +
+        missing-zone-index-entry; stray-zone-md and empty-md-at-root are auto-fixable
+        in principle but the repair tool requires opt-in for delete operations).
         """
         config = get_config()
         vault = config.vault

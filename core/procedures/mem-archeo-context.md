@@ -121,21 +121,15 @@ For each detected span (each will become an atom):
 
 - Subject = short title (≤ 60 chars), derived from the span's heading or first sentence.
 - Body = the relevant excerpt(s) from `D`, lightly reformatted into a coherent paragraph + optional bullets. Preserve quoted text verbatim.
-- Frontmatter common fields (**all MUST, never omitted**):
-  ```yaml
-  source: archeo-context
-  source_doc: <path-relative-to-repo>
-  source_doc_hash: <sha256-of-source-doc-text>          # MUST — SHA-256 of the doc content as read at step 5a
-  content_hash: <sha256-of-this-atom-body>              # MUST — SHA-256 of this atom's body (after frontmatter, LF + UTF-8 no BOM)
-  previous_atom: <wikilink-or-empty>                    # MUST — empty string "" on first write, set on revisions
-  extracted_category: <one of the seven>
-  project: {slug}
-  context_origin: "[[99-meta/repo-topology/{slug}]]"
-  branch: <branch-name-or-empty>                        # v0.7.1 — empty "" in standard mode, set in branch-first mode
-  ```
-- Frontmatter category-specific fields per the table above. For `force` field on principles: values are always in **English** (`red-line | heuristic | preference`), never localized — keep the structural English schema invariant.
+- Frontmatter : **walk the pre-write checklist of `_frontmatter-archeo.md` line by line before writing**. The block below is included verbatim in this procedure and is the single canonical contract for archeo atoms (universal + archeo-specific MUST fields, exhaustive). **No silent omission tolerated** — any missing MUST field is a malformed atom.
 
-The atom's `context_origin` points to the persisted topology (the shared anchor), **not** to a Git archive — Phase 1 atoms are not derived from a session, they are derived from the project's documentation.
+{{INCLUDE _frontmatter-archeo}}
+
+- Phase 1 specifics on top of `_frontmatter-archeo`:
+  - `source: archeo-context` (always for this phase).
+  - `extracted_category` is one of the seven: `workflow | sync | multi-tenant | security | adr | goal | other`.
+  - `context_origin: "[[99-meta/repo-topology/{slug}]]"` — Phase 1 atoms anchor on the persisted topology (the shared scan), **not** a Git archive (Phase 1 atoms are derived from project documentation, not a session).
+  - For `force` field on principles: values are always in **English** (`red-line | heuristic | preference`), never localized — keep the structural English schema invariant.
 
 #### d. Idempotence check
 

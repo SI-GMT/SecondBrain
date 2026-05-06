@@ -170,18 +170,16 @@ For each layer with non-empty resolution, build one atom:
 
 - Subject = layer name + 1-line synthesis (e.g. "Frontend — Next.js 14 + React 18 + Tailwind").
 - Body = the structured resolution from step 4 in Markdown form (subsections per sub-area when relevant).
-- Frontmatter (**all MUST, never omitted**):
-  ```yaml
-  source: archeo-stack
-  source_manifest: <main manifest path for this layer, e.g. package.json | pyproject.toml | docker-compose.yml>
-  detected_layer: <one of the eight: frontend|backend|db|ci|infra|tests|tooling|other>    # MUST
-  detected_techno: <name or list of detected techs>                                       # MUST — string or YAML list
-  content_hash: <sha256-of-this-atom-body>                                                # MUST — SHA-256 of body (after frontmatter, LF + UTF-8 no BOM)
-  previous_atom: <wikilink-or-empty>                                                      # MUST — empty "" on first write
-  branch: <branch-name-or-empty>                                                          # v0.7.1 — empty "" in standard mode, set in branch-first mode
-  project: {slug}
-  context_origin: "[[99-meta/repo-topology/{slug}]]"
-  ```
+- Frontmatter : **walk the pre-write checklist of `_frontmatter-archeo.md` line by line before writing**. The block below is included verbatim in this procedure and is the single canonical contract for archeo atoms (universal + archeo-specific MUST fields, exhaustive). **No silent omission tolerated** — any missing MUST field is a malformed atom.
+
+{{INCLUDE _frontmatter-archeo}}
+
+- Phase 2 specifics on top of `_frontmatter-archeo`:
+  - `source: archeo-stack` (always for this phase).
+  - `source_manifest: <main manifest path for this layer, e.g. package.json | pyproject.toml | docker-compose.yml>`.
+  - `detected_layer: <one of the eight: frontend | backend | db | ci | infra | tests | tooling | other>`.
+  - `detected_techno: <list of detected techs, possibly empty []>`.
+  - `context_origin: "[[99-meta/repo-topology/{slug}]]"`.
 
 A layer with strong convention signals (e.g. `tooling` with strict mypy + pre-commit + commitlint) may produce **two** atoms: one in `20-knowledge/architecture/` describing the stack itself, one in `40-principles/{scope}/conventions/` for the enforced rule (e.g. "All commits must follow Conventional Commits via commitlint enforcement"). The second atom carries `force: heuristic` (English value, never localized — `red-line | heuristic | preference` are the canonical strings).
 

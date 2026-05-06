@@ -14,6 +14,7 @@ from memory_kit_mcp.tools import (
     archeo,
     archeo_atlassian,
     archeo_context,
+    archeo_context_finalize,
     archeo_git,
     archeo_stack,
     archive,
@@ -85,6 +86,7 @@ def register_all(mcp: FastMCP) -> None:
     # The other phases are being ported one by one onto topology_scanner.
     archeo.register(mcp)
     archeo_context.register(mcp)
+    archeo_context_finalize.register(mcp)
     archeo_stack.register(mcp)
     archeo_git.register(mcp)
     archeo_atlassian.register(mcp)

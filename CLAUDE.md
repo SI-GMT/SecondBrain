@@ -23,10 +23,10 @@ mcp-server/                   ← serveur MCP Python (v0.8.0)
   src/memory_kit_mcp/
     server.py                 ← FastMCP instance + main() entry stdio
     config.py                 ← lit ~/.memory-kit/config.json
-    tools/X.py                ← 24 outils mem_X (1-pour-1 avec les skills)
+    tools/X.py                ← 32 outils mem_X (1-pour-1 avec les skills + finalize)
     vault/                    ← primitives partagées (paths, frontmatter,
                                 atomic_io UTF-8/LF/hash, scanner)
-  tests/                      ← pytest, 114 tests, 94% coverage via
+  tests/                      ← pytest, 294 tests (v0.10.0) via
                                 fastmcp.Client in-memory
 memory/                       ← vault Obsidian local (non versionné avec le kit)
 deploy.ps1                    ← assemble adapters + core, installe dans ~/.claude/,
