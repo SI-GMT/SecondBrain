@@ -29,13 +29,18 @@ Arguments:
 - `--no-confirm`: passes through to the router in fluent mode even on multi-atoms.
 - `--rescan`: ignores any persisted topology and forces a fresh scan.
 
-**Branch-first mode (v0.7.1)**:
+**Branch-first mode (v0.7.1, hardened in v0.9.x)**:
 
-- `--branch-first {branch}`: scope Phase 3 to commits on the branch since divergence with `--branch-base`. The granularity defaults to `--by-author`; `--by-merge` and `--by-window` override.
+- `--branch-first {branch}`: scope Phase 3 to commits relevant to the branch. Three resolution strategies, mix-and-matchable, evaluated in priority order:
+  - **(C) Explicit anchor** — if `--since-sha {sha}` or `--since-date YYYY-MM-DD` is provided, use it verbatim. Bypasses merge-base detection. Useful when the branch was rebased/squashed and the historical divergence point is known but not derivable from refs.
+  - **(A) Auto first-parent fallback** — when the branch has been **fully merged** into `--branch-base` (`merge-base == HEAD(branch)`, so the standard `merge-base..branch` rev-range yields zero commits), the tool transparently falls back to the first-parent divergence point. Gives a stable historical anchor that ignores the merge-back commit. No flag needed; surfaced as a `branch-first: branch fully merged...` warning in the report.
+  - **(B) By-files** — set `--by-files` to query commits **touching the files introduced by the branch** (detected via `--diff-filter=A` on the first-parent lineage), repo-wide rather than constrained to the branch range. Captures creation, evolution **and** post-merge fixes on the same files. Recommended for archeology of long-lived feature branches whose post-merge maintenance happened on `main`.
 - `--branch-base {ref}`: base ref for the divergence calculation (default `main`, fallback `master`).
 - `--by-author` (default in branch-first): granularity is `(author_email, time-window)`. Window defaults to `day`; configurable via `--window`.
 - `--by-merge`: granularity is by merge commit on the branch (relevant for long-lived branches that absorbed sub-features).
 - `--by-window`: granularity is the classic `--window` time grouping (overrides `--by-author`).
+
+The resolution mode is reported in the archive frontmatter (`branch_resolution: live | merged-fallback | since-sha | since-date | by-files`) so the user can audit which strategy ran.
 
 ## Vault and repo path resolution
 

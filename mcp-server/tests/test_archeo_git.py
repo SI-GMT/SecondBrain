@@ -593,4 +593,177 @@ async def test_branch_first_falls_back_when_branch_missing(
     d = res.structured_content
     # repo_with_tags has 3 semver tags -> standard mode after fallback creates 3 archives
     assert d["milestones_processed"] == 3
-    assert any("could not be resolved" in w for w in d["warnings"])
+    assert any("Falling back to standard mode" in w for w in d["warnings"])
+
+
+# ---------- Branch-first A + B + C (v0.9.x) ----------
+
+
+@pytest.fixture
+def repo_with_merged_branch(tmp_path: Path) -> tuple[Path, str]:
+    """Repo where a feature branch was merged back into main.
+
+    Layout:
+      M0 (init main)
+        \\
+         F1 (feat/x)
+         F2 (feat/x)
+        /
+      M1 (merge feat/x into main)
+      M2 (post-merge fix on main, touches feat file)
+    """
+    import os
+    repo = tmp_path / "merged-branch-repo"
+    repo.mkdir()
+    _git_init_with_user(repo)
+
+    env_base = {**os.environ}
+
+    def _commit_with_date(fname: str, content: str, msg: str, iso_date: str) -> str:
+        (repo / fname).write_text(content, encoding="utf-8")
+        _git(repo, "add", fname)
+        env = {
+            **env_base,
+            "GIT_AUTHOR_DATE": iso_date, "GIT_COMMITTER_DATE": iso_date,
+        }
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "-m", msg],
+            check=True, env=env,
+        )
+        return _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    # M0 — initial commit on main
+    _commit_with_date("README.md", "init", "init main", "2026-04-01T10:00:00+00:00")
+    try:
+        _git(repo, "branch", "-m", "main")
+    except subprocess.CalledProcessError:
+        pass
+
+    # Branch off
+    _git(repo, "checkout", "-b", "feat/x")
+    f1 = _commit_with_date("feat-file.txt", "v1", "feat: introduce X", "2026-04-05T10:00:00+00:00")
+    f2 = _commit_with_date("feat-file.txt", "v2", "feat: refine X", "2026-04-06T10:00:00+00:00")
+
+    # Merge back into main
+    _git(repo, "checkout", "main")
+    env = {**env_base, "GIT_AUTHOR_DATE": "2026-04-07T10:00:00+00:00",
+           "GIT_COMMITTER_DATE": "2026-04-07T10:00:00+00:00"}
+    subprocess.run(
+        ["git", "-C", str(repo), "merge", "--no-ff", "feat/x", "-m", "merge feat/x"],
+        check=True, env=env,
+    )
+
+    # Post-merge fix on main, touching feat-file.txt
+    _commit_with_date("feat-file.txt", "v3 fixed", "fix: bug on X after merge",
+                      "2026-04-08T10:00:00+00:00")
+
+    return repo, "feat/x"
+
+
+async def test_branch_first_A_first_parent_fallback_when_merged(
+    client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
+) -> None:
+    """Strategy A — when the branch is fully merged into base, merge-base equals
+    the branch HEAD; the tool falls back to the first-parent divergence point.
+    """
+    repo, branch = repo_with_merged_branch
+    (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {
+            "repo_path": str(repo),
+            "project": "alpha",
+            "level": "commits",
+            "branch_first": branch,
+            "branch_base": "main",
+            "window": "day",
+            "by_author": True,
+        },
+    )
+    d = res.structured_content
+    # The branch had 2 unique commits — both same author, but different days.
+    # First-parent fallback resolves to the initial commit, so the 2 branch
+    # commits land in the rev-range and produce 2 day-windows.
+    assert d["milestones_processed"] >= 2
+    assert any(
+        "merged" in w.lower() or "first-parent" in w.lower()
+        for w in d["warnings"]
+    )
+
+
+async def test_branch_first_C_since_sha_explicit_anchor(
+    client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
+) -> None:
+    """Strategy C — explicit since_sha bypasses merge-base entirely."""
+    repo, branch = repo_with_merged_branch
+    (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    init_sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--max-parents=0", "main"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {
+            "repo_path": str(repo),
+            "project": "alpha",
+            "level": "commits",
+            "branch_first": branch,
+            "since_sha": init_sha,
+            "window": "day",
+        },
+    )
+    d = res.structured_content
+    # Same commits as the A test but anchored explicitly.
+    assert d["milestones_processed"] >= 2
+    assert any("since_sha" in w.lower() for w in d["warnings"])
+
+
+async def test_branch_first_B_by_files_captures_post_merge_fixes(
+    client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
+) -> None:
+    """Strategy B — by_files queries commits TOUCHING the branch-introduced
+    files repo-wide. Captures the post-merge fix that A and C miss.
+    """
+    repo, branch = repo_with_merged_branch
+    (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {
+            "repo_path": str(repo),
+            "project": "alpha",
+            "level": "commits",
+            "branch_first": branch,
+            "branch_base": "main",
+            "by_files": True,
+            "window": "day",
+            "by_author": True,
+        },
+    )
+    d = res.structured_content
+    # The 2 branch commits + the 1 post-merge fix on main = 3 day-windows
+    # covered by the file-driven query.
+    assert d["milestones_processed"] >= 3
+    assert any("by_files" in w.lower() or "branch-specific" in w.lower()
+               for w in d["warnings"])
+
+
+async def test_branch_first_C_since_date_floor(
+    client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
+) -> None:
+    """Strategy C alternative — since_date as floor."""
+    repo, branch = repo_with_merged_branch
+    (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {
+            "repo_path": str(repo),
+            "project": "alpha",
+            "level": "commits",
+            "branch_first": branch,
+            "since_date": "2026-04-04",
+            "window": "day",
+        },
+    )
+    d = res.structured_content
+    assert d["milestones_processed"] >= 1
+    assert any("since_date" in w.lower() for w in d["warnings"])

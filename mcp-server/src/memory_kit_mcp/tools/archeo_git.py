@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,9 @@ def execute_git(
     by_author: bool = False,
     branch_first: str | None = None,
     branch_base: str = "main",
+    since_sha: str | None = None,
+    since_date: str | None = None,
+    by_files: bool = False,
     skip_repo_validation: bool = False,
 ) -> ArcheoGitResult:
     """Run the Phase 3 git history reconstruction. Module-level so the
@@ -112,11 +115,15 @@ def execute_git(
     # the per-level milestone discovery to scope on commits unique to the branch.
     branch_ctx: _BranchContext | None = None
     if branch_first:
-        branch_ctx = _resolve_branch_context(repo, branch_first, branch_base)
+        branch_ctx = _resolve_branch_context(
+            repo, branch_first, branch_base,
+            since_sha=since_sha, since_date=since_date, by_files=by_files,
+        )
         if branch_ctx is None:
             warnings.append(
-                f"Branch-first mode requested for {branch_first!r} but the "
-                f"branch or its base {branch_base!r} could not be resolved. "
+                f"Branch-first mode requested for {branch_first!r} but neither "
+                f"merge-base, first-parent divergence, nor explicit since_sha "
+                f"could resolve a starting point relative to {branch_base!r}. "
                 "Falling back to standard mode."
             )
 
@@ -241,21 +248,63 @@ def register(mcp: FastMCP) -> None:
         branch_first: str | None = Field(
             None,
             description=(
-                "If set, scope the scan to commits unique to this branch since its "
-                "divergence from branch_base. Activates branch-first mode."
+                "If set, scope the scan to commits relevant to this branch. "
+                "Resolution order: explicit since_sha > since_date > merge-base; "
+                "if the branch is fully merged into branch_base, falls back "
+                "automatically to the first-parent divergence point. Activates "
+                "branch-first mode."
             ),
         ),
         branch_base: str = Field(
             "main",
-            description="Branch-first mode: base branch to compute the divergence point from. Default 'main'.",
+            description="Branch-first mode: base branch for divergence detection. Default 'main'.",
+        ),
+        since_sha: str | None = Field(
+            None,
+            description=(
+                "Branch-first escape hatch (C): explicit start SHA. Bypasses "
+                "merge-base detection. Useful when the branch was rebased / squashed "
+                "and the historical divergence point is known."
+            ),
+        ),
+        since_date: str | None = Field(
+            None,
+            description=(
+                "Branch-first escape hatch (C, alt): YYYY-MM-DD floor. The walk "
+                "starts at this date on the branch tip. Use when the branch has "
+                "no clean divergence point but a date-based scope is acceptable."
+            ),
+        ),
+        by_files: bool = Field(
+            False,
+            description=(
+                "Branch-first strategy (B): query commits TOUCHING the files "
+                "introduced by the branch (detected via --diff-filter=A on the "
+                "first-parent lineage), repo-wide rather than constrained to "
+                "the branch range. Captures creation, evolution and post-merge "
+                "fixes on the same files. Recommended for archeology of long-lived "
+                "feature branches."
+            ),
         ),
     ) -> ArcheoGitResult:
         """Phase 3 of the triphasic archeo: reconstruct Git history as dated archives.
 
         Standard mode walks the repo at the chosen ``level`` (tags / releases /
         merges / commits) and writes one archive per milestone in
-        ``10-episodes/projects/{slug}/archives/``. Branch-first mode (set
-        ``branch_first``) restricts the walk to commits unique to that branch.
+        ``10-episodes/projects/{slug}/archives/``.
+
+        **Branch-first mode** (set ``branch_first``) supports three resolution
+        strategies, mix-and-matchable:
+
+        - **A. Auto first-parent fallback** — when the branch has been merged
+          into ``branch_base``, ``merge-base`` would yield no commits. The
+          tool detects this and uses the first-parent divergence point
+          instead. No flag needed; happens transparently.
+        - **B. By-files** — set ``by_files=True`` to query commits touching
+          the files introduced by the branch (repo-wide), capturing the full
+          lineage including post-merge fixes.
+        - **C. Explicit since** — pass ``since_sha`` or ``since_date`` to
+          override merge-base detection with an arbitrary anchor.
 
         Each archive embeds AI files context at the time of the representative
         commit. Idempotent on (project, source_milestone). Refuses non-Git
@@ -273,6 +322,9 @@ def register(mcp: FastMCP) -> None:
             by_author=by_author,
             branch_first=branch_first,
             branch_base=branch_base,
+            since_sha=since_sha,
+            since_date=since_date,
+            by_files=by_files,
         )
 
 
@@ -865,18 +917,157 @@ def _co_authors_for_commits(repo: Path, shas: list[str]) -> dict[str, list[str]]
 class _BranchContext:
     branch: str
     base: str
-    base_sha: str  # merge-base SHA (divergence point)
+    base_sha: str  # divergence point — semantics depend on `mode` below
+    mode: str = "live"  # 'live' | 'merged-fallback' | 'since-sha' | 'since-date' | 'by-files'
+    files: list[str] = field(default_factory=list)  # populated when mode='by-files'
+    notes: list[str] = field(default_factory=list)  # human-readable explanation
+
+
+def _first_parent_ancestors(repo: Path, ref: str) -> list[str]:
+    """Return the first-parent ancestor chain of ``ref`` (most recent first).
+
+    Used to find the historical divergence point between two branches even
+    when they have been fully merged (``git merge-base`` reports the merge
+    point in that case, which is HEAD of the branch and useless for
+    archeology).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-list", "--first-parent", ref],
+            capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _first_parent_divergence_point(
+    repo: Path, branch: str, base: str,
+) -> str | None:
+    """Return the most recent first-parent ancestor common to ``branch`` and ``base``.
+
+    Unlike ``git merge-base``, this gives a stable historical anchor even when
+    the branch has been fully merged into the base — the merge-back commit is
+    skipped because it appears as a non-first-parent on the base lineage.
+
+    None if no common first-parent ancestor (disjoint histories).
+    """
+    branch_chain = _first_parent_ancestors(repo, branch)
+    if not branch_chain:
+        return None
+    base_set = set(_first_parent_ancestors(repo, base))
+    if not base_set:
+        return None
+    for sha in branch_chain:
+        if sha in base_set:
+            return sha
+    return None
+
+
+def _branch_specific_files(repo: Path, branch: str, base_sha: str) -> list[str]:
+    """Return the files INTRODUCED by the branch's first-parent lineage since
+    ``base_sha`` — i.e. files that did not exist before the branch and were
+    added on it. Used by the by-files strategy to derive a stable "scope of
+    files this branch is about", which then drives a wider commit query.
+
+    Heuristic: ``git log --first-parent --diff-filter=A --name-only`` over
+    ``base_sha..branch``. Captures ``A`` (added) entries; ``M`` (modified)
+    is intentionally excluded — modifications on the branch don't make a
+    file "branch-specific".
+    """
+    if not base_sha:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(repo), "log", "--first-parent",
+                "--diff-filter=A", "--name-only", "--format=",
+                f"{base_sha}..{branch}",
+            ],
+            capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+    files = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    return sorted(files)
 
 
 def _resolve_branch_context(
-    repo: Path, branch: str, base: str,
+    repo: Path,
+    branch: str,
+    base: str,
+    *,
+    since_sha: str | None = None,
+    since_date: str | None = None,
+    by_files: bool = False,
 ) -> _BranchContext | None:
-    """Resolve the divergence point between ``branch`` and ``base``.
+    """Resolve the working scope of a branch-first archeo run.
 
-    Returns None if either ref is missing or the merge-base call fails.
+    Resolution priority:
+
+    1. If ``since_sha`` is provided → escape hatch (C). Use it as the start
+       point verbatim, no merge-base computation. Mode = ``'since-sha'``.
+
+    2. Else if ``since_date`` is provided → escape hatch (C, alt). Use it as
+       a date floor, base_sha is empty. Mode = ``'since-date'``.
+
+    3. Else compute ``git merge-base {base} {branch}``. If the result equals
+       the branch's HEAD (the branch has been fully merged into the base),
+       fall back to the first-parent divergence point (A) — gives a stable
+       historical anchor that ignores the merge-back commit. Mode =
+       ``'live'`` (branch never merged) or ``'merged-fallback'`` (branch
+       fully merged).
+
+    4. If ``by_files=True`` → after resolving base_sha, derive the
+       branch-specific files (B) and switch mode to ``'by-files'``. The
+       caller will then query commits TOUCHING those files, repo-wide,
+       instead of just commits in the branch range.
+
+    Returns ``None`` if the refs can't be resolved.
     """
     if not _rev_parse_commit(repo, branch):
         return None
+
+    # Escape hatch (C): explicit since_sha bypasses base resolution.
+    if since_sha:
+        if not _rev_parse_commit(repo, since_sha):
+            return None
+        ctx = _BranchContext(
+            branch=branch, base=base, base_sha=since_sha,
+            mode="since-sha",
+            notes=[f"explicit since_sha={since_sha[:12]} bypasses merge-base"],
+        )
+        if by_files:
+            ctx.files = _branch_specific_files(repo, branch, since_sha)
+            ctx.mode = "by-files"
+            ctx.notes.append(f"by_files mode: {len(ctx.files)} branch-specific file(s) detected")
+        return ctx
+
+    # Escape hatch (C, alt): explicit since_date.
+    if since_date:
+        ctx = _BranchContext(
+            branch=branch, base=base, base_sha="",
+            mode="since-date",
+            notes=[f"explicit since_date={since_date} drives the floor"],
+        )
+        # by_files needs a base_sha to compute "files introduced since". Without
+        # since_sha we approximate by using merge-base anyway — caveat noted.
+        if by_files:
+            mb = subprocess.run(
+                ["git", "-C", str(repo), "merge-base", base, branch],
+                capture_output=True, text=True,
+            )
+            if mb.returncode == 0:
+                fallback_base = mb.stdout.strip()
+                ctx.files = _branch_specific_files(repo, branch, fallback_base)
+                ctx.mode = "by-files"
+                ctx.notes.append(
+                    f"by_files mode (since_date set): {len(ctx.files)} file(s) "
+                    f"derived via merge-base fallback for the file detection step"
+                )
+        return ctx
+
+    # Standard path: need base ref to exist for merge-base.
     if not _rev_parse_commit(repo, base):
         return None
     try:
@@ -886,10 +1077,48 @@ def _resolve_branch_context(
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
-    base_sha = result.stdout.strip()
-    if not base_sha:
+    merge_base = result.stdout.strip()
+    if not merge_base:
         return None
-    return _BranchContext(branch=branch, base=base, base_sha=base_sha)
+
+    branch_head = _rev_parse_commit(repo, branch)
+
+    # Detection (A): if merge_base == branch_head, the branch is fully merged
+    # into the base — `merge_base..branch` would yield no commits. Fall back
+    # to first-parent divergence to get the historical anchor.
+    if merge_base == branch_head:
+        fp_div = _first_parent_divergence_point(repo, branch, base)
+        if fp_div and fp_div != branch_head:
+            ctx = _BranchContext(
+                branch=branch, base=base, base_sha=fp_div,
+                mode="merged-fallback",
+                notes=[
+                    f"branch fully merged into {base} (merge-base == HEAD); "
+                    f"first-parent divergence point used instead: {fp_div[:12]}",
+                ],
+            )
+            if by_files:
+                ctx.files = _branch_specific_files(repo, branch, fp_div)
+                ctx.mode = "by-files"
+                ctx.notes.append(
+                    f"by_files mode: {len(ctx.files)} branch-specific file(s) detected"
+                )
+            return ctx
+        # No first-parent divergence found (very rare: branch never had its own
+        # commits). Return None to signal the caller falls back to standard mode.
+        return None
+
+    # Live branch (not fully merged): standard path.
+    ctx = _BranchContext(
+        branch=branch, base=base, base_sha=merge_base, mode="live",
+    )
+    if by_files:
+        ctx.files = _branch_specific_files(repo, branch, merge_base)
+        ctx.mode = "by-files"
+        ctx.notes.append(
+            f"by_files mode: {len(ctx.files)} branch-specific file(s) detected"
+        )
+    return ctx
 
 
 def _discover_branch_first(
@@ -903,19 +1132,46 @@ def _discover_branch_first(
     until: str | None,
     warnings: list[str],
 ) -> list[MilestoneInfo]:
-    """Branch-first discovery.
+    """Branch-first discovery — covers four modes (live / merged-fallback /
+    since-sha / since-date / by-files).
 
-    For ``level='commits'`` (or by default), enumerates commits unique to the
-    branch since divergence and groups them per the ``window`` / ``by_author``
-    settings — same engine as standard ``commits`` level.
-
-    For ``level='merges'``, enumerates merge commits unique to the branch via
-    ``git log --merges {base}..{branch}``.
-
-    Other levels (tags, releases) ignore the branch context — they are
-    repo-wide signals and warning is added.
+    - **commits / windowed**: enumerate commits in the resolved rev-range and
+      group per window + by_author.
+    - **by-files**: derive the branch-specific files (set on the context) and
+      query commits TOUCHING those files repo-wide — captures the full
+      lineage (creation, evolution, post-merge fixes on the same files).
+    - **merges**: enumerate merge commits in the rev-range.
+    - **tags / releases**: meaningless on a branch scope; warn and fall back
+      to commits-by-author.
     """
-    rev_range = f"{branch_ctx.base_sha}..{branch_ctx.branch}"
+    # Surface context notes to the caller so they understand the resolution.
+    for note in branch_ctx.notes:
+        warnings.append(f"branch-first: {note}")
+
+    # By-files: query commits that TOUCHED any of the branch-specific files,
+    # repo-wide — not constrained to the branch range. Captures pre-creation
+    # commits IF the file was renamed (no), creation, evolution on/off the
+    # branch, and post-merge fixes. Honours since/until date filters.
+    if branch_ctx.mode == "by-files":
+        if not branch_ctx.files:
+            warnings.append(
+                "by_files mode: no branch-specific files detected. "
+                "Branch may be empty, or all changes were modifications of "
+                "pre-existing files (heuristic uses --diff-filter=A only)."
+            )
+            return []
+        return _list_commits_for_files(
+            repo, branch_ctx.files, since=since, until=until,
+            window=window, by_author=by_author or True, warnings=warnings,
+        )
+
+    # Resolve the rev-range used by the standard branch-first paths.
+    if branch_ctx.mode == "since-date":
+        # No base_sha — use git log directly with --since on the branch tip.
+        rev_range = branch_ctx.branch
+    else:
+        rev_range = f"{branch_ctx.base_sha}..{branch_ctx.branch}"
+
     if level == "commits":
         # Default --by-author when branch-first per spec v0.7.1.
         return _list_commit_windows(
@@ -924,7 +1180,9 @@ def _discover_branch_first(
             warnings=warnings, rev_range=rev_range,
         )
     if level == "merges":
-        return _list_branch_merges(repo, branch_ctx, since=since, until=until, warnings=warnings)
+        return _list_branch_merges(
+            repo, branch_ctx, since=since, until=until, warnings=warnings,
+        )
     if level == "tags":
         warnings.append(
             "Branch-first mode with level='tags' is meaningless (tags are "
@@ -944,6 +1202,100 @@ def _discover_branch_first(
             warnings=warnings, rev_range=rev_range,
         )
     raise AssertionError(f"unreachable: level={level!r}")
+
+
+def _list_commits_for_files(
+    repo: Path,
+    files: list[str],
+    *,
+    since: str | None,
+    until: str | None,
+    window: str,
+    by_author: bool,
+    warnings: list[str],
+) -> list[MilestoneInfo]:
+    """Enumerate every commit (repo-wide) that touched any of the given files,
+    then group them per window/by-author the same way ``_list_commit_windows``
+    does. Used by branch-first mode ``by-files``.
+
+    Caveat: ``--follow`` only works on a single path in git. We use a plain
+    pathspec query instead — meaning renames before the rev-range are not
+    tracked. Acceptable trade-off for a v0.9.x port; real ``--follow``
+    multi-file would need per-file iteration.
+    """
+    if not files:
+        return []
+    cmd = [
+        "git", "-C", str(repo), "log", "--no-merges",
+        "--format=%H|%an|%ae|%aI|%s",
+    ]
+    if since:
+        cmd.append(f"--since={since}")
+    if until:
+        cmd.append(f"--until={until} 23:59:59")
+    cmd.append("--")
+    cmd.extend(files)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        warnings.append(f"git log on branch-specific files failed: {exc}")
+        return []
+
+    @dataclass
+    class _Commit:
+        sha: str
+        author_name: str
+        author_email: str
+        date_iso: str
+        subject: str
+
+    commits: list[_Commit] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("|", 4)
+        if len(parts) != 5:
+            continue
+        commits.append(_Commit(*parts))
+    if not commits:
+        return []
+
+    co_by_sha = _co_authors_for_commits(repo, [c.sha for c in commits])
+
+    groups: dict[tuple[str, str], list[_Commit]] = {}
+    group_meta: dict[tuple[str, str], tuple[str, str]] = {}
+    for c in commits:
+        date_part = c.date_iso[:10]
+        label, w_start, w_end = _window_label(date_part, window)
+        key = (label, c.author_email if by_author else "")
+        groups.setdefault(key, []).append(c)
+        group_meta[key] = (w_start, w_end)
+
+    out: list[MilestoneInfo] = []
+    for (label, author_key), members in groups.items():
+        rep = max(members, key=lambda c: c.date_iso)
+        w_start, w_end = group_meta[(label, author_key)]
+        co_authors: list[str] = []
+        seen: set[str] = set()
+        for c in members:
+            for ca in co_by_sha.get(c.sha, []):
+                if ca and ca not in seen and ca != rep.author_email:
+                    seen.add(ca)
+                    co_authors.append(ca)
+        info = _commit_metadata(repo, rep.sha, fallback_iso=rep.date_iso)
+        info.milestone_kind = "window"
+        info.window_label = label
+        info.window_start = w_start
+        info.window_end = w_end
+        info.commit_count = len(members)
+        info.co_authors = co_authors
+        if not info.subject:
+            info.subject = rep.subject
+        if by_author and author_key:
+            info.window_label = f"{label}-{author_key}"
+        out.append(info)
+    out.sort(key=lambda m: (m.window_start, m.window_label))
+    return out
 
 
 def _list_branch_merges(
