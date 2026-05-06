@@ -15,6 +15,7 @@ from fastmcp import FastMCP
 
 from memory_kit_mcp import __version__
 from memory_kit_mcp.tools import register_all
+from memory_kit_mcp.update_check import check_for_update, emit_update_log
 
 # Stderr-only logging (stdout = JSON-RPC channel for MCP)
 logging.basicConfig(
@@ -31,4 +32,10 @@ register_all(mcp)
 def main() -> None:
     """Console-script entry point — launches the stdio server."""
     log.info("memory-kit-mcp v%s starting on stdio", __version__)
+    # Passive update check — cache makes this near-instant 99% of the time;
+    # network errors are swallowed so the server always starts.
+    try:
+        emit_update_log(check_for_update(), log)
+    except Exception:  # noqa: BLE001 — never let the check break startup
+        pass
     mcp.run(transport="stdio")

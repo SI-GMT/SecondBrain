@@ -18,6 +18,7 @@ from memory_kit_mcp.tools import (
     archeo_git,
     archeo_stack,
     archive,
+    check_update,
     digest,
     doc,
     get_topology,
@@ -74,6 +75,8 @@ def register_all(mcp: FastMCP) -> None:
     health_repair.register(mcp)
     # Schema migrations (v0.9.4)
     migrate.register(mcp)
+    # Update check (v0.10.x)
+    check_update.register(mcp)
     # Ingestion
     note.register(mcp)
     principle.register(mcp)

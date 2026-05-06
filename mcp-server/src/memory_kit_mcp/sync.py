@@ -70,6 +70,8 @@ TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
     ("mem_health_repair", "mem-health-repair.md"),
     # Schema migrations
     ("mem_migrate", "mem-migrate.md"),
+    # Update check (v0.10.x)
+    ("mem_check_update", "mem-check-update.md"),
     # Ingestion
     ("mem_note", "mem-note.md"),
     ("mem_principle", "mem-principle.md"),

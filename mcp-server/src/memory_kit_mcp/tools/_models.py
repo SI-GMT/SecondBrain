@@ -346,3 +346,14 @@ class ArcheoResult(BaseModel):
     files_modified: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     summary_md: str
+
+
+class UpdateCheckResult(BaseModel):
+    """Result of mem_check_update — current vs latest GitHub release tag."""
+
+    current_version: str
+    latest_version: str | None = None
+    update_available: bool = False
+    last_checked: float
+    error: str | None = None
+    summary_md: str

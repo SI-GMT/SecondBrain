@@ -46,6 +46,13 @@
     process memory-kit-mcp actifs pour eviter les locks Windows lors de
     l'uninstall. Tolere l'absence du package (uninstall silencieux).
 
+.PARAMETER AutoUpdate
+    Avant de deployer, verifie le repo git distant (origin/main) et fait un
+    git pull --ff-only si origin est en avance sur HEAD. Refuse silencieusement
+    si : (a) pas dans un git repo, (b) branche != main, (c) working tree dirty.
+    Si un pull a effectivement eu lieu, le script se relance depuis la source
+    a jour pour deployer la nouvelle version. Combinable avec -RepairMcp.
+
 .PARAMETER Help
     Affiche cette aide et quitte. Alias : -h, -?, --help, --?.
 
@@ -55,6 +62,8 @@
     .\deploy.ps1 -Language fr
     .\deploy.ps1 -Force
     .\deploy.ps1 -RepairMcp
+    .\deploy.ps1 -AutoUpdate
+    .\deploy.ps1 -AutoUpdate -RepairMcp
     .\deploy.ps1 -h
 #>
 
@@ -68,6 +77,7 @@ param(
     [switch]$ForceObsidianStyle,
     [switch]$SkipMcpServer,
     [switch]$RepairMcp,
+    [switch]$AutoUpdate,
     [Alias('h')]
     [switch]$Help
 )
@@ -1555,11 +1565,105 @@ function Deploy-McpServer {
 }
 
 # ============================================================
+# Invoke-AutoUpdate (-AutoUpdate) — git pull avant deploy
+# ============================================================
+# Refuse silencieusement si pas un repo git, branche != main, ou working tree
+# dirty. Si pull effectif, le main script se relance depuis la source pullee
+# pour eviter de deployer avec une logique deploy.ps1 obsolete en memoire.
+
+function Invoke-AutoUpdate {
+    param(
+        [Parameter(Mandatory=$true)][string]$KitRoot
+    )
+
+    Push-Location $KitRoot
+    try {
+        $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+        if (-not $gitCmd) {
+            Write-Skip "git introuvable sur PATH : -AutoUpdate ignore"
+            return $false
+        }
+
+        $isGit = & git rev-parse --is-inside-work-tree 2>$null
+        if ($LASTEXITCODE -ne 0 -or "$isGit".Trim() -ne 'true') {
+            Write-Skip "Pas dans un git repo : -AutoUpdate ignore"
+            return $false
+        }
+
+        $branch = (& git rev-parse --abbrev-ref HEAD 2>$null).Trim()
+        if ($branch -ne 'main') {
+            Write-Warn2 "Branche actuelle : '$branch' (attendu : main). -AutoUpdate refuse pour ne pas pull une autre branche."
+            return $false
+        }
+
+        $dirty = & git status --porcelain 2>$null
+        if ($dirty) {
+            Write-Warn2 "Working tree dirty (changements non commites). -AutoUpdate refuse — commit ou stash d'abord."
+            return $false
+        }
+
+        Write-Step "git fetch origin --tags..."
+        & git fetch origin --tags --quiet 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 "git fetch a echoue : -AutoUpdate ignore"
+            return $false
+        }
+
+        $behindRaw = & git rev-list --count "HEAD..origin/main" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Skip "Comparaison HEAD..origin/main impossible (origin/main absent ?)"
+            return $false
+        }
+        $behind = [int]("$behindRaw".Trim())
+        if ($behind -eq 0) {
+            $localTag = (& git describe --tags --abbrev=0 HEAD 2>$null).Trim()
+            $tagSuffix = if ($localTag) { " (tag local : $localTag)" } else { '' }
+            Write-Skip "Deja a jour avec origin/main$tagSuffix"
+            return $false
+        }
+
+        $latestTag = (& git describe --tags --abbrev=0 origin/main 2>$null).Trim()
+        $tagSuffix = if ($latestTag) { " — dernier tag remote : $latestTag" } else { '' }
+        Write-Step "Update disponible : $behind commit(s) en arriere$tagSuffix. git pull --ff-only..."
+
+        & git pull --ff-only 2>&1 | ForEach-Object { Write-Info $_ }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 "git pull --ff-only a echoue : -AutoUpdate ignore (deploy continue avec la version en memoire)"
+            return $false
+        }
+        Write-Ok "Kit mis a jour depuis origin/main"
+        return $true
+    } finally {
+        Pop-Location
+    }
+}
+
+# ============================================================
 # 1. Resolution des chemins
 # ============================================================
 
 $kitRoot = $PSScriptRoot
 Write-Step "Racine du kit : $kitRoot"
+
+# -AutoUpdate : tente un git pull --ff-only avant de poursuivre. Si update
+# effectif, on relance le script depuis la source mise a jour pour eviter
+# de deployer avec une logique deploy.ps1 obsolete deja chargee en memoire.
+if ($AutoUpdate) {
+    Write-Host ''
+    Write-Step "Mode -AutoUpdate : verification des updates remote..."
+    $updated = Invoke-AutoUpdate -KitRoot $kitRoot
+    if ($updated) {
+        Write-Step "Re-execution de deploy.ps1 depuis la source mise a jour..."
+        $reexecArgs = @{}
+        foreach ($key in $PSBoundParameters.Keys) {
+            if ($key -ne 'AutoUpdate') {
+                $reexecArgs[$key] = $PSBoundParameters[$key]
+            }
+        }
+        & $PSCommandPath @reexecArgs
+        exit $LASTEXITCODE
+    }
+}
 
 # Resolution du VaultPath avec priorites :
 #   1. -VaultPath explicite             (override utilisateur)

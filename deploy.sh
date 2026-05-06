@@ -41,6 +41,7 @@ SKIP_OBSIDIAN_STYLE=false
 FORCE_OBSIDIAN_STYLE=false
 SKIP_MCP_SERVER=false
 REPAIR_MCP=false
+AUTO_UPDATE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -72,8 +73,12 @@ while [[ $# -gt 0 ]]; do
             REPAIR_MCP=true
             shift
             ;;
+        --auto-update)
+            AUTO_UPDATE=true
+            shift
+            ;;
         -h|--help|-\?|--\?)
-            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server] [--repair-mcp] [-h|--help|-?|--?]"
+            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server] [--repair-mcp] [--auto-update] [-h|--help|-?|--?]"
             echo ""
             echo "  --vault-path             Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
             echo "  --language               Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
@@ -82,6 +87,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --force-obsidian-style   Force le deploy Obsidian style meme si Obsidian semble ouvert"
             echo "  --skip-mcp-server        Ne deploie pas le serveur MCP Python (CLI restent en mode skills fallback)"
             echo "  --repair-mcp             Desinstalle pipx puis reinstall propre du serveur MCP (utile si install corrompue)"
+            echo "  --auto-update            git pull --ff-only avant de deployer (refuse si pas un repo git, branche != main, ou working tree dirty)"
             echo "  -h, --help, -?, --?      Affiche cette aide et quitte"
             exit 0
             ;;
@@ -91,6 +97,7 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
 
 # ============================================================
 # Helpers d'affichage
@@ -1613,11 +1620,134 @@ deploy_mcp_server() {
 }
 
 # ============================================================
+# invoke_auto_update (--auto-update) — git pull avant deploy
+# ============================================================
+# Refuse silencieusement si pas un repo git, branche != main, ou working tree
+# dirty. Si pull effectif, le main script se relance depuis la source pullee
+# pour eviter de deployer avec une logique deploy.sh obsolete deja chargee.
+
+invoke_auto_update() {
+    local kit_root="$1"
+    local pushd_pwd
+    pushd_pwd="$(pwd)"
+    cd "$kit_root" || return 1
+
+    local rc=1  # 1 = no update applied (skip), 0 = updated
+
+    if ! command -v git >/dev/null 2>&1; then
+        _gray "git introuvable sur PATH : --auto-update ignore"
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    local is_git
+    is_git="$(git rev-parse --is-inside-work-tree 2>/dev/null || true)"
+    if [[ "$is_git" != "true" ]]; then
+        _gray "Pas dans un git repo : --auto-update ignore"
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    local branch
+    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ "$branch" != "main" ]]; then
+        _yellow "Branche actuelle : '$branch' (attendu : main). --auto-update refuse pour ne pas pull une autre branche."
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    if [[ -n "$(git status --porcelain 2>/dev/null || true)" ]]; then
+        _yellow "Working tree dirty (changements non commites). --auto-update refuse — commit ou stash d'abord."
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    _cyan "git fetch origin --tags..."
+    if ! git fetch origin --tags --quiet >/dev/null 2>&1; then
+        _yellow "git fetch a echoue : --auto-update ignore"
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    local behind
+    behind="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "")"
+    if [[ -z "$behind" ]]; then
+        _gray "Comparaison HEAD..origin/main impossible (origin/main absent ?)"
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    if [[ "$behind" == "0" ]]; then
+        local local_tag
+        local_tag="$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)"
+        if [[ -n "$local_tag" ]]; then
+            _gray "Deja a jour avec origin/main (tag local : $local_tag)"
+        else
+            _gray "Deja a jour avec origin/main"
+        fi
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    local latest_tag
+    latest_tag="$(git describe --tags --abbrev=0 origin/main 2>/dev/null || true)"
+    if [[ -n "$latest_tag" ]]; then
+        _cyan "Update disponible : $behind commit(s) en arriere — dernier tag remote : $latest_tag. git pull --ff-only..."
+    else
+        _cyan "Update disponible : $behind commit(s) en arriere. git pull --ff-only..."
+    fi
+
+    if ! git pull --ff-only 2>&1 | while IFS= read -r line; do _info "$line"; done; then
+        _yellow "git pull --ff-only a echoue : --auto-update ignore (deploy continue avec la version en memoire)"
+        cd "$pushd_pwd"
+        return 1
+    fi
+
+    _green "Kit mis a jour depuis origin/main"
+    rc=0
+    cd "$pushd_pwd"
+    return $rc
+}
+
+# Reconstruit les args du re-exec sans --auto-update (evite la boucle).
+build_reexec_args() {
+    local args=()
+    [[ -n "$VAULT_PATH" ]] && args+=(--vault-path "$VAULT_PATH")
+    [[ -n "$LANGUAGE" ]] && args+=(--language "$LANGUAGE")
+    [[ "$FORCE" == true ]] && args+=(--force)
+    [[ "$SKIP_OBSIDIAN_STYLE" == true ]] && args+=(--skip-obsidian-style)
+    [[ "$FORCE_OBSIDIAN_STYLE" == true ]] && args+=(--force-obsidian-style)
+    [[ "$SKIP_MCP_SERVER" == true ]] && args+=(--skip-mcp-server)
+    [[ "$REPAIR_MCP" == true ]] && args+=(--repair-mcp)
+    if [[ ${#args[@]} -gt 0 ]]; then
+        printf '%s\n' "${args[@]}"
+    fi
+}
+
+# ============================================================
 # 1. Resolution des chemins
 # ============================================================
 
 KIT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 _cyan "Racine du kit : $KIT_ROOT"
+
+# --auto-update : tente un git pull --ff-only avant de poursuivre. Si update
+# effectif, on relance le script depuis la source mise a jour pour eviter
+# de deployer avec une logique deploy.sh obsolete deja chargee en memoire.
+if [[ "$AUTO_UPDATE" == true ]]; then
+    echo ""
+    _cyan "Mode --auto-update : verification des updates remote..."
+    if invoke_auto_update "$KIT_ROOT"; then
+        _cyan "Re-execution de deploy.sh depuis la source mise a jour..."
+        # Recupere les args reconstruits (un par ligne) dans un array.
+        readarray -t reexec_args < <(build_reexec_args)
+        if [[ ${#reexec_args[@]} -gt 0 ]]; then
+            exec "$0" "${reexec_args[@]}"
+        else
+            exec "$0"
+        fi
+    fi
+fi
 
 # Resolution du VaultPath avec priorites :
 #   1. --vault-path explicite            (override utilisateur)
