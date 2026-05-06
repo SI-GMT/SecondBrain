@@ -39,6 +39,13 @@
 .PARAMETER SkipMcpServer
     Ne deploie pas le serveur MCP Python (CLI restent en mode skills fallback).
 
+.PARAMETER RepairMcp
+    Desinstalle proprement le package pipx memory-kit-mcp avant de reinstaller.
+    Utile quand l'install pipx est dans un etat incoherent (shim recent + venv
+    ancien, ModuleNotFoundError sur un module recent, etc.). Kill aussi les
+    process memory-kit-mcp actifs pour eviter les locks Windows lors de
+    l'uninstall. Tolere l'absence du package (uninstall silencieux).
+
 .PARAMETER Help
     Affiche cette aide et quitte. Alias : -h, -?, --help, --?.
 
@@ -47,6 +54,7 @@
     .\deploy.ps1 -VaultPath "D:\mes-notes\cerveau"
     .\deploy.ps1 -Language fr
     .\deploy.ps1 -Force
+    .\deploy.ps1 -RepairMcp
     .\deploy.ps1 -h
 #>
 
@@ -59,6 +67,7 @@ param(
     [switch]$SkipObsidianStyle,
     [switch]$ForceObsidianStyle,
     [switch]$SkipMcpServer,
+    [switch]$RepairMcp,
     [Alias('h')]
     [switch]$Help
 )
@@ -1110,12 +1119,35 @@ function Update-PipxOnPath {
 
 function Install-McpServerPackage {
     param(
-        [Parameter(Mandatory=$true)][string]$KitRoot
+        [Parameter(Mandatory=$true)][string]$KitRoot,
+        [switch]$Repair
     )
     $mcpServerDir = Join-Path $KitRoot 'mcp-server'
     if (-not (Test-Path $mcpServerDir)) {
         Write-Skip "mcp-server/ absent du kit (skip silencieux)"
         return $false
+    }
+
+    # --repair-mcp : nettoie l'install pipx avant de réinstaller. Couvre les
+    # cas d'incohérence (shim créé par une install récente mais venv resté
+    # sur une ancienne version, ModuleNotFoundError sur un module récent...).
+    # Tolère l'absence du package (uninstall silencieux).
+    if ($Repair -and (Test-PipxAvailable)) {
+        Write-Step "Mode --repair-mcp : nettoyage de l'install pipx avant reinstall..."
+        # Kill les processus avant uninstall, sinon l'uninstall peut échouer.
+        $mcpProcs = Get-Process -Name memory-kit-mcp -ErrorAction SilentlyContinue
+        if ($mcpProcs) {
+            Write-Info "Fermeture de $($mcpProcs.Count) process(s) memory-kit-mcp actif(s)..."
+            $mcpProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+        }
+        $uninstOutput = & pipx uninstall memory-kit-mcp 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Ancien package memory-kit-mcp desinstalle"
+        } else {
+            # Tolérance : peut-être pas installé, ou install corrompue. On continue.
+            Write-Skip "pipx uninstall n'a pas trouve d'install precedente (ou install corrompue) — on continue"
+        }
     }
 
     # Si binaire deja sur PATH, on tolere un echec d'upgrade (WinError 32 :
@@ -1425,12 +1457,29 @@ function Deploy-McpServer {
     param(
         [Parameter(Mandatory=$true)][string]$KitRoot,
         [Parameter(Mandatory=$true)][string]$VaultPath,
-        [Parameter(Mandatory=$true)][hashtable]$DetectedConfigs
+        [Parameter(Mandatory=$true)][hashtable]$DetectedConfigs,
+        [switch]$Repair
     )
     Write-Host ''
-    Write-Step "> Deploiement : MCP server secondbrain-memory-kit (v0.8.0)"
+    # Read the kit's target version dynamically from pyproject.toml to avoid
+    # the silent-drift trap where a hardcoded "v0.8.0" message stays put while
+    # the package bumps. This message reflects what we're ABOUT to install.
+    $mcpServerDir = Join-Path $KitRoot 'mcp-server'
+    $kitTargetVersion = $null
+    $pyprojectForMessage = Join-Path $mcpServerDir 'pyproject.toml'
+    if (Test-Path $pyprojectForMessage) {
+        $vLine = Select-String -Path $pyprojectForMessage -Pattern '^\s*version\s*=\s*"([^"]+)"' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($vLine) {
+            $kitTargetVersion = $vLine.Matches[0].Groups[1].Value
+        }
+    }
+    if ($kitTargetVersion) {
+        Write-Step "> Deploiement : MCP server secondbrain-memory-kit (v$kitTargetVersion)"
+    } else {
+        Write-Step "> Deploiement : MCP server secondbrain-memory-kit"
+    }
 
-    $installed = Install-McpServerPackage -KitRoot $KitRoot
+    $installed = Install-McpServerPackage -KitRoot $KitRoot -Repair:$Repair
     if (-not $installed) {
         Write-Warn2 "MCP server non installe. Les CLI restent en mode skills (fallback)."
         return
@@ -1722,7 +1771,7 @@ if (-not $SkipObsidianStyle) {
 # ============================================================
 
 if (-not $SkipMcpServer) {
-    Deploy-McpServer -KitRoot $kitRoot -VaultPath $VaultPath -DetectedConfigs $configMap
+    Deploy-McpServer -KitRoot $kitRoot -VaultPath $VaultPath -DetectedConfigs $configMap -Repair:$RepairMcp
 }
 
 # ============================================================

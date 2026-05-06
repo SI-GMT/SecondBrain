@@ -40,6 +40,7 @@ FORCE=false
 SKIP_OBSIDIAN_STYLE=false
 FORCE_OBSIDIAN_STYLE=false
 SKIP_MCP_SERVER=false
+REPAIR_MCP=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -67,8 +68,12 @@ while [[ $# -gt 0 ]]; do
             SKIP_MCP_SERVER=true
             shift
             ;;
+        --repair-mcp)
+            REPAIR_MCP=true
+            shift
+            ;;
         -h|--help|-\?|--\?)
-            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server] [-h|--help|-?|--?]"
+            echo "Usage : $0 [--vault-path <chemin>] [--language en|fr|es|de|ru] [--force] [--skip-obsidian-style] [--force-obsidian-style] [--skip-mcp-server] [--repair-mcp] [-h|--help|-?|--?]"
             echo ""
             echo "  --vault-path             Chemin absolu du vault memoire (defaut : auto-detection puis <racine du kit>/memory)"
             echo "  --language               Langue conversationnelle du LLM (defaut : detection systeme puis prompt)"
@@ -76,6 +81,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --skip-obsidian-style    Ne deploie pas les configs canoniques Obsidian (graph palette)"
             echo "  --force-obsidian-style   Force le deploy Obsidian style meme si Obsidian semble ouvert"
             echo "  --skip-mcp-server        Ne deploie pas le serveur MCP Python (CLI restent en mode skills fallback)"
+            echo "  --repair-mcp             Desinstalle pipx puis reinstall propre du serveur MCP (utile si install corrompue)"
             echo "  -h, --help, -?, --?      Affiche cette aide et quitte"
             exit 0
             ;;
@@ -1123,10 +1129,36 @@ _ensure_pipx_on_path() {
 
 install_mcp_server_package() {
     local kit_root="$1"
+    local repair="${2:-false}"
     local mcp_server_dir="$kit_root/mcp-server"
     if [[ ! -d "$mcp_server_dir" ]]; then
         _gray "mcp-server/ absent du kit (skip silencieux)"
         return 1
+    fi
+
+    # --repair-mcp : nettoie l'install pipx avant de reinstaller. Couvre les
+    # cas d'incoherence (shim cree par une install recente mais venv reste
+    # sur une ancienne version, ModuleNotFoundError sur un module recent...).
+    if [[ "$repair" == "true" ]] && command -v pipx &>/dev/null; then
+        _cyan "Mode --repair-mcp : nettoyage de l'install pipx avant reinstall..."
+        # Kill les process avant uninstall pour eviter les locks Windows.
+        local mcp_pids
+        mcp_pids="$(pgrep -f 'memory-kit-mcp|memory_kit_mcp\.server' 2>/dev/null | tr '\n' ' ' || true)"
+        if [[ -n "$mcp_pids" ]]; then
+            local pid_count
+            pid_count="$(printf '%s\n' "$mcp_pids" | wc -w | tr -d ' ')"
+            _info "Fermeture de $pid_count process(s) memory-kit-mcp actif(s)..."
+            # shellcheck disable=SC2086
+            kill $mcp_pids 2>/dev/null || true
+            sleep 1
+            # shellcheck disable=SC2086
+            kill -9 $mcp_pids 2>/dev/null || true
+        fi
+        if pipx uninstall memory-kit-mcp &>/dev/null; then
+            _green "Ancien package memory-kit-mcp desinstalle"
+        else
+            _gray "pipx uninstall n'a pas trouve d'install precedente (ou install corrompue) — on continue"
+        fi
     fi
 
     local already_installed=false
@@ -1495,11 +1527,23 @@ claude_desktop_config_path() {
 deploy_mcp_server() {
     local kit_root="$1"
     local vault_path="$2"
+    local repair="${3:-false}"
 
     echo ""
-    _cyan "> Deploiement : MCP server secondbrain-memory-kit (v0.8.0)"
+    # Read the kit's target version dynamically from pyproject.toml — avoid
+    # the silent-drift trap where a hardcoded version stays while the package
+    # bumps.
+    local kit_target_version=""
+    if [[ -f "$kit_root/mcp-server/pyproject.toml" ]]; then
+        kit_target_version="$(grep -E '^[[:space:]]*version[[:space:]]*=' "$kit_root/mcp-server/pyproject.toml" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
+    fi
+    if [[ -n "$kit_target_version" ]]; then
+        _cyan "> Deploiement : MCP server secondbrain-memory-kit (v$kit_target_version)"
+    else
+        _cyan "> Deploiement : MCP server secondbrain-memory-kit"
+    fi
 
-    if ! install_mcp_server_package "$kit_root"; then
+    if ! install_mcp_server_package "$kit_root" "$repair"; then
         _yellow "MCP server non installe. Les CLI restent en mode skills (fallback)."
         return 0
     fi
@@ -1847,7 +1891,7 @@ fi
 # ============================================================
 
 if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
-    deploy_mcp_server "$KIT_ROOT" "$VAULT_PATH"
+    deploy_mcp_server "$KIT_ROOT" "$VAULT_PATH" "$REPAIR_MCP"
 fi
 
 # ============================================================
