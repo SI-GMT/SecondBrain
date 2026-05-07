@@ -357,3 +357,45 @@ class UpdateCheckResult(BaseModel):
     last_checked: float
     error: str | None = None
     summary_md: str
+
+
+class ArcheoIndexResult(BaseModel):
+    """Result of mem_archeo_index_files — Phase 0 file enumeration.
+
+    Doctrine: ``core/procedures/_archeo-architecture-v2.md``.
+
+    The list ``files`` is always the full enumeration (never truncated
+    silently). When soft caps are exceeded, ``warnings`` carries a
+    ``ScopeOverflowWarning`` line with batching guidance, but the list
+    itself is intact. Use ``hard_abort=True`` on the input to refuse
+    rather than warn.
+
+    ``batches`` is a pre-computed slicing of ``files`` into chunks of
+    ``batch_size`` (default 200). Always at least one batch (possibly
+    empty) so downstream consumers have a uniform contract.
+    """
+
+    project: str
+    repo_path: str
+    source_mode: str  # 'git' | 'raw'
+    scope_glob: str | None = None
+    branch: str | None = None
+    base_ref: str | None = None
+    merge_base_strategy: str | None = None
+    files: list[str]
+    files_count: int
+    files_bytes: int
+    files_hash: str
+    batches: list[list[str]]
+    pass_b_files: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    trace: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Step-by-step trace of what enumerate_files did (mode detection, "
+            "git commands, scope filtering, caps, hash, batches, Pass B). "
+            "Constant size (~10-15 lines). Lets the LLM see decisions "
+            "without diving into MCP server stderr logs."
+        ),
+    )
+    summary_md: str

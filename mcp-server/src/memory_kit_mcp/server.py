@@ -14,8 +14,15 @@ import sys
 from fastmcp import FastMCP
 
 from memory_kit_mcp import __version__
+from memory_kit_mcp._console import force_utf8_console
 from memory_kit_mcp.tools import register_all
 from memory_kit_mcp.update_check import check_for_update, emit_update_log
+
+# Reconfigure stderr to UTF-8 BEFORE logging.basicConfig captures the stream.
+# Otherwise the StreamHandler keeps the default cp1252 stream on Windows and
+# any unicode in a log line (e.g. accented French, '->' arrows in trace
+# output, project names with accents) crashes the logger mid-write.
+force_utf8_console()
 
 # Stderr-only logging (stdout = JSON-RPC channel for MCP)
 logging.basicConfig(

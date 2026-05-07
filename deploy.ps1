@@ -1127,6 +1127,105 @@ function Update-PipxOnPath {
     }
 }
 
+# ============================================================
+# Sync-LocalVenv (dev-side) — aligne mcp-server/.venv/ sur pyproject.toml
+# ============================================================
+# Le venv local mcp-server/.venv/ sert au dev (pytest, archeo-topology direct,
+# REPL). Il n'est pas utilise par les utilisateurs (qui passent par pipx).
+# Mais quand pyproject.toml bump et que le venv n'est pas reinstalle, la CLI
+# standalone retourne un __version__ stale via importlib.metadata, et tout
+# code qui se base sur la version courante (mem_check_update, atomes archeo
+# generes) embarque une valeur incoherente.
+#
+# Cette fonction detecte le venv local s'il existe, compare la version
+# installee a celle du pyproject, et reinstalle via `pip install -e .` si
+# diverge. Idempotent. Skip silencieux si pas de venv local (cas user
+# standard).
+
+function Sync-LocalVenv {
+    param(
+        [Parameter(Mandatory=$true)][string]$KitRoot
+    )
+
+    $mcpServerDir = Join-Path $KitRoot 'mcp-server'
+    $venvPython = Join-Path $mcpServerDir '.venv\Scripts\python.exe'
+    if (-not (Test-Path $venvPython)) {
+        Write-Skip "Pas de venv dev local (mcp-server/.venv/) -- skip"
+        return
+    }
+
+    $pyprojectPath = Join-Path $mcpServerDir 'pyproject.toml'
+    if (-not (Test-Path $pyprojectPath)) {
+        Write-Skip "pyproject.toml absent -- skip sync venv local"
+        return
+    }
+    $versionLine = Select-String -Path $pyprojectPath -Pattern '^\s*version\s*=\s*"([^"]+)"' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $versionLine) {
+        Write-Skip "Version introuvable dans pyproject.toml -- skip sync venv local"
+        return
+    }
+    $targetVersion = $versionLine.Matches[0].Groups[1].Value
+
+    # Detecte le gestionnaire approprie pour ce venv :
+    #   - uv  : venv cree par `uv venv`, sans pip embarque (cas par defaut sur
+    #           ce projet -- voir feedback memory `feedback_dep_management.md`).
+    #           Utiliser `uv pip ... --python <venv_python>`.
+    #   - pip : venv cree par `python -m venv`, avec pip embarque. Utiliser
+    #           `<venv_python> -m pip ...`.
+    $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+    $useUv = $false
+    if ($uvCmd) {
+        # Probe : si pip n'est pas dans le venv, on bascule sur uv.
+        $pipProbe = & $venvPython -c "import pip" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $useUv = $true
+        }
+    }
+
+    function Show-PackageVersion([string]$package) {
+        if ($useUv) {
+            $out = & $uvCmd.Source pip show $package --python $venvPython 2>&1
+        } else {
+            $out = & $venvPython -m pip show $package 2>&1
+        }
+        if ($LASTEXITCODE -ne 0) { return $null }
+        foreach ($line in $out) {
+            if ($line -match '^Version:\s*(\S+)') { return $matches[1] }
+        }
+        return $null
+    }
+
+    $installedVersion = Show-PackageVersion 'memory-kit-mcp'
+
+    if ($installedVersion -eq $targetVersion) {
+        Write-Skip "Venv dev local a jour (memory-kit-mcp $targetVersion)"
+        return
+    }
+
+    $manager = if ($useUv) { 'uv pip' } else { 'pip' }
+    if ($installedVersion) {
+        Write-Step "Venv dev local: $installedVersion -> $targetVersion. $manager install -e . ..."
+    } else {
+        Write-Step "Venv dev local: package absent. $manager install -e . ..."
+    }
+
+    Push-Location $mcpServerDir
+    try {
+        if ($useUv) {
+            & $uvCmd.Source pip install -e . --python $venvPython 2>&1 | Out-Null
+        } else {
+            & $venvPython -m pip install -e . --quiet 2>&1 | Out-Null
+        }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Venv dev local synchronise a v$targetVersion (via $manager)"
+        } else {
+            Write-Warn2 "$manager install -e . a echoue dans le venv dev (skip silencieux)"
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
 function Install-McpServerPackage {
     param(
         [Parameter(Mandatory=$true)][string]$KitRoot,
@@ -1819,11 +1918,36 @@ foreach ($p in $detected) {
     }
 
     try {
-        $ok = & $p.DeployFunc `
+        $result = & $p.DeployFunc `
             -KitRoot $kitRoot `
             -ConfigDir $p.ConfigDir `
             -VaultPath $VaultPath `
             -Force:$Force
+
+        # PowerShell : une fonction retourne tout ce que ses commandes streament
+        # dans le pipeline, pas seulement le `return`. Si une fonction Deploy-*
+        # leak un output (objet pipe non absorbe par Out-Null, expression non
+        # affectee, etc.), $result devient une collection ou une valeur autre
+        # qu'un bool. Extraction defensive : on cherche la derniere valeur
+        # booleenne emise (typiquement le `return $true|$false` final). Si
+        # aucune valeur booleenne n'est presente mais que la fonction n'a pas
+        # leve d'exception, on considere le deploy comme reussi (best-effort).
+        $ok = $false
+        if ($null -eq $result) {
+            $ok = $false
+        } elseif ($result -is [bool]) {
+            $ok = $result
+        } elseif ($result -is [array]) {
+            $bools = @($result | Where-Object { $_ -is [bool] })
+            if ($bools.Count -gt 0) {
+                $ok = [bool]$bools[-1]
+            } else {
+                $ok = $true
+            }
+        } else {
+            $ok = [bool]$result
+        }
+
         if ($ok) {
             $deployed += $p.DisplayName
         } else {
@@ -1876,6 +2000,20 @@ if (-not $SkipObsidianStyle) {
 
 if (-not $SkipMcpServer) {
     Deploy-McpServer -KitRoot $kitRoot -VaultPath $VaultPath -DetectedConfigs $configMap -Repair:$RepairMcp
+}
+
+# ============================================================
+# 6.6.5. Sync-LocalVenv (v0.10.x) — alignement venv dev sur pyproject
+# ============================================================
+# Le venv local mcp-server/.venv/ (utilise pour pytest et la CLI standalone
+# en dev) peut diverger de pyproject.toml apres un bump si le dev oublie de
+# rerun pip install -e .. Resultat : __version__ stale dans toutes les
+# sorties de la CLI standalone (atomes archeo, mem_check_update, etc.).
+# Cette etape detecte le drift et reinstalle silencieusement. Skip si pas
+# de venv local (cas user standard).
+
+if (-not $SkipMcpServer) {
+    Sync-LocalVenv -KitRoot $kitRoot
 }
 
 # ============================================================

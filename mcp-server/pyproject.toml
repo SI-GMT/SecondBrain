@@ -31,6 +31,7 @@ Issues = "https://github.com/SI-GMT/SecondBrain/issues"
 [project.scripts]
 memory-kit-mcp = "memory_kit_mcp.server:main"
 memory-kit-migrate = "memory_kit_mcp.migrate:main"
+archeo-topology = "memory_kit_mcp.archeo_topology:main"
 
 [project.optional-dependencies]
 dev = [

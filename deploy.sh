@@ -1531,6 +1531,110 @@ claude_desktop_config_path() {
     esac
 }
 
+# ============================================================
+# sync_local_venv (dev-side) — aligne mcp-server/.venv/ sur pyproject.toml
+# ============================================================
+# Le venv local mcp-server/.venv/ sert au dev (pytest, archeo-topology direct,
+# REPL). Pas utilise par les utilisateurs (pipx). Mais quand pyproject.toml
+# bump et que le venv n'est pas reinstalle, la CLI standalone retourne un
+# __version__ stale via importlib.metadata, et tout code base sur la version
+# courante embarque une valeur incoherente. Cette fonction detecte le venv
+# local s'il existe, compare la version installee a celle du pyproject, et
+# reinstalle via pip install -e . si diverge. Idempotent. Skip silencieux
+# si pas de venv local (cas user standard).
+
+sync_local_venv() {
+    local kit_root="$1"
+    local mcp_server_dir="$kit_root/mcp-server"
+
+    # Detection venv (Windows path Git Bash + Unix).
+    local venv_python=""
+    if [[ -x "$mcp_server_dir/.venv/Scripts/python.exe" ]]; then
+        venv_python="$mcp_server_dir/.venv/Scripts/python.exe"
+    elif [[ -x "$mcp_server_dir/.venv/bin/python" ]]; then
+        venv_python="$mcp_server_dir/.venv/bin/python"
+    else
+        _gray "Pas de venv dev local (mcp-server/.venv/) -- skip"
+        return 0
+    fi
+
+    local pyproject="$mcp_server_dir/pyproject.toml"
+    if [[ ! -f "$pyproject" ]]; then
+        _gray "pyproject.toml absent -- skip sync venv local"
+        return 0
+    fi
+
+    local target_version
+    target_version=$(
+        grep -E '^[[:space:]]*version[[:space:]]*=' "$pyproject" \
+            | head -n 1 \
+            | sed -E 's/.*"([^"]+)".*/\1/'
+    )
+    if [[ -z "$target_version" ]]; then
+        _gray "Version introuvable dans pyproject.toml -- skip sync venv local"
+        return 0
+    fi
+
+    # Detecte le gestionnaire approprie pour ce venv :
+    #   - uv  : venv cree par `uv venv`, sans pip embarque. Utiliser
+    #           `uv pip ... --python <venv_python>`.
+    #   - pip : venv cree par `python -m venv`. Utiliser `python -m pip`.
+    local use_uv=false
+    if command -v uv >/dev/null 2>&1; then
+        if ! "$venv_python" -c "import pip" >/dev/null 2>&1; then
+            use_uv=true
+        fi
+    fi
+
+    local installed_version=""
+    if [[ "$use_uv" == "true" ]]; then
+        installed_version=$(
+            uv pip show memory-kit-mcp --python "$venv_python" 2>/dev/null \
+                | grep -E '^Version:' \
+                | head -n 1 \
+                | awk '{print $2}'
+        )
+    else
+        installed_version=$(
+            "$venv_python" -m pip show memory-kit-mcp 2>/dev/null \
+                | grep -E '^Version:' \
+                | head -n 1 \
+                | awk '{print $2}'
+        )
+    fi
+
+    if [[ "$installed_version" == "$target_version" ]]; then
+        _gray "Venv dev local a jour (memory-kit-mcp $target_version)"
+        return 0
+    fi
+
+    local manager
+    if [[ "$use_uv" == "true" ]]; then manager="uv pip"; else manager="pip"; fi
+
+    if [[ -n "$installed_version" ]]; then
+        _cyan "Venv dev local: $installed_version -> $target_version. $manager install -e . ..."
+    else
+        _cyan "Venv dev local: package absent. $manager install -e . ..."
+    fi
+
+    local install_ok=false
+    if [[ "$use_uv" == "true" ]]; then
+        if (cd "$mcp_server_dir" && uv pip install -e . --python "$venv_python" >/dev/null 2>&1); then
+            install_ok=true
+        fi
+    else
+        if (cd "$mcp_server_dir" && "$venv_python" -m pip install -e . --quiet >/dev/null 2>&1); then
+            install_ok=true
+        fi
+    fi
+
+    if [[ "$install_ok" == "true" ]]; then
+        _green "Venv dev local synchronise a v$target_version (via $manager)"
+    else
+        _yellow "$manager install -e . a echoue dans le venv dev (skip silencieux)"
+    fi
+}
+
 deploy_mcp_server() {
     local kit_root="$1"
     local vault_path="$2"
@@ -2022,6 +2126,20 @@ fi
 
 if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
     deploy_mcp_server "$KIT_ROOT" "$VAULT_PATH" "$REPAIR_MCP"
+fi
+
+# ============================================================
+# 6.6.5. sync_local_venv (v0.10.x) -- alignement venv dev sur pyproject
+# ============================================================
+# Le venv local mcp-server/.venv/ (utilise pour pytest et la CLI standalone
+# en dev) peut diverger de pyproject.toml apres un bump si le dev oublie de
+# rerun pip install -e .. Resultat : __version__ stale dans toutes les
+# sorties de la CLI standalone (atomes archeo, mem_check_update, etc.).
+# Cette etape detecte le drift et reinstalle silencieusement. Skip si pas
+# de venv local (cas user standard).
+
+if [[ "$SKIP_MCP_SERVER" != "true" ]]; then
+    sync_local_venv "$KIT_ROOT"
 fi
 
 # ============================================================

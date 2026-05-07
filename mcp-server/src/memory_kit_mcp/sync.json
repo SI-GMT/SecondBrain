@@ -85,6 +85,10 @@
       "procedure": "mem-check-update.md",
       "last_synced_hash": "7c375aa76a9ef6a6988948b71671b96d54afb356e81e506646fe0cc5891cd6ec"
     },
+    "mem_archeo_index_files": {
+      "procedure": "mem-archeo-index-files.md",
+      "last_synced_hash": "94961a7275492843815db98d0ba6d8a8468c3d8c00af76ccfc92964e05300dad"
+    },
     "mem_note": {
       "procedure": "mem-note.md",
       "last_synced_hash": "ae347643c125cab0b0d9a0c29d37fb28472422c0f7071ca7f53fe76a82ecc242"
