@@ -1489,22 +1489,41 @@ $endMarker
 
     $existing = (Get-Content -Path $ConfigPath -Raw) ?? ''
     $pattern = [regex]::Escape($startMarker) + '[\s\S]*?' + [regex]::Escape($endMarker)
-    if ($existing -match $pattern) {
-        # Utiliser un MatchEvaluator pour passer $block litteralement (sinon les
-        # groupes $1, $2 du replacement seraient interpretes par regex).
+
+    # Migration : purger toute section orpheline `[mcp_servers.<SectionName>]`
+    # (et ses sous-tables) qui ne serait PAS deja entre les markers MEMORY-KIT.
+    # Cas typique : install precedente avait ecrit la section sans markers,
+    # puis une nouvelle injection avec markers a duplique la cle TOML —
+    # erreur de parse Codex au demarrage. On retire d'abord le bloc fenced
+    # (s'il existe) du contenu temporaire pour que les regex de detection
+    # n'incluent pas les sections fenced legitimes, puis on supprime tout
+    # `[mcp_servers.SECTION]` ou `[mcp_servers.SECTION.foo.bar]` orphelin.
+    $existingWithoutFenced = [regex]::Replace($existing, $pattern, '')
+    $orphanPattern = '(?m)^[ \t]*\[mcp_servers\.' + [regex]::Escape($SectionName) + '(\.[^\]\r\n]*)?\][\s\S]*?(?=(\r?\n[ \t]*\[)|\Z)'
+    $cleaned = [regex]::Replace($existingWithoutFenced, $orphanPattern, '').TrimEnd()
+    $hadOrphan = $cleaned -ne $existingWithoutFenced.TrimEnd()
+
+    if ($existing -match $pattern -and -not $hadOrphan) {
+        # Cas commun : aucune orpheline, fenced presente. Update in place.
         $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{ param($m) return $block }
         $newContent = [regex]::Replace($existing, $pattern, $evaluator)
-        # Compare avant/apres : si pas de changement reel, skip
         if ($newContent -eq $existing) {
             Write-Skip "$ConfigPath$labelTag : section MEMORY-KIT deja a jour"
             return
         }
         Set-Content -Path $ConfigPath -Value $newContent -Encoding utf8NoBOM -NoNewline
         Write-Ok "$ConfigPath$labelTag : section MEMORY-KIT mise a jour"
+        return
+    }
+
+    # Soit pas de fenced, soit on a detecte une orpheline a purger : on
+    # reconstruit le fichier proprement avec une seule section fenced finale.
+    $separator = if ($cleaned.Length -gt 0) { "`n`n" } else { '' }
+    $merged = $cleaned + $separator + $block + "`n"
+    Set-Content -Path $ConfigPath -Value $merged -Encoding utf8NoBOM -NoNewline
+    if ($hadOrphan) {
+        Write-Ok "$ConfigPath$labelTag : section orpheline [mcp_servers.$SectionName] purgee + section MEMORY-KIT injectee"
     } else {
-        $separator = if ($existing.TrimEnd().Length -gt 0) { "`n`n" } else { '' }
-        $merged = $existing.TrimEnd() + $separator + $block + "`n"
-        Set-Content -Path $ConfigPath -Value $merged -Encoding utf8NoBOM -NoNewline
         Write-Ok "$ConfigPath$labelTag : section MEMORY-KIT injectee"
     }
 }

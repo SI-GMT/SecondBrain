@@ -549,16 +549,38 @@ def _commit_metadata_batch(
     return out
 
 
-def _commit_metadata(repo: Path, sha: str, fallback_iso: str = "") -> MilestoneInfo:
+def _commit_metadata(
+    repo: Path,
+    sha: str,
+    fallback_iso: str = "",
+    *,
+    cache: dict[str, MilestoneInfo] | None = None,
+) -> MilestoneInfo:
     """Build a MilestoneInfo populated with author/subject/diff-stats for ``sha``.
 
     Used by every level: tags, releases (via the tag's commit), merges (via the
     merge commit), commits (via the representative commit of a window).
 
-    Single-commit fallback path. Heavier callers (the tag/release/merge
-    discovery loops) batch via :func:`_commit_metadata_batch` instead, which
-    reduces ``2 × N`` forks to one ``git log --no-walk`` invocation.
+    When ``cache`` (built by :func:`_commit_metadata_batch`) is provided and
+    contains ``sha``, returns a copy from it instead of issuing fresh
+    ``git show`` subprocess calls. Critical for repos with many milestones
+    where the per-commit fork overhead would push the run past the MCP
+    timeout. Falls back to per-commit ``git show`` when the cache is None
+    or the SHA is missing — preserves backward compatibility.
     """
+    if cache is not None and sha in cache:
+        cached = cache[sha]
+        return MilestoneInfo(
+            commit_sha=cached.commit_sha,
+            date=cached.date or (fallback_iso[:10] if len(fallback_iso) >= 10 else ""),
+            time=cached.time or _extract_hhmm(fallback_iso),
+            author_name=cached.author_name,
+            author_email=cached.author_email,
+            subject=cached.subject,
+            files_changed=cached.files_changed,
+            insertions=cached.insertions,
+            deletions=cached.deletions,
+        )
     cmd = [
         "git", "-C", str(repo), "show", "-s",
         "--format=%an|%ae|%aI|%s",
@@ -888,7 +910,11 @@ def _list_github_releases(
         warnings.append(f"gh release list returned invalid JSON: {exc}")
         return []
 
-    out: list[MilestoneInfo] = []
+    # First pass: filter by date and resolve every release tag's commit SHA in
+    # one batch. We can't avoid the per-tag _rev_parse_commit (each tag is its
+    # own ref), but we can collect the resulting SHAs and batch-fetch their
+    # metadata in one git log call afterwards.
+    filtered: list[tuple[dict, str, str]] = []  # (raw_release, tag_name, commit_sha)
     for r in raw:
         tag_name = r.get("tagName") or ""
         published = r.get("publishedAt") or ""
@@ -898,8 +924,20 @@ def _list_github_releases(
         if until and date_part and date_part > until:
             continue
         sha = _rev_parse_commit(repo, tag_name) if tag_name else ""
+        filtered.append((r, tag_name, sha))
+
+    meta_cache = _commit_metadata_batch(
+        repo, [sha for _, _, sha in filtered if sha]
+    )
+
+    out: list[MilestoneInfo] = []
+    for r, tag_name, sha in filtered:
+        published = r.get("publishedAt") or ""
+        date_part = published[:10]
         if sha:
-            base = _commit_metadata(repo, sha, fallback_iso=published)
+            base = _commit_metadata(
+                repo, sha, fallback_iso=published, cache=meta_cache
+            )
         else:
             # Tag missing locally (release pointing at a deleted tag, or fetched
             # only from remote). Build a minimal info from the GH metadata.
@@ -964,7 +1002,10 @@ def _list_github_merges(
         warnings.append(f"gh pr list returned invalid JSON: {exc}")
         return []
 
-    out: list[MilestoneInfo] = []
+    # First pass: filter by date and collect merge commit SHAs for batch
+    # metadata fetch. PRs with squash/rebase merges have no merge commit
+    # and stay on the empty-metadata fallback path.
+    filtered: list[tuple[dict, str, str]] = []  # (pr, merged_at, merge_commit)
     for pr in raw:
         merged_at = pr.get("mergedAt") or ""
         date_part = merged_at[:10]
@@ -973,8 +1014,19 @@ def _list_github_merges(
         if until and date_part and date_part > until:
             continue
         merge_commit = (pr.get("mergeCommit") or {}).get("oid") or ""
+        filtered.append((pr, merged_at, merge_commit))
+
+    meta_cache = _commit_metadata_batch(
+        repo, [sha for _, _, sha in filtered if sha]
+    )
+
+    out: list[MilestoneInfo] = []
+    for pr, merged_at, merge_commit in filtered:
+        date_part = merged_at[:10]
         if merge_commit:
-            base = _commit_metadata(repo, merge_commit, fallback_iso=merged_at)
+            base = _commit_metadata(
+                repo, merge_commit, fallback_iso=merged_at, cache=meta_cache
+            )
         else:
             # Squash/rebase merges have no merge commit; use empty metadata.
             base = MilestoneInfo(
@@ -1111,10 +1163,17 @@ def _list_commit_windows(
         groups.setdefault(key, []).append(c)
         group_meta[key] = (w_start, w_end)
 
+    # Pre-compute representatives so we can batch-fetch their metadata in
+    # a single git log call instead of N forks.
+    reps: dict[tuple[str, str], _Commit] = {
+        key: max(members, key=lambda c: c.date_iso)
+        for key, members in groups.items()
+    }
+    meta_cache = _commit_metadata_batch(repo, [r.sha for r in reps.values()])
+
     out: list[MilestoneInfo] = []
     for (label, author_key), members in groups.items():
-        # Pick the most recent commit as representative (latest date_iso wins).
-        rep = max(members, key=lambda c: c.date_iso)
+        rep = reps[(label, author_key)]
         w_start, w_end = group_meta[(label, author_key)]
         # Aggregate co-authors across the group.
         co_authors: list[str] = []
@@ -1124,7 +1183,9 @@ def _list_commit_windows(
                 if ca and ca not in seen and ca != rep.author_email:
                     seen.add(ca)
                     co_authors.append(ca)
-        info = _commit_metadata(repo, rep.sha, fallback_iso=rep.date_iso)
+        info = _commit_metadata(
+            repo, rep.sha, fallback_iso=rep.date_iso, cache=meta_cache
+        )
         info.milestone_kind = "window"
         info.window_label = label
         info.window_start = w_start
@@ -1532,9 +1593,15 @@ def _list_commits_for_files(
         groups.setdefault(key, []).append(c)
         group_meta[key] = (w_start, w_end)
 
+    reps: dict[tuple[str, str], _Commit] = {
+        key: max(members, key=lambda c: c.date_iso)
+        for key, members in groups.items()
+    }
+    meta_cache = _commit_metadata_batch(repo, [r.sha for r in reps.values()])
+
     out: list[MilestoneInfo] = []
     for (label, author_key), members in groups.items():
-        rep = max(members, key=lambda c: c.date_iso)
+        rep = reps[(label, author_key)]
         w_start, w_end = group_meta[(label, author_key)]
         co_authors: list[str] = []
         seen: set[str] = set()
@@ -1543,7 +1610,9 @@ def _list_commits_for_files(
                 if ca and ca not in seen and ca != rep.author_email:
                     seen.add(ca)
                     co_authors.append(ca)
-        info = _commit_metadata(repo, rep.sha, fallback_iso=rep.date_iso)
+        info = _commit_metadata(
+            repo, rep.sha, fallback_iso=rep.date_iso, cache=meta_cache
+        )
         info.milestone_kind = "window"
         info.window_label = label
         info.window_start = w_start
@@ -1578,7 +1647,9 @@ def _list_branch_merges(
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         warnings.append(f"git log --merges failed: {exc}")
         return []
-    out: list[MilestoneInfo] = []
+    # Collect all merge commit SHAs first so we can batch-fetch their metadata
+    # in a single git log call instead of one fork per merge.
+    candidates: list[tuple[str, str]] = []  # (sha, iso)
     for line in result.stdout.splitlines():
         if "|" not in line:
             continue
@@ -1588,7 +1659,13 @@ def _list_branch_merges(
             continue
         if until and date_part and date_part > until:
             continue
-        info = _commit_metadata(repo, sha, fallback_iso=iso)
+        candidates.append((sha, iso))
+
+    meta_cache = _commit_metadata_batch(repo, [sha for sha, _ in candidates])
+
+    out: list[MilestoneInfo] = []
+    for sha, iso in candidates:
+        info = _commit_metadata(repo, sha, fallback_iso=iso, cache=meta_cache)
         info.milestone_kind = "merge"
         info.pr_base = branch_ctx.base
         info.pr_head = branch_ctx.branch

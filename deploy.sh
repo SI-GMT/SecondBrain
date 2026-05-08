@@ -1430,8 +1430,33 @@ add_mcp_server_to_toml_config() {
 
     local existing
     existing="$(cat "$config_path")"
-    if printf '%s' "$existing" | grep -q "^${start_marker}$"; then
-        # Replace via perl (gestion safe des caracteres speciaux dans le block)
+
+    # Migration : retirer toute section orpheline `[mcp_servers.<section_name>]`
+    # (et ses sous-tables) qui ne serait PAS deja dans le bloc fenced — sinon
+    # une install precedente sans markers + une nouvelle injection avec markers
+    # produiraient un duplicate-key TOML refuse par Codex. On retire d'abord le
+    # bloc fenced (s'il existe) du contenu temporaire, puis on supprime tout
+    # `[mcp_servers.SECTION]` ou `[mcp_servers.SECTION.foo.bar]` orphelin.
+    local existing_no_fenced
+    existing_no_fenced="$(BLOCK="" perl -0777 -pe '
+        s/\Q'"$start_marker"'\E[\s\S]*?\Q'"$end_marker"'\E//g;
+    ' <<< "$existing")"
+
+    local cleaned
+    cleaned="$(SECTION="$section_name" perl -0777 -pe '
+        my $s = quotemeta $ENV{SECTION};
+        s/^[ \t]*\[mcp_servers\.${s}(\.[^\]\r\n]*)?\][\s\S]*?(?=(\r?\n[ \t]*\[)|\z)//mg;
+    ' <<< "$existing_no_fenced")"
+
+    # Trim trailing whitespace for stable separator handling.
+    cleaned="$(printf '%s' "$cleaned" | sed -e 's/[[:space:]]*$//')"
+    local existing_no_fenced_trimmed
+    existing_no_fenced_trimmed="$(printf '%s' "$existing_no_fenced" | sed -e 's/[[:space:]]*$//')"
+    local had_orphan="false"
+    [[ "$cleaned" != "$existing_no_fenced_trimmed" ]] && had_orphan="true"
+
+    if printf '%s' "$existing" | grep -q "^${start_marker}$" && [[ "$had_orphan" == "false" ]]; then
+        # Cas commun : aucune orpheline, fenced presente. Update in place.
         local new_content
         new_content="$(BLOCK="$block" perl -0777 -pe '
             my $b = $ENV{BLOCK};
@@ -1443,13 +1468,17 @@ add_mcp_server_to_toml_config() {
         fi
         printf '%s' "$new_content" > "$config_path"
         _green "$config_path$label_tag : section MEMORY-KIT mise a jour"
+        return 0
+    fi
+
+    # Soit pas de fenced, soit on a detecte une orpheline a purger : on
+    # reconstruit le fichier proprement avec une seule section fenced finale.
+    local sep=""
+    [[ -n "$cleaned" ]] && sep=$'\n\n'
+    printf '%s%s%s\n' "$cleaned" "$sep" "$block" > "$config_path"
+    if [[ "$had_orphan" == "true" ]]; then
+        _green "$config_path$label_tag : section orpheline [mcp_servers.$section_name] purgee + section MEMORY-KIT injectee"
     else
-        local trimmed="${existing%$'\n'}"
-        # Trim trailing whitespace
-        trimmed="$(printf '%s' "$trimmed" | sed -e 's/[[:space:]]*$//')"
-        local sep=""
-        [[ -n "$trimmed" ]] && sep=$'\n\n'
-        printf '%s%s%s\n' "$trimmed" "$sep" "$block" > "$config_path"
         _green "$config_path$label_tag : section MEMORY-KIT injectee"
     fi
 }
