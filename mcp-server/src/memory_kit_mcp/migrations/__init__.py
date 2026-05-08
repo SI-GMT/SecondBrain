@@ -31,11 +31,12 @@ from datetime import datetime
 from pathlib import Path
 
 # Schema version targeted by the current code. Bump when adding a migration.
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # Ordered list of migrations. Each entry is (target_version, module_name).
 MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, "v1_zone_indexes"),
+    (2, "v2_namespace_to_domain"),
 )
 
 # Soft cap on vault size for the auto-backup. Above this, the user must
@@ -211,6 +212,15 @@ def run_pending(
             if not needed:
                 step.summary = "Step reports not needed (already migrated or no-op)."
                 report.steps.append(step)
+                # A no-op step still moves the chain forward — the vault is
+                # effectively at this target_version even if no writes were
+                # required (e.g. the migration was already applied by an
+                # earlier run, or the vault doesn't carry the entities the
+                # migration touches). Bump the recorded schema version so
+                # downstream queries see the vault as up to date.
+                if not dry_run:
+                    set_vault_schema_version(config_path, version)
+                report.to_version = version
                 continue
             sub = module.apply(vault, dry_run=dry_run)
             # The submodule returns a MigrationStepReport-ish dict or object.
