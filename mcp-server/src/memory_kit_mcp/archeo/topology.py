@@ -211,29 +211,50 @@ def _git_ls_files(
     return [PurePosixPath(f) for f in sorted(out)]
 
 
+class BranchScopeUnresolvedError(RuntimeError):
+    """Raised when a branch is fully merged into ``fallback_base`` and the
+    caller didn't provide an explicit ``base_ref``.
+
+    Replaces the v0.10.0 ``first-parent-fallback`` strategy that silently
+    dove into the base branch's history (often 1000+ irrelevant commits —
+    case study: ``ecosav`` on the IRIS USER repo). The caller is now
+    expected to provide a meaningful anchor or scope themselves; the
+    enumeration library will not invent one.
+
+    See ``core/procedures/_archeo-architecture-v2.md`` Principe 2 amendment.
+    """
+
+
 def _git_resolve_base_ref(
     repo_path: Path,
     branch: str,
     fallback_base: str = "main",
     trace: list[str] | None = None,
 ) -> tuple[str, str]:
-    """Resolve a base ref for ``branch`` — auto-fallback strategy.
+    """Resolve a base ref for ``branch`` via merge-base only.
 
-    Returns ``(base_sha, strategy)`` where ``strategy`` is one of:
+    Returns ``(base_sha, strategy)`` where ``strategy`` is ``"merge-base"``.
 
-    - ``merge-base``: ``git merge-base fallback_base branch`` succeeded
-      and is distinct from HEAD(branch).
-    - ``first-parent-fallback``: branch is fully merged into ``fallback_base``,
-      so we pick its first-parent divergence point instead.
+    Raises :class:`BranchScopeUnresolvedError` when the branch is fully
+    merged into ``fallback_base`` (``merge_base == HEAD(branch)``). The
+    previous v0.10.0 fallbacks (``first-parent-fallback``,
+    ``empty-tree-fallback``) used to silently dive into the base branch's
+    history at this point — sometimes 1000+ commits, almost never the
+    scope the user wanted. The Codex case study on ``ecosav`` made the
+    pattern visible enough to retire it. Higher-level callers
+    (``mem_archeo_git`` / ``mem_archeo_index_files``) now hold the
+    branch-name heuristic + by-files fallback policy and decide what to
+    do with a fully-merged branch.
+
+    Hint surfacing: when ``fallback_base`` doesn't resolve at all (typo,
+    or the default branch is ``master`` not ``main``), the error lists
+    the local branches so the caller can fix their invocation.
     """
     try:
         merge_base = _run_git(
             ["merge-base", fallback_base, branch], repo_path
         )[0]
     except (RuntimeError, IndexError) as exc:
-        # Surface a hint when the most likely cause is a misnamed default
-        # branch (master vs main). Listing local branches is cheap and avoids
-        # the user having to run their own diagnostic.
         try:
             branches = _run_git(["branch", "--list"], repo_path)
             local_names = [b.lstrip("* ").strip() for b in branches]
@@ -262,24 +283,26 @@ def _git_resolve_base_ref(
             )
         return merge_base, "merge-base"
 
-    # Fully merged: branch HEAD == merge-base. Use first-parent of HEAD as base
-    # so we still get the commits that *built* this branch.
-    first_parent = _run_git(
-        ["rev-list", "--first-parent", "--max-parents=1", "-n", "1", f"{branch}~1"],
-        repo_path,
-    )
-    if not first_parent:
-        if trace is not None:
-            trace.append(
-                "[git] branch fully merged + no parent -> empty-tree-fallback"
-            )
-        return "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "empty-tree-fallback"
+    # Fully merged branch: refuse to invent a fallback. The retired
+    # first-parent strategy used to return the commit before the branch's
+    # tip here, but on absorbed long-lived branches that commit lives in
+    # the base's history and produces sloppy archeo scopes. The caller
+    # must provide ``base_ref`` (or a higher-level layer must apply the
+    # by-files / by-name heuristic).
     if trace is not None:
         trace.append(
-            f"[git] branch fully merged -> first-parent {first_parent[0][:12]} "
-            "(strategy: first-parent-fallback)"
+            f"[git] branch '{branch}' fully merged into '{fallback_base}' "
+            "(merge-base == HEAD); no fallback attempted"
         )
-    return first_parent[0], "first-parent-fallback"
+    raise BranchScopeUnresolvedError(
+        f"branch '{branch}' is fully merged into '{fallback_base}' "
+        f"(merge-base == HEAD(branch)). Provide an explicit base_ref to "
+        f"anchor the scope, or use a higher-level tool (mem_archeo_git) "
+        f"that applies by-files / by-name heuristics. "
+        f"No first-parent or empty-tree fallback is attempted (retired "
+        f"v0.10.x post-Codex case study — produced sloppy scopes diving "
+        f"into the base branch history)."
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -660,11 +660,15 @@ def repo_with_merged_branch(tmp_path: Path) -> tuple[Path, str]:
     return repo, "feat/x"
 
 
-async def test_branch_first_A_first_parent_fallback_when_merged(
+async def test_branch_first_fully_merged_no_anchor_falls_back_to_skill(
     client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
 ) -> None:
-    """Strategy A — when the branch is fully merged into base, merge-base equals
-    the branch HEAD; the tool falls back to the first-parent divergence point.
+    """v0.10.x post-Codex amendment: when the branch is fully merged AND no
+    anchor is provided AND the name doesn't match any directory, the tool
+    no longer invents a first-parent fallback. The branch ``feat/x`` strips
+    to ``x`` (too short) so name-based auto-scope returns nothing — the
+    resolution falls back to standard mode and warns the LLM to use the
+    skill or supply an explicit anchor.
     """
     repo, branch = repo_with_merged_branch
     (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
@@ -681,12 +685,15 @@ async def test_branch_first_A_first_parent_fallback_when_merged(
         },
     )
     d = res.structured_content
-    # The branch had 2 unique commits — both same author, but different days.
-    # First-parent fallback resolves to the initial commit, so the 2 branch
-    # commits land in the rev-range and produce 2 day-windows.
-    assert d["milestones_processed"] >= 2
+    # Branch context resolution returned None → tool falls through to
+    # standard discovery and warns the LLM. No first-parent fallback,
+    # no sloppy 1000+-commit scope dive.
     assert any(
-        "merged" in w.lower() or "first-parent" in w.lower()
+        "could not be resolved" in w.lower()
+        or "fully merged" in w.lower()
+        or "no commits" in w.lower()
+        or "fall back" in w.lower()
+        or "neither" in w.lower()
         for w in d["warnings"]
     )
 
@@ -718,13 +725,79 @@ async def test_branch_first_C_since_sha_explicit_anchor(
     assert any("since_sha" in w.lower() for w in d["warnings"])
 
 
-async def test_branch_first_B_by_files_captures_post_merge_fixes(
-    client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
-) -> None:
-    """Strategy B — by_files queries commits TOUCHING the branch-introduced
-    files repo-wide. Captures the post-merge fix that A and C miss.
+@pytest.fixture
+def repo_with_merged_branch_named_dir(tmp_path: Path) -> tuple[Path, str, str]:
+    """Repo where branch ``ecosav`` is fully merged and the repo has a
+    matching ``src/EcoSAV/`` directory — exercises the auto-scope-by-name
+    path of branch_first resolution.
     """
-    repo, branch = repo_with_merged_branch
+    import os
+    repo = tmp_path / "named-merged-repo"
+    repo.mkdir()
+    _git_init_with_user(repo)
+
+    env_base = {**os.environ}
+
+    def _commit(fname: str, content: str, msg: str, iso_date: str) -> None:
+        target = repo / fname
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        _git(repo, "add", fname)
+        env = {**env_base,
+               "GIT_AUTHOR_DATE": iso_date, "GIT_COMMITTER_DATE": iso_date}
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "-m", msg],
+            check=True, env=env,
+        )
+
+    # main: initial commit + EcoSAV/ scaffolding so the directory pre-exists.
+    _commit("README.md", "init", "init", "2026-04-01T10:00:00+00:00")
+    try:
+        _git(repo, "branch", "-m", "main")
+    except subprocess.CalledProcessError:
+        pass
+    _commit("src/EcoSAV/Module.cls",
+            "Class A",
+            "scaffold EcoSAV",
+            "2026-04-02T10:00:00+00:00")
+
+    # Branch off and add a few changes inside EcoSAV/.
+    _git(repo, "checkout", "-b", "ecosav")
+    _commit("src/EcoSAV/Detail.cls",
+            "Class B",
+            "ecosav: detail",
+            "2026-04-05T10:00:00+00:00")
+    _commit("src/EcoSAV/Module.cls",
+            "Class A v2",
+            "ecosav: refine module",
+            "2026-04-06T10:00:00+00:00")
+
+    # Merge back into main, then keep ecosav HEAD pointing at the merged tip.
+    _git(repo, "checkout", "main")
+    env = {**env_base,
+           "GIT_AUTHOR_DATE": "2026-04-07T10:00:00+00:00",
+           "GIT_COMMITTER_DATE": "2026-04-07T10:00:00+00:00"}
+    subprocess.run(
+        ["git", "-C", str(repo), "merge", "--no-ff", "ecosav", "-m", "merge ecosav"],
+        check=True, env=env,
+    )
+    # Fast-forward ecosav to match main so it really is fully absorbed.
+    _git(repo, "checkout", "ecosav")
+    _git(repo, "merge", "--ff-only", "main")
+    _git(repo, "checkout", "main")
+    return repo, "ecosav", "src/EcoSAV"
+
+
+async def test_branch_first_auto_scope_by_name_matches_directory(
+    client: Client,
+    repo_with_merged_branch_named_dir: tuple[Path, str, str],
+    vault_tmp: Path,
+) -> None:
+    """v0.10.x post-Codex: when the branch is fully merged and its name
+    matches a repo directory, the tool auto-scopes to that directory
+    (no first-parent fallback) and surfaces the decision in warnings.
+    """
+    repo, branch, expected_dir = repo_with_merged_branch_named_dir
     (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
     res = await client.call_tool(
         "mem_archeo_git",
@@ -734,6 +807,84 @@ async def test_branch_first_B_by_files_captures_post_merge_fixes(
             "level": "commits",
             "branch_first": branch,
             "branch_base": "main",
+            "window": "day",
+            "by_author": True,
+        },
+    )
+    d = res.structured_content
+    # Auto-scope should have surfaced the matched directory in the warnings.
+    assert any(
+        "auto-scope-by-name" in w.lower() or expected_dir.lower() in w.lower()
+        for w in d["warnings"]
+    ), f"expected auto-scope warning mentioning {expected_dir}, got: {d['warnings']}"
+    # And produced milestones for the commits that touched that directory.
+    assert d["milestones_processed"] >= 1
+
+
+def test_generate_name_variants_strips_common_prefixes() -> None:
+    from memory_kit_mcp.tools.archeo_git import _generate_name_variants
+
+    variants = _generate_name_variants("feat/dev-compta")
+    # 'feat/' is a known prefix; 'dev-compta' is the bare name.
+    assert any("dev-compta" in v.lower() for v in variants)
+    assert any("devCompta" in v or "DevCompta" in v for v in variants)
+    # The raw 'feat/dev-compta' string itself should NOT be in variants
+    # (we strip the prefix before generating).
+    assert all("feat/" not in v for v in variants)
+
+
+def test_generate_name_variants_handles_short_names() -> None:
+    """1-2 char tokens are dropped to avoid liberal directory matches."""
+    from memory_kit_mcp.tools.archeo_git import _generate_name_variants
+
+    # 'x' alone is too short — no variants should remain.
+    assert _generate_name_variants("feat/x") == []
+    # 'ab' is also too short, but the concatenated 'ab' as a 2-char token
+    # would be filtered. Must return [] or only ≥3-char strings.
+    short = _generate_name_variants("ab")
+    for v in short:
+        assert len(v) >= 3
+
+
+def test_generate_name_variants_for_camel_case_branch() -> None:
+    from memory_kit_mcp.tools.archeo_git import _generate_name_variants
+
+    variants = _generate_name_variants("ecosav")
+    variants_lower = {v.lower() for v in variants}
+    assert "ecosav" in variants_lower
+    # Concatenated UPPER variant must be present so directories like
+    # ``ECOSAV`` would also match in the directory scan.
+    assert "ECOSAV" in variants
+
+
+async def test_branch_first_B_by_files_captures_post_merge_fixes(
+    client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
+) -> None:
+    """Strategy B — by_files queries commits TOUCHING the branch-introduced
+    files repo-wide. Captures the post-merge fix that the bare range mode
+    would miss.
+
+    Post-amendment v0.10.x: the branch is fully merged AND its name is too
+    short to auto-match. We provide an explicit ``since_sha`` (the initial
+    commit on main) as the anchor — by_files then derives the introduced
+    files from ``since_sha..branch`` and the repo-wide query catches the
+    post-merge fix.
+    """
+    repo, branch = repo_with_merged_branch
+    (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    init_sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--max-parents=0", "main"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {
+            "repo_path": str(repo),
+            "project": "alpha",
+            "level": "commits",
+            "branch_first": branch,
+            "branch_base": "main",
+            "since_sha": init_sha,
             "by_files": True,
             "window": "day",
             "by_author": True,

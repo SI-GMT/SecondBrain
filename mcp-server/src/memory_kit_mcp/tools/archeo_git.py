@@ -115,16 +115,26 @@ def execute_git(
     # the per-level milestone discovery to scope on commits unique to the branch.
     branch_ctx: _BranchContext | None = None
     if branch_first:
-        branch_ctx = _resolve_branch_context(
-            repo, branch_first, branch_base,
-            since_sha=since_sha, since_date=since_date, by_files=by_files,
-        )
-        if branch_ctx is None:
+        try:
+            branch_ctx = _resolve_branch_context(
+                repo, branch_first, branch_base,
+                since_sha=since_sha, since_date=since_date, by_files=by_files,
+            )
+        except BranchScopeUnresolvedError as exc:
+            # Fully merged + no anchor + no name match. Surface the actionable
+            # message as a warning rather than crashing the whole tool — the
+            # LLM (or user) can re-invoke with scope_glob / since_sha. The
+            # tool then proceeds with standard milestone discovery, which
+            # may still yield useful repo-wide results (typically 0 in this
+            # case, but the explicit warning is the value).
+            warnings.append(f"Branch-first resolution failed: {exc}")
+            branch_ctx = None
+        if branch_ctx is None and not warnings:
             warnings.append(
-                f"Branch-first mode requested for {branch_first!r} but neither "
-                f"merge-base, first-parent divergence, nor explicit since_sha "
-                f"could resolve a starting point relative to {branch_base!r}. "
-                "Falling back to standard mode."
+                f"Branch-first mode requested for {branch_first!r} but no "
+                f"merge-base, by-files set, name-based scope, or explicit "
+                f"since_sha could resolve a starting point relative to "
+                f"{branch_base!r}. Falling back to standard mode."
             )
 
     if branch_ctx is not None:
@@ -1240,8 +1250,17 @@ class _BranchContext:
     branch: str
     base: str
     base_sha: str  # divergence point — semantics depend on `mode` below
-    mode: str = "live"  # 'live' | 'merged-fallback' | 'since-sha' | 'since-date' | 'by-files'
-    files: list[str] = field(default_factory=list)  # populated when mode='by-files'
+    # Mode values:
+    #   'live'              — branch not fully merged; merge_base..branch is the range
+    #   'since-sha'         — explicit anchor via since_sha
+    #   'since-date'        — explicit anchor via since_date
+    #   'by-files'          — scope = files introduced by the branch (--diff-filter=A)
+    #   'auto-scope-by-name' — branch fully merged, scope derived from branch name
+    #                         heuristic matching repo directories (v0.10.x post-Codex
+    #                         case study — replaced the retired 'merged-fallback' mode)
+    mode: str = "live"
+    files: list[str] = field(default_factory=list)  # populated when mode='by-files' or 'auto-scope-by-name'
+    scope_glob: str | None = None  # populated when mode='auto-scope-by-name'
     notes: list[str] = field(default_factory=list)  # human-readable explanation
 
 
@@ -1314,6 +1333,110 @@ def _branch_specific_files(repo: Path, branch: str, base_sha: str) -> list[str]:
     return sorted(files)
 
 
+class BranchScopeUnresolvedError(RuntimeError):
+    """Raised when a branch-first archeo run cannot resolve a meaningful scope.
+
+    Triggered when the branch is fully merged into its base AND no anchor
+    (``since_sha`` / ``since_date`` / ``scope_glob``) was provided AND the
+    name-based heuristic returned no candidate directory in the repo.
+
+    The previous v0.10.0 strategy A "first-parent fallback" used to dive
+    into the base branch's history at this point, producing a sloppy
+    1000+-commit scope that the user almost never wanted (case study:
+    ``ecosav`` on the IRIS USER repo). That fallback was retired in
+    v0.10.x post-Codex case study (see ``_archeo-architecture-v2.md``
+    Principe 2 amendment).
+    """
+
+
+_BRANCH_PREFIX_RE = re.compile(
+    r"^(feat|feature|fix|chore|hotfix|release|bugfix|task|story|epic)[-/]",
+    re.IGNORECASE,
+)
+
+
+def _generate_name_variants(name: str) -> list[str]:
+    """Generate plausible directory-name variants for a branch name.
+
+    Used by :func:`_suggest_scope_from_branch_name` to match branch names
+    like ``ecosav`` against directories like ``EcoSAV``, ``eco-sav``,
+    ``ECOSAV``, etc. Strips common git-flow prefixes (``feat/``, ``fix/``)
+    before generating variants.
+
+    Order of returned variants is informational only — the caller filters
+    against actual repo directories and ranks by depth.
+    """
+    bare = _BRANCH_PREFIX_RE.sub("", name).strip("-/_ ")
+    if not bare:
+        return []
+
+    seeds: set[str] = {bare}
+
+    # Split on common separators to get tokens.
+    tokens = re.split(r"[-_/ ]+", bare)
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return []
+
+    # Variants: kebab, snake, camelCase, PascalCase, UPPER, lower, concatenated.
+    seeds.add("-".join(tokens))
+    seeds.add("_".join(tokens))
+    seeds.add("".join(t.lower() for t in tokens))
+    seeds.add("".join(t.capitalize() for t in tokens))
+    seeds.add(tokens[0].lower() + "".join(t.capitalize() for t in tokens[1:]))
+    seeds.add("-".join(t.lower() for t in tokens))
+    seeds.add("-".join(t.capitalize() for t in tokens))
+    seeds.add("".join(tokens).upper())
+    seeds.add("".join(tokens).lower())
+
+    # Drop duplicates, drop too-short tokens (1-2 chars match too liberally).
+    out = sorted({s for s in seeds if len(s) >= 3})
+    return out
+
+
+def _suggest_scope_from_branch_name(
+    repo: Path, branch: str
+) -> list[str]:
+    """Find repo directories whose name matches a variant of the branch name.
+
+    Returns POSIX-relative directory paths sorted by depth (deepest first =
+    most specific). Best-effort: no match guarantees a single ``/``-rooted
+    fold-case match — falls through silently if nothing is found, leaving
+    the caller free to raise :class:`BranchScopeUnresolvedError`.
+
+    Implementation: ``git ls-tree -r -d --name-only HEAD`` lists every
+    directory tracked at HEAD; we filter to those whose **last** path
+    component matches one of the variants (case-insensitive).
+    """
+    variants = _generate_name_variants(branch)
+    if not variants:
+        return []
+    variants_lower = {v.lower() for v in variants}
+
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(repo), "ls-tree", "-r", "-d", "--name-only", "HEAD",
+            ],
+            capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+
+    matches: list[str] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        last = line.rsplit("/", 1)[-1]
+        if last.lower() in variants_lower:
+            matches.append(line)
+
+    # Sort by depth descending (more `/` = deeper = more specific), then alphabetically.
+    matches.sort(key=lambda p: (-p.count("/"), p))
+    return matches
+
+
 def _resolve_branch_context(
     repo: Path,
     branch: str,
@@ -1325,27 +1448,32 @@ def _resolve_branch_context(
 ) -> _BranchContext | None:
     """Resolve the working scope of a branch-first archeo run.
 
-    Resolution priority:
+    Resolution priority (post-v0.10.x amendment, see
+    ``core/procedures/_archeo-architecture-v2.md`` Principe 2):
 
-    1. If ``since_sha`` is provided → escape hatch (C). Use it as the start
-       point verbatim, no merge-base computation. Mode = ``'since-sha'``.
+    1. ``since_sha`` provided → mode ``'since-sha'``. Bypass merge-base.
+    2. ``since_date`` provided → mode ``'since-date'``. Bypass merge-base.
+    3. ``git merge-base <base> <branch>`` distinct from ``HEAD(branch)`` →
+       mode ``'live'``. Standard range-strict path.
+    4. Branch fully merged (merge-base == HEAD(branch)) →
+       a. ``by_files=True``: derive branch-specific files via
+          ``--first-parent --diff-filter=A`` over ``merge_base..branch``.
+          If non-empty, mode = ``'by-files'``. If empty, fall through to (b).
+       b. Try :func:`_suggest_scope_from_branch_name`. If at least one
+          directory matches → mode = ``'auto-scope-by-name'``.
+       c. Otherwise raise :class:`BranchScopeUnresolvedError`. **No
+          first-parent fallback.** The caller (or the LLM) must provide an
+          explicit anchor (``since_sha`` / ``since_date`` / ``scope_glob``)
+          or accept that the branch has no archivable scope.
 
-    2. Else if ``since_date`` is provided → escape hatch (C, alt). Use it as
-       a date floor, base_sha is empty. Mode = ``'since-date'``.
+    The first-parent-fallback strategy from v0.10.0 was retired here — it
+    silently scoped to base-branch history (often 1000+ commits) and
+    produced sloppy archives. The Codex case study on ``ecosav`` made the
+    pattern obvious.
 
-    3. Else compute ``git merge-base {base} {branch}``. If the result equals
-       the branch's HEAD (the branch has been fully merged into the base),
-       fall back to the first-parent divergence point (A) — gives a stable
-       historical anchor that ignores the merge-back commit. Mode =
-       ``'live'`` (branch never merged) or ``'merged-fallback'`` (branch
-       fully merged).
-
-    4. If ``by_files=True`` → after resolving base_sha, derive the
-       branch-specific files (B) and switch mode to ``'by-files'``. The
-       caller will then query commits TOUCHING those files, repo-wide,
-       instead of just commits in the branch range.
-
-    Returns ``None`` if the refs can't be resolved.
+    Returns ``None`` only when refs (``branch``, ``base``, ``since_sha``)
+    can't be resolved — that's a hard usage error, distinct from the
+    "fully merged branch" case which raises.
     """
     if not _rev_parse_commit(repo, branch):
         return None
@@ -1362,7 +1490,9 @@ def _resolve_branch_context(
         if by_files:
             ctx.files = _branch_specific_files(repo, branch, since_sha)
             ctx.mode = "by-files"
-            ctx.notes.append(f"by_files mode: {len(ctx.files)} branch-specific file(s) detected")
+            ctx.notes.append(
+                f"by_files mode: {len(ctx.files)} branch-specific file(s) detected"
+            )
         return ctx
 
     # Escape hatch (C, alt): explicit since_date.
@@ -1372,8 +1502,6 @@ def _resolve_branch_context(
             mode="since-date",
             notes=[f"explicit since_date={since_date} drives the floor"],
         )
-        # by_files needs a base_sha to compute "files introduced since". Without
-        # since_sha we approximate by using merge-base anyway — caveat noted.
         if by_files:
             mb = subprocess.run(
                 ["git", "-C", str(repo), "merge-base", base, branch],
@@ -1385,7 +1513,7 @@ def _resolve_branch_context(
                 ctx.mode = "by-files"
                 ctx.notes.append(
                     f"by_files mode (since_date set): {len(ctx.files)} file(s) "
-                    f"derived via merge-base fallback for the file detection step"
+                    f"derived via merge-base for the file detection step"
                 )
         return ctx
 
@@ -1405,42 +1533,68 @@ def _resolve_branch_context(
 
     branch_head = _rev_parse_commit(repo, branch)
 
-    # Detection (A): if merge_base == branch_head, the branch is fully merged
-    # into the base — `merge_base..branch` would yield no commits. Fall back
-    # to first-parent divergence to get the historical anchor.
-    if merge_base == branch_head:
-        fp_div = _first_parent_divergence_point(repo, branch, base)
-        if fp_div and fp_div != branch_head:
-            ctx = _BranchContext(
-                branch=branch, base=base, base_sha=fp_div,
-                mode="merged-fallback",
+    # Live branch (not fully merged): standard path.
+    if merge_base != branch_head:
+        ctx = _BranchContext(
+            branch=branch, base=base, base_sha=merge_base, mode="live",
+        )
+        if by_files:
+            ctx.files = _branch_specific_files(repo, branch, merge_base)
+            ctx.mode = "by-files"
+            ctx.notes.append(
+                f"by_files mode: {len(ctx.files)} branch-specific file(s) detected"
+            )
+        return ctx
+
+    # Fully merged branch: no first-parent fallback. Try by-files first
+    # (if requested), then auto-scope-by-name, else raise.
+    if by_files:
+        ctx_files = _branch_specific_files(repo, branch, merge_base)
+        if ctx_files:
+            return _BranchContext(
+                branch=branch, base=base, base_sha=merge_base,
+                mode="by-files",
+                files=ctx_files,
                 notes=[
-                    f"branch fully merged into {base} (merge-base == HEAD); "
-                    f"first-parent divergence point used instead: {fp_div[:12]}",
+                    f"branch fully merged into {base}; by_files mode "
+                    f"detected {len(ctx_files)} file(s) introduced by the branch",
                 ],
             )
-            if by_files:
-                ctx.files = _branch_specific_files(repo, branch, fp_div)
-                ctx.mode = "by-files"
-                ctx.notes.append(
-                    f"by_files mode: {len(ctx.files)} branch-specific file(s) detected"
-                )
-            return ctx
-        # No first-parent divergence found (very rare: branch never had its own
-        # commits). Return None to signal the caller falls back to standard mode.
-        return None
 
-    # Live branch (not fully merged): standard path.
-    ctx = _BranchContext(
-        branch=branch, base=base, base_sha=merge_base, mode="live",
-    )
-    if by_files:
-        ctx.files = _branch_specific_files(repo, branch, merge_base)
-        ctx.mode = "by-files"
-        ctx.notes.append(
-            f"by_files mode: {len(ctx.files)} branch-specific file(s) detected"
+    suggested_dirs = _suggest_scope_from_branch_name(repo, branch)
+    if suggested_dirs:
+        # Keep the deepest match as the primary scope; surface the rest as
+        # alternates the caller can override via scope_glob if needed.
+        primary = suggested_dirs[0]
+        glob = f"{primary}/**"
+        notes = [
+            f"branch fully merged into {base}; auto-scope-by-name matched "
+            f"directory '{primary}' (variants tried: {_generate_name_variants(branch)})",
+        ]
+        if len(suggested_dirs) > 1:
+            notes.append(
+                f"alternate matches available: {suggested_dirs[1:]}; pass "
+                f"scope_glob explicitly to override"
+            )
+        return _BranchContext(
+            branch=branch, base=base, base_sha=merge_base,
+            mode="auto-scope-by-name",
+            scope_glob=glob,
+            files=[primary],  # surface as the primary scoped path
+            notes=notes,
         )
-    return ctx
+
+    raise BranchScopeUnresolvedError(
+        f"branch '{branch}' is fully merged into '{base}' and the name "
+        f"does not match any directory in the repo. Provide one of:\n"
+        f"  - scope_glob='<glob>'                 (e.g. 'src/Module/**')\n"
+        f"  - since_sha=<sha>                     (commit before the "
+        f"branch's specialisation)\n"
+        f"  - since_date=YYYY-MM-DD               (date floor)\n"
+        f"Auto-scope by name tried variants: {_generate_name_variants(branch)}.\n"
+        f"No first-parent fallback is attempted (retired v0.10.x — produced "
+        f"sloppy scopes diving into the base branch history)."
+    )
 
 
 def _discover_branch_first(
@@ -1454,14 +1608,19 @@ def _discover_branch_first(
     until: str | None,
     warnings: list[str],
 ) -> list[MilestoneInfo]:
-    """Branch-first discovery — covers four modes (live / merged-fallback /
-    since-sha / since-date / by-files).
+    """Branch-first discovery — covers five modes:
 
-    - **commits / windowed**: enumerate commits in the resolved rev-range and
-      group per window + by_author.
-    - **by-files**: derive the branch-specific files (set on the context) and
-      query commits TOUCHING those files repo-wide — captures the full
+    - ``'live'``: branch not fully merged; enumerate commits in
+      ``merge_base..branch`` rev-range, group per window + by_author.
+    - ``'since-sha'`` / ``'since-date'``: explicit anchors, same enumeration
+      as ``'live'`` but with a user-supplied floor.
+    - ``'by-files'``: derive the branch-specific files (set on the context)
+      and query commits TOUCHING those files repo-wide — captures the full
       lineage (creation, evolution, post-merge fixes on the same files).
+    - ``'auto-scope-by-name'``: branch fully merged AND name-based heuristic
+      matched a repo directory; treated like ``'by-files'`` but the scope is
+      a single directory rather than a list of files. Replaces the retired
+      ``'merged-fallback'`` mode (v0.10.x post-Codex case study).
     - **merges**: enumerate merge commits in the rev-range.
     - **tags / releases**: meaningless on a branch scope; warn and fall back
       to commits-by-author.
@@ -1470,11 +1629,12 @@ def _discover_branch_first(
     for note in branch_ctx.notes:
         warnings.append(f"branch-first: {note}")
 
-    # By-files: query commits that TOUCHED any of the branch-specific files,
-    # repo-wide — not constrained to the branch range. Captures pre-creation
-    # commits IF the file was renamed (no), creation, evolution on/off the
-    # branch, and post-merge fixes. Honours since/until date filters.
-    if branch_ctx.mode == "by-files":
+    # By-files / auto-scope-by-name: query commits that TOUCHED any of the
+    # branch-specific paths (files for by-files, a directory for
+    # auto-scope-by-name), repo-wide — not constrained to a rev-range.
+    # Captures creation, evolution on/off the branch, and post-merge fixes.
+    # Honours since/until date filters.
+    if branch_ctx.mode in ("by-files", "auto-scope-by-name"):
         if not branch_ctx.files:
             warnings.append(
                 "by_files mode: no branch-specific files detected. "

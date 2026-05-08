@@ -44,11 +44,30 @@ files_pass_A = (
 
 Cette union capture à la fois les fichiers actuellement différents de `base` (diff statique) et les fichiers touchés par tout commit intermédiaire de la branche (y compris ceux qui auraient été créés puis supprimés, ou réécrits via squash). La liste est close, ordonnée, hashable — elle peut être persistée dans le frontmatter de l'atome topo et réutilisée à l'identique par Phase 1, 2, 3.
 
-`<base>` est résolu par la stratégie A/B/C de v0.10.0 archeo-git (already in production) :
+`<base>` est résolu selon la hiérarchie suivante. **La stratégie historique « first-parent fallback » est retirée** (case study Codex sur `ecosav` du repo IRIS USER : la branche absorbée + ancienne avait son first-parent qui remontait à 1296 commits hors périmètre fonctionnel — dérive sémantique sur master). Toute fonctionnalité Git qui ramène à la branche de base est désormais bannie comme stratégie de résolution.
 
-- A (auto) : `git merge-base main HEAD`, avec fallback first-parent si fully merged.
-- B (`by_files`) : étend Pass A pour capturer aussi les commits sur `main` qui touchent les mêmes fichiers — pertinent quand la branche a été partiellement intégrée.
-- C (`since_sha` / `since_date`) : escape hatch explicite, bypasse merge-base.
+- **Range strict** : `git merge-base <base> <branch>` retourne un SHA distinct de `HEAD(branch)`. La branche n'est pas fully merged → le diff `merge_base..branch` capture les commits propres. Mode = `range-strict`.
+
+- **Auto-scope par nommage** _(défaut quand range strict vide)_ : si la branche est fully merged dans `<base>`, le scope est dérivé du **nom de la branche** via une heuristique repo-wide. Variantes générées (`ecosav` → `EcoSAV`, `ecosav`, `eco-sav`, `ecoSav`, `ECOSAV`, et préfixes git-flow strippés `feat/X` → `X`) puis match contre les dossiers du repo. Plus le match est profond, plus il est spécifique. Si plusieurs candidats, on garde le plus profond ; si zéro candidat, voir « refus ferme » ci-dessous. Mode = `auto-scope-by-name`.
+
+- **`by_files` explicite** : l'utilisateur force `by_files=True`. Le scope est dérivé via `git log --first-parent --diff-filter=A --name-only` sur `merge_base..branch` (les fichiers introduits par la branche). Quand le diff est vide, l'heuristique nommage est utilisée comme fallback. Mode = `by-files`.
+
+- **Anchor explicite** : `since_sha` / `since_date` / `scope_glob` fournis par l'utilisateur. Bypasse toute auto-détection. Mode = `since-sha`, `since-date`, ou `manual`.
+
+- **Refus ferme** : si la branche est fully merged ET que l'heuristique nommage ne retourne aucun match dossier ET aucun anchor explicite n'est fourni → erreur `BranchScopeUnresolvedError` avec hint :
+
+  ```
+  BranchScopeUnresolvedError: branch '<branch>' is fully merged into '<base>' and the
+  name does not match any directory in the repo. Provide one of:
+    - scope_glob='<glob>'                 (e.g. 'src/Module/**')
+    - since_sha=<sha>                     (commit before the branch's specialisation)
+    - since_date=YYYY-MM-DD               (date floor)
+  Auto-scope by name tried variants: <variants_attempted>.
+  ```
+
+  Aucun fallback ne dérive sur `<base>`. Le LLM (ou l'utilisateur) doit décider explicitement le périmètre.
+
+Le tableau historique « stratégies A/B/C v0.10.0 » est invalidé par cet amendement. Les atomes archives créés par l'ancienne stratégie A persistent (pas d'invalidation rétroactive) ; un commentaire dans leur frontmatter `merge_base_strategy: first-parent-fallback` permet de les identifier pour reprocessing manuel si besoin.
 
 ### Pass B — secondaire, opt-in, language-aware
 

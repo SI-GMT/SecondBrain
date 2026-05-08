@@ -207,18 +207,47 @@ def test_git_branch_first_with_explicit_base_ref(git_repo: Path) -> None:
     assert result.merge_base_strategy == "manual"
 
 
-def test_git_branch_first_fully_merged_falls_back_to_first_parent(
+def test_git_branch_first_fully_merged_raises_without_anchor(
     git_repo: Path,
 ) -> None:
-    """When the branch is fully merged into main, merge-base == HEAD; first-parent kicks in."""
+    """When the branch is fully merged into main and no base_ref is given,
+    the lib refuses to invent a fallback (v0.10.x post-Codex amendment —
+    first-parent-fallback retired).
+    """
+    from memory_kit_mcp.archeo.topology import BranchScopeUnresolvedError
+
     _git(["checkout", "main"], git_repo)
     _git(["merge", "--no-ff", "-m", "merge feature/x", "feature/x"], git_repo)
     _git(["checkout", "feature/x"], git_repo)
 
-    result = enumerate_files(git_repo, mode="git", branch="feature/x")
-    # The strategy must signal the fallback path explicitly.
-    assert result.merge_base_strategy == "first-parent-fallback"
-    # Pass A is still meaningful (the branch's diff against its parent commit).
+    with pytest.raises(BranchScopeUnresolvedError) as exc_info:
+        enumerate_files(git_repo, mode="git", branch="feature/x")
+    msg = str(exc_info.value)
+    assert "fully merged" in msg
+    assert "base_ref" in msg
+
+
+def test_git_branch_first_fully_merged_works_with_explicit_base_ref(
+    git_repo: Path,
+) -> None:
+    """The escape hatch: pass an explicit ``base_ref`` to anchor the scope on
+    a fully-merged branch. No fallback dérive, fully under user control.
+    """
+    _git(["checkout", "main"], git_repo)
+    _git(["merge", "--no-ff", "-m", "merge feature/x", "feature/x"], git_repo)
+    _git(["checkout", "feature/x"], git_repo)
+
+    initial_sha = subprocess.run(
+        ["git", "rev-list", "--max-parents=0", "main"],
+        cwd=str(git_repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    result = enumerate_files(
+        git_repo, mode="git", branch="feature/x", base_ref=initial_sha
+    )
+    assert result.merge_base_strategy == "manual"
     assert result.files_count > 0
 
 

@@ -29,18 +29,26 @@ Arguments:
 - `--no-confirm`: passes through to the router in fluent mode even on multi-atoms.
 - `--rescan`: ignores any persisted topology and forces a fresh scan.
 
-**Branch-first mode (v0.7.1, hardened in v0.9.x)**:
+**Branch-first mode (v0.7.1, hardened in v0.9.x, amended v0.10.x post-Codex case study)**:
 
-- `--branch-first {branch}`: scope Phase 3 to commits relevant to the branch. Three resolution strategies, mix-and-matchable, evaluated in priority order:
-  - **(C) Explicit anchor** — if `--since-sha {sha}` or `--since-date YYYY-MM-DD` is provided, use it verbatim. Bypasses merge-base detection. Useful when the branch was rebased/squashed and the historical divergence point is known but not derivable from refs.
-  - **(A) Auto first-parent fallback** — when the branch has been **fully merged** into `--branch-base` (`merge-base == HEAD(branch)`, so the standard `merge-base..branch` rev-range yields zero commits), the tool transparently falls back to the first-parent divergence point. Gives a stable historical anchor that ignores the merge-back commit. No flag needed; surfaced as a `branch-first: branch fully merged...` warning in the report.
-  - **(B) By-files** — set `--by-files` to query commits **touching the files introduced by the branch** (detected via `--diff-filter=A` on the first-parent lineage), repo-wide rather than constrained to the branch range. Captures creation, evolution **and** post-merge fixes on the same files. Recommended for archeology of long-lived feature branches whose post-merge maintenance happened on `main`.
-- `--branch-base {ref}`: base ref for the divergence calculation (default `main`, fallback `master`).
+- `--branch-first {branch}`: scope Phase 3 to commits relevant to the branch. Resolution strategies, evaluated in priority order:
+
+  - **Explicit anchor** — if `--since-sha {sha}`, `--since-date YYYY-MM-DD`, or `--scope-glob {glob}` is provided, use it verbatim. Bypasses merge-base detection. Always wins. Useful when the branch was rebased/squashed and the historical divergence point is known but not derivable from refs, or when a directory-level scope is desired.
+
+  - **Live (range strict)** — `git merge-base {base} {branch}` distinct from `HEAD(branch)`. The branch is not fully merged, so `merge_base..branch` yields the proper rev-range. Standard path.
+
+  - **By-files** — set `--by-files` to query commits **touching the files introduced by the branch** (detected via `--diff-filter=A` over `merge_base..branch`), repo-wide rather than constrained to the branch range. Captures creation, evolution **and** post-merge fixes on the same files. Recommended for archeology of long-lived feature branches whose post-merge maintenance happened on `main`. When the branch is fully merged AND the diff-filter yields no files (range empty), this mode falls through to **auto-scope-by-name** (below). When `--by-files` is OFF, auto-scope-by-name is also tried as the default fallback for fully-merged branches.
+
+  - **Auto-scope-by-name** _(new in v0.10.x)_ — when the branch is fully merged AND no explicit anchor was provided, the tool derives a scope from the **branch name**. Variants are generated (kebab, snake, camelCase, PascalCase, UPPER, lower, prefix-stripped — `feat/eco-sav` strips to `eco-sav`, generates `EcoSav`, `ecosav`, `ECO-SAV`, etc.) and matched case-insensitively against the **last component** of every directory tracked at `HEAD`. The deepest match wins. The resulting `scope_glob: '<dir>/**'` then drives a repo-wide query the same way as `by-files`. Surfaced explicitly in the report warnings as `branch-first: branch fully merged into <base>; auto-scope-by-name matched directory '<dir>'`.
+
+  - **Refusal (no fallback dérivant)** — when the branch is fully merged AND no anchor AND no name match → the tool raises a `BranchScopeUnresolvedError` (surfaced as a structured warning, not a fatal). The caller (LLM or user) must re-invoke with `scope_glob` / `since_sha` / `since_date`. **No first-parent fallback is attempted** — the v0.10.0 `merged-fallback` strategy was retired because on long-lived absorbed branches it dove into the base branch's history (often 1000+ irrelevant commits) and produced sloppy archives. The Codex case study on `ecosav` of the IRIS USER repo (2026-05-08) made the pattern obvious enough to drop.
+
+- `--branch-base {ref}`: base ref for the divergence calculation (default `main`; pass `master` if your repo uses that).
 - `--by-author` (default in branch-first): granularity is `(author_email, time-window)`. Window defaults to `day`; configurable via `--window`.
 - `--by-merge`: granularity is by merge commit on the branch (relevant for long-lived branches that absorbed sub-features).
 - `--by-window`: granularity is the classic `--window` time grouping (overrides `--by-author`).
 
-The resolution mode is reported in the archive frontmatter (`branch_resolution: live | merged-fallback | since-sha | since-date | by-files`) so the user can audit which strategy ran.
+The resolution mode is reported in the archive frontmatter (`branch_resolution: live | since-sha | since-date | by-files | auto-scope-by-name`) so the user can audit which strategy ran. The legacy value `merged-fallback` still appears on archives created before the v0.10.x amendment but is no longer produced for new runs.
 
 ## Vault and repo path resolution
 
