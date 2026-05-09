@@ -1,431 +1,275 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.11.0, **production stabilisée sous AGPL-3.0-or-later**, 36 outils MCP) + skills fallback transparente.
+> **Une mémoire persistante pour vos agents LLM.** Ne re-briefez plus jamais Claude, Gemini, Codex ou Mistral. Le contexte de vos projets vous suit d'une session à l'autre — et même d'un LLM à l'autre.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#prérequis)
-[![Shells](https://img.shields.io/badge/shells-PowerShell%207%2B%20%7C%20bash-5391FE)](#prérequis)
-[![CLIs](https://img.shields.io/badge/CLIs-Claude%20Code%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot%20%7C%20Desktop-8A2BE2)](#cli-supportées)
-[![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#mode-mcp-v080)
-[![i18n](https://img.shields.io/badge/i18n-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot-8A2BE2)](#cli-compatibles)
+[![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#sous-le-capot)
+[![i18n](https://img.shields.io/badge/conversation-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
 
-SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée au sein du SI du Groupe Mondial Tissus.
-
-## Quoi de neuf
-
-**v0.11.0 — branch-first archeo Rolls Royce + Phase 1 LLM round-trip**. Réponse à la cascade de drifts Gemini sur le repo IRIS USER (branche `ecosav` réutilisée 30 fois via reset workflow + composants EcoSAV répartis sur 5 dossiers). Six chantiers coordonnés : (1) **Phase 0 cadrage** — nouvel outil `mem_archeo_plan` (35e tool) qui retourne un plan structuré (slug + scope + granularité + filters) AVANT toute écriture, gating via `acknowledged_via_plan=True`. Plus de Gemini qui crée 73 archives sous le mauvais slug. (2) **Stratégie `merged-via-perimeter`** — walker multi-signal (file overlap réciproque + author match + subject match, threshold 0.4) qui capture **tous** les cycles de merge d'une branche réutilisée. Bootstrap via subject (`Merge branch 'X'`), itérative widening sur perimeter. Détecte le pattern `dev-reset workflow` que la stratégie single-tip ratait. (3) **next_call literal** — `ArcheoPlan.next_call: dict` carrying l'invocation exacte de `mem_archeo` orchestrateur (pas `mem_archeo_git` direct). Bloque la translation drift où Gemini droppait `branch_first` en interprétant la granularité. (4) **Body extractor mécanique** — nouveau module `archeo/file_summary.py` qui lit chaque fichier du cycle via `git show` et extrait classes/properties/methods/docstrings (.cls IRIS, .py, .js/.ts, .sql, .md). Pré-remplit `Analyse technique` au lieu de `_(LLM TODO ...)_` placeholders bruts. (5) **Phase 1 LLM round-trip** — `mem_archeo_context` (brief, 36e tool) + `mem_archeo_project_topology` (finalize) forcent le LLM à **lire** chaque fichier du périmètre via son outil de lecture, puis re-soumettre une synthèse strictement validée Pydantic (chaque composant DOIT avoir role + ≥1 fichier). Token `acknowledged_via_read=True` bloque la finalize sans la lecture. (6) **Phase 5 zone-index patches** — projet auto-listé dans root `index.md` Projets ; topology atom auto-listé dans `20-knowledge/index.md`. Tests : 465 passed (78 nouveaux, +12 catégories testées). Procédures `mem-archeo-git.md` / `mem-archeo.md` / `mem-archeo-context.md` mises à jour avec les case studies 2026-05-08/09 IRIS USER pour ancrer la doctrine.
-
-**v0.10.0 — durcissement frontmatter cross-LLM**. Réponse aux atomes silencieusement malformés produits par les adapters LLM moins rigoureux que le client de référence (frontmatter universel omis, `context_origin` absent, `derived_atoms` non rétroliés — autant de YAML qui parse fine mais que `mem_recall` ne reconnaît pas). Trois renforts coordonnés : (1) nouveau bloc doctrinal `core/procedures/_frontmatter-archeo.md` — checklist exhaustive 31 fields × 5 sources + pre-write LLM walkthrough, inclus par les 3 procédures `mem-archeo-*` ; (2) `mem-health-scan` étendu de 11 à **15 catégories** (12 vault + 3 kit-only) — détecte `missing-universal-frontmatter`, `missing-archeo-context-origin`, `archeo-derived-orphan`, `topology-archives-out-of-sync` ; (3) nouvel outil MCP `mem_archeo_context_finalize` — **32 tools au total** : le LLM hands off ses spans pré-classifiés, Python force le frontmatter canonique, idempotence automatique. Bonus : bug fix `mem_archeo_stack` (manquait `collective`/`modality`/`type` canonique).
-
-**v0.9.7** — Hotfix `UnicodeEncodeError` sur Windows cp1252 pour le CLI `memory-kit-migrate` (UTF-8 reconfig + fallback ASCII des glyphes).
-
-**v0.9.6** — Hotfix `Deploy-McpServer` : auto-kill des process `memory-kit-mcp` actifs lors de l'upgrade (résout le piège `WinError 32` qui laissait les pilotes bloqués sur une vieille version).
-
-**v0.9.5** — Hotfix hook deploy : entry point CLI `memory-kit-migrate` auto-installé par pipx (résout `ModuleNotFoundError` sur installs via venv isolé).
-
-**v0.9.4** — Indexes de zone intermédiaires (`{zone}/index.md`) + framework de migration vault versionné avec auto-backup. 11ᵉ catégorie health-scan `missing-zone-index-entry` (auto-fixable).
-
-**Historique antérieur (v0.5 → v0.9.3)** : voir [Releases GitHub](https://github.com/SI-GMT/SecondBrain/releases) et [`docs/architecture/`](./docs/architecture/) pour les cadrages versionnés.
+SecondBrain s'appuie sur un concept originel proposé par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir [Licence et crédits](#licence-et-crédits).
 
 ---
 
-## Sommaire
+## Le problème
 
-- [Présentation](#présentation)
-- [Fonctionnement](#fonctionnement)
-- [Mode MCP (v0.8.0)](#mode-mcp-v080)
-- [Installation](#installation)
-- [Architecture](#architecture)
-- [Commandes](#commandes)
-- [Langues supportées](#langues-supportées)
-- [Performances](#performances)
-- [Multi-projets](#multi-projets)
-- [Outils de maintenance](#outils-de-maintenance)
-- [Feuille de route](#feuille-de-route)
-- [Désinstallation](#désinstallation)
-- [Licence et crédits](#licence-et-crédits)
+Votre agent LLM oublie tout entre deux sessions. À chaque `/clear`, redémarrage d'IDE ou changement de modèle :
+
+- **Vous re-briefez à la main** — état du projet, décisions, prochaines étapes.
+- **Vous payez deux fois les mêmes tokens** — le contexte de la session précédente est rechargé en clair.
+- **Vous perdez le fil** — ce que vous aviez décidé hier est noyé dans un nouveau prompt.
+- **Vous êtes prisonnier d'un LLM** — basculer chez un concurrent veut dire tout recommencer.
+
+## Ce que SecondBrain change
+
+Une **mémoire locale Markdown** que l'agent lit et écrit lui-même. Vous ne touchez à rien.
+
+| Sans SecondBrain | Avec SecondBrain |
+|---|---|
+| « Je reprends sur le projet X. État : ... Décisions : ... Prochaine étape : ... » | « On continue. » |
+| Re-briefing manuel de 5-15 minutes | Reprise en quelques secondes |
+| Contexte coincé chez un fournisseur | Portable entre Claude, Gemini, Codex, Vibe, Copilot |
+| L'historique se perd à chaque `/clear` | Archives horodatées immuables, recherchables |
+| Vous décidez quand sauvegarder | L'agent met à jour silencieusement à chaque décision |
 
 ---
 
-## Présentation
+## Les capacités clés
 
-Les CLI LLM agentiques n'ont pas de mémoire entre les sessions. Après un `/clear` ou une fermeture d'IDE, l'intégralité du contexte — état du projet, décisions prises, prochaines étapes — doit être ré-exposée manuellement à l'agent.
+### Reprise instantanée
 
-SecondBrain installe une mémoire locale structurée que l'agent lit et écrit automatiquement, au niveau utilisateur (dans `~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/` ou `~/.copilot/` selon la CLI). Le contexte devient disponible depuis n'importe quel projet sur le poste.
+Vous tapez `/mem-recall` (ou simplement « on continue », « tu te rappelles ? »). L'agent charge en quelques secondes le contexte du projet : phase actuelle, décisions cumulées, prochaines étapes, atomes d'architecture pertinents. Pas de prompt à relire, pas de fichiers à rouvrir.
 
-Depuis la **v0.8.0**, un serveur MCP `secondbrain-memory-kit` expose en plus les 24 skills comme outils MCP natifs — utilisés en priorité quand disponibles, avec fallback transparent vers les skills. Voir [Mode MCP](#mode-mcp-v080). La **v0.9.0** étend le périmètre MCP : port archeo natif, audit hygiène 9-catégories complet, doc-readers vendorisés et scanner de spec-drift.
+### Continuité cross-LLM
 
-**Deux gains concrets** :
+`/mem-archive` chez un agent. `/mem-recall` chez un autre. Le contexte suit. Utile quand vous :
 
-- **Reprise de session** : la lecture du `context.md` consomme environ **2× moins de tokens** qu'un re-briefing manuel équivalent (intra-LLM).
-- **Continuité cross-LLM** : un `/mem-archive` chez Claude permet de basculer immédiatement chez Codex / Gemini / Vibe / Copilot via `/mem-recall` dans la session suivante. Utile quand on **atteint la limite de tokens / le cap quotidien** d'un fournisseur, quand on **change de modèle pour exploiter une force spécifique** (vision Gemini, raisonnement Claude, vitesse Mistral...) ou quand on veut **comparer deux LLMs sur la même tâche**. Le contexte est portable entre toutes les CLI supportées sans rebrief manuel — le vault Markdown est la source de vérité commune, pas le LLM.
+- **Atteignez le cap quotidien** d'un fournisseur — basculez sans perdre la session.
+- **Voulez exploiter une force spécifique** d'un modèle (vision Gemini, raisonnement Claude, vitesse Mistral, gratuit Copilot).
+- **Comparez deux LLMs** sur la même tâche, avec exactement le même contexte initial.
 
-### CLI et apps desktop supportées
+### Archivage silencieux pendant la session
 
-| Cible | Maturité | MCP (v0.8.0) | Skills fallback |
+L'agent met à jour le contexte du projet **dès qu'une décision structurante émerge**, sans intervention. Vous ne sauvegardez pas — c'est fait pour vous. À la fin de session, `/mem-archive` produit un résumé horodaté immuable + met à jour le contexte vif.
+
+### Archeo de vos dépôts Git existants
+
+Pointez SecondBrain sur n'importe quel dépôt Git. L'agent reconstruit son historique en archives narratives :
+
+- **Une archive par release**, par PR mergée, par cycle de branche, ou par fenêtre temporelle (au choix).
+- **Topologie projet automatique** : composants, modèles de données, conventions, décisions implicites.
+- **Récupération de contexte fonctionnel** depuis le code lui-même, pas seulement depuis les commits.
+
+Idéal pour onboarder une équipe sur un projet legacy, ou pour redonner vie à un dépôt repris d'un autre développeur.
+
+### Intelligence projet — l'agent lit votre code
+
+Au lieu de simplement lister des fichiers, SecondBrain force l'agent à **ouvrir, lire et synthétiser** le contenu réel de votre projet. Le résultat : une vraie cartographie fonctionnelle (rôles des composants, méthodes clés, patterns récurrents, risques) dans un atome unique consultable d'un coup d'œil.
+
+### Visualisation Obsidian
+
+Le vault est un dossier Markdown standard, lisible avec Obsidian. Vous obtenez gratuitement :
+
+- Un **graphe de connaissance** navigable, coloré par zone fonctionnelle.
+- Une **recherche plein-texte** instantanée sur tout l'historique.
+- Des **wikilinks** entre projets, décisions, personnes, principes.
+
+Aucune obligation : si vous préférez `grep`, ça marche aussi.
+
+### Multi-projets, multi-langues
+
+Un seul vault contient autant de projets que vous voulez. L'agent vous parle dans la langue de votre choix (FR / EN / ES / DE / RU) — la mémoire interne reste structurellement en anglais pour la précision LLM.
+
+### Hygiène automatique
+
+Le vault s'audite tout seul (`/mem-health-scan`) et se répare en un clic (`/mem-health-repair`). Frontmatter incohérent, liens cassés, atomes orphelins : détectés et corrigés.
+
+---
+
+## Pour qui
+
+- **Développeurs solo** qui jonglent entre plusieurs projets et LLMs.
+- **Équipes tech** qui veulent capitaliser le contexte d'un projet entre leurs membres.
+- **Consultants** qui doivent reprendre rapidement un projet client après plusieurs semaines.
+- **Toute personne** qui en a marre de réexpliquer son travail à chaque session.
+
+---
+
+## CLI compatibles
+
+| CLI / App | Statut | Mode MCP | Skills fallback |
 |---|---|---|---|
-| **Claude Code** | Référence, éprouvée en production | ✅ `~/.claude.json` | Skills + slash commands + bloc `CLAUDE.md` + permissions |
-| **Claude Desktop** | Fonctionnel (v0.8.0) | ✅ `~/AppData/Roaming/Claude/claude_desktop_config.json` | (pas de skills, MCP only) |
-| **Codex CLI** | Fonctionnel, validé en conditions réelles | ✅ `~/.codex/config.toml` (`[mcp_servers.secondbrain-memory-kit]`) | Prompts + skills |
-| **Codex Desktop** | Fonctionnel (v0.8.0) | ✅ via héritage de Codex CLI | (partage de la config Codex CLI) |
-| **GitHub Copilot CLI** | Fonctionnel (v0.7.5) | ✅ `~/.copilot/mcp-config.json` | Skills dans `~/.copilot/skills/` + bloc dans `~/.copilot/copilot-instructions.md` |
-| **Mistral Vibe** | Fonctionnel, validé en conditions réelles | ✅ `~/.vibe/config.toml` (`[[mcp_servers]]`) | Skills dans `~/.vibe/skills/` + bloc dans `~/.vibe/AGENTS.md` |
-| **Gemini CLI** | Fonctionnel, validé en conditions réelles | ✅ `~/.gemini/settings.json` (`mcpServers`) | Extension `memory-kit` + `GEMINI.md` + commandes TOML |
+| **Claude Code** | Référence, production | ✅ | ✅ |
+| **Claude Desktop** | Fonctionnel | ✅ | (MCP only) |
+| **Codex CLI** | Production | ✅ | ✅ |
+| **Codex Desktop** | Fonctionnel | ✅ (héritage Codex CLI) | — |
+| **Gemini CLI** | Production | ✅ | ✅ |
+| **Mistral Vibe** | Production | ✅ | ✅ |
+| **GitHub Copilot CLI** | Fonctionnel | ✅ | ✅ |
 
-Le script d'installation détecte automatiquement les CLI/apps présentes sur le poste et ne déploie que les adapters correspondants. Le serveur MCP est installé une fois via `pipx`, puis sa déclaration est injectée dans la config MCP de chaque cible compatible.
-
----
-
-## Fonctionnement
-
-Le cycle de mémoire se décompose en trois phases :
-
-1. **Reprise** — L'utilisateur écrit « reprends », « on continue », ou tape `/mem-recall`. L'agent charge le contexte du projet en quelques secondes, sans re-briefing.
-2. **Session** — L'agent met à jour silencieusement le `context.md` du projet dès qu'une décision structurante émerge. Aucune intervention explicite requise.
-3. **Archivage** — L'utilisateur écrit « on s'arrête », « je pars », ou tape `/mem-archive`. L'agent produit un résumé horodaté de la session (décisions, état, prochaines étapes) avant que `/clear` ne soit lancé.
-
-### Fiabilité du déclenchement par langage naturel
-
-Le déclenchement automatique repose sur des instructions injectées dans la config utilisateur de la CLI (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `copilot-instructions.md`). Sa fiabilité dépend du modèle sous-jacent : très élevée sur Claude Code, bonne sur Gemini CLI, variable ailleurs. Les slash commands explicites (`/mem-recall`, `/mem-archive`, etc.) produisent un comportement identique sur toutes les plateformes qui les exposent.
-
-### Anglais structurel, conversation native
-
-Toutes les **instructions destinées au LLM** (procédures, frontmatter, tags, valeurs persistées) sont en anglais — les LLM modernes raisonnent et exécutent plus précisément sur instructions EN. Mais **l'agent répond toujours dans la langue conversationnelle de l'utilisateur**, configurée à l'installation et stockée dans `memory-kit.json`. Le contenu structuré (titres de sections, libellés persistés) est résolu via `core/i18n/strings.yaml` qui bundle EN/FR/ES/DE/RU.
+Le script d'installation détecte automatiquement les CLI présentes sur votre poste et ne déploie que celles correspondantes. Aucune CLI n'est requise — installer celles dont vous vous servez suffit.
 
 ---
 
-## Mode MCP (v0.8.0)
-
-Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 24 skills `mem-*` comme outils MCP natifs consommables par toute CLI ou app desktop compatible MCP. Quand le serveur est démarré, l'agent invoque les outils en priorité (logique métier exécutée en Python, déterministe, économe en tokens). Sinon, il retombe automatiquement sur les skills classiques.
-
-### Stack et installation
-
-- **Framework** : `fastmcp` 2.x (standalone, pas le SDK officiel intégré) — choisi pour le `Client` in-memory qui rend les tests pytest triviaux sans subprocess stdio.
-- **Validation** : Pydantic v2 (args + retours typés), sérialisés automatiquement en `structuredContent` MCP.
-- **Build** : hatchling + uv (Python ≥3.12), packaging via `pipx install ./mcp-server`.
-- **Tests** : pytest + pytest-asyncio + pytest-cov, **465 tests** (v0.11.0), fixture `vault_tmp` qui copie un mini-vault de référence dans `tmp_path` à chaque test.
-- **Transport** : stdio uniquement (lancé par le client CLI à chaque session).
-
-`deploy.ps1` / `deploy.sh` détecte `pipx`, installe ou met à jour `memory-kit-mcp`, écrit `~/.memory-kit/config.json` (vault, scope, langue, kit_repo), et inject la déclaration MCP dans les configs des cibles compatibles. En cas de WinError 32 (binaire verrouillé par une CLI active), l'upgrade est différé proprement et la version précédente reste fonctionnelle.
-
-### Inventaire des 36 outils
-
-| Catégorie | Outils MCP (snake_case) | État |
-|---|---|---|
-| Cycle session | `mem_recall`, `mem_archive` | ✅ fonctionnels |
-| Inventaire | `mem_list`, `mem_search`, `mem_digest` | ✅ fonctionnels |
-| Vault management | `mem_init_project`, `mem_rename`, `mem_merge`, `mem_reclass`, `mem_rollback_archive`, `mem_promote_domain`, `mem_historize`, `mem_update_phase` | ✅ fonctionnels |
-| Lecture directe (v0.9.3) | `mem_read_archive`, `mem_read_context`, `mem_read_history`, `mem_get_topology` | ✅ fonctionnels — bridge pour CLI MCP-only sans accès filesystem direct |
-| Hygiene | `mem_health_scan`, `mem_health_repair` | ✅ fonctionnels (**15 catégories** v0.10.0 — 12 vault + 3 kit-repo audits, dont les 4 nouvelles `missing-universal-frontmatter`, `missing-archeo-context-origin`, `archeo-derived-orphan`, `topology-archives-out-of-sync`) |
-| Schema migrations (v0.9.4) | `mem_migrate` | ✅ framework versionné, dry-run par défaut, auto-backup avant apply, hook deploy automatique |
-| Ingestion | `mem`, `mem_doc`, `mem_note`, `mem_principle`, `mem_goal`, `mem_person` | ✅ fonctionnels (`mem_doc` natif sur md/txt + dispatcher PDF/DOCX/PPTX/XLSX/CSV/HTML via extra `[doc-readers]`) |
-| Archeo | `mem_archeo`, `mem_archeo_stack`, `mem_archeo_git` | ✅ fonctionnels (Phase 0 + Phase 2 + Phase 3 complète : tags / releases / merges / commits + branch-first) |
-| Archeo Phase 1 finalisation (v0.10.0) | `mem_archeo_context_finalize` | ✅ fonctionnel — LLM hands off ses spans pré-classifiés, Python force le frontmatter universel + archeo (cf. `_frontmatter-archeo.md`) |
-| Archeo skill-only par design | `mem_archeo_context`, `mem_archeo_atlassian` | ⚠️ stubs MCP intentionnels — **pas un manque** : Phase 1 = classification sémantique LLM (mais voir `mem_archeo_context_finalize` pour la finalisation Python) ; Atlassian = MCP client-side plus riche qu'un port `httpx` maison |
-
-Convention de nommage : `mem-X` (kebab côté skills/CLI/langage naturel) ↔ `mem_X` (snake côté outils MCP / Python). Les invocations utilisateur (slash commands, intents) ne changent pas.
-
-### Pattern MCP-first / skills-fallback
-
-Chaque procédure `core/procedures/mem-X.md` résolue par `deploy.ps1` est préfixée par un bloc `_mcp-first.md` qui indique :
-
-> Si l'outil `mcp__secondbrain-memory-kit__mem_X` est disponible, l'invoquer. Sinon, exécuter la procédure ci-dessous.
-
-Le LLM décide à l'invocation, sans intervention de l'utilisateur. Les CLI sans MCP (cas où l'utilisateur n'a pas installé `pipx`, ou serveur non démarré) gardent la même expérience qu'avant — les skills exécutent la procédure complète comme en v0.7.x.
-
-### Source de vérité
-
-`core/procedures/mem-X.md` reste la **source de vérité fonctionnelle**. Le module Python `mcp-server/src/memory_kit_mcp/tools/X.py` en est la traduction exécutable. Discipline de cohérence : tout changement dans une procédure doit s'accompagner d'un changement dans le module Python correspondant (et vice-versa) dans la même PR.
-
-Voir `docs/architecture/v0.8.0-mcp-server-cadrage.md` pour le cadrage complet (5 axes structurants, 13 sections).
-
----
-
-## Installation
+## Démarrer en 2 minutes
 
 ### Prérequis
 
-- **PowerShell 7+** (`pwsh`) sur Windows, **ou** **bash** sur macOS/Linux/git-bash.
-- **Au moins une CLI ou app desktop supportée** installée, avec une session préalablement lancée pour que le dossier de config utilisateur existe (`~/.claude/`, `~/.gemini/`, `~/.codex/`, `~/.vibe/`, `~/.copilot/`, `~/AppData/Roaming/Claude/` selon la cible).
-- **`pipx`** (recommandé) ou `pip` — pour installer le serveur MCP `secondbrain-memory-kit` via `deploy.ps1`. Sans `pipx`, le déploiement bascule sur `pip install --user` ; sans Python, le serveur MCP est skip et les CLI restent en mode skills classique. Voir [Mode MCP](#mode-mcp-v080).
-- **Obsidian** (optionnel) — pour visualiser le vault sous forme de graphe.
-- **`uv`** (optionnel) — requis uniquement pour `/mem-doc` sur les formats non-natifs (`.docx`, `.pdf`, `.pptx`, `.xlsx`, `.csv`, `.html`). Voir [Formats supportés par `/mem-doc`](#formats-supportés-par-mem-doc). Installation : <https://docs.astral.sh/uv/>.
+- **PowerShell 7+** sur Windows, **ou** **bash** sur macOS/Linux.
+- Au moins **une CLI compatible** installée (voir tableau ci-dessus).
+- **`pipx`** recommandé (pour le serveur MCP). Sans lui, le mode skills classique reste fonctionnel.
 
-### Déploiement
+### Installation
 
-1. Cloner le dépôt dans un dossier stable du poste :
-   ```bash
-   git clone https://github.com/SI-GMT/SecondBrain.git
-   ```
+```bash
+git clone https://github.com/SI-GMT/SecondBrain.git
+cd SecondBrain
+```
 
-2. Lancer le déploiement depuis la racine :
-   ```powershell
-   # Windows
-   .\deploy.ps1
-   ```
-   ```bash
-   # macOS / Linux
-   ./deploy.sh
-   ```
+```powershell
+# Windows
+.\deploy.ps1
+```
 
-Le script détecte les CLI présentes, déploie l'adapter correspondant à chacune, et ignore silencieusement les CLI absentes. Si aucune CLI n'est trouvée, un message listant les liens d'installation est affiché puis l'exécution s'arrête proprement.
+```bash
+# macOS / Linux
+./deploy.sh
+```
 
-À la première installation, le script propose la **langue conversationnelle** du LLM (détectée depuis la locale système, modifiable à la volée). Voir [Langues supportées](#langues-supportées).
-
-### Surfaces installées par plateforme
-
-| Cible | Skills fallback (déployés) | MCP server (v0.8.0) |
-|---|---|---|
-| Claude Code | `~/.claude/commands/mem-*.md`, `~/.claude/skills/mem-*.md`, `memory-kit.json`, bloc dans `CLAUDE.md`, vault ajouté à `permissions.additionalDirectories` dans `settings.json` | `~/.claude.json` → `mcpServers.secondbrain-memory-kit` |
-| Claude Desktop | (pas de skills) | `~/AppData/Roaming/Claude/claude_desktop_config.json` → `mcpServers.secondbrain-memory-kit` |
-| Codex CLI | `~/.codex/prompts/mem-*.md`, `~/.codex/skills/mem-*/SKILL.md`, `memory-kit.json` | `~/.codex/config.toml` → `[mcp_servers.secondbrain-memory-kit]` (markers `# MEMORY-KIT:START/END`) |
-| Codex Desktop | (partage de la config Codex CLI) | héritage `~/.codex/config.toml` |
-| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` (bloc injecté), `~/.copilot/skills/mem-*/SKILL.md`, `memory-kit.json`. Override via `$COPILOT_HOME` | `~/.copilot/mcp-config.json` → `mcpServers.secondbrain-memory-kit` |
-| Mistral Vibe | `~/.vibe/AGENTS.md` (bloc injecté), `~/.vibe/skills/mem-*/SKILL.md` | `~/.vibe/config.toml` → `[[mcp_servers]]\nname = "secondbrain-memory-kit"` (markers) |
-| Gemini CLI | Extension dans `~/.gemini/extensions/memory-kit/`, `memory-kit.json`, activation dans `extension-enablement.json` | `~/.gemini/settings.json` → `mcpServers.secondbrain-memory-kit` |
-| **Tous (commun MCP)** | — | Binaire `memory-kit-mcp` installé via `pipx install ./mcp-server` + `~/.memory-kit/config.json` (vault, scope, langue, kit_repo) |
-
-### Choix du vault et de la langue
-
-| Scénario | Commande |
-|---|---|
-| Première installation (défaut, vault `{kit}/memory`, langue détectée) | `.\deploy.ps1` ou `./deploy.sh` |
-| Première installation, chemin personnalisé | `.\deploy.ps1 -VaultPath "D:\mes-notes\cerveau"` |
-| Forcer la langue conversationnelle | `.\deploy.ps1 -Language fr` ou `./deploy.sh --language fr` |
-| Mise à jour | `.\deploy.ps1` — chemin et langue relus depuis `memory-kit.json` existants |
-| Migration vers un nouvel emplacement | `.\deploy.ps1 -VaultPath "D:\nouveau\chemin"` — met à jour les configs mais ne déplace pas les fichiers existants (à faire manuellement) |
+C'est tout. Le script détecte vos CLI, installe le serveur MCP, configure le vault et choisit votre langue conversationnelle (modifiable plus tard).
 
 ### Vérification
 
-Depuis n'importe quel projet, ouvrir une CLI supportée et taper :
+Ouvrez une CLI compatible, tapez :
 
 ```
 /mem-recall
 ```
 
-L'agent doit répondre dans votre langue, par exemple :
+L'agent répond dans votre langue :
 
 ```
-Aucun projet/domaine trouvé. Mémoire initialisée — memory/index.md est prêt.
+Aucun projet trouvé. Mémoire initialisée.
 Décris ce sur quoi tu travailles et on commence.
 ```
 
-### Ouvrir le vault dans Obsidian (optionnel)
+Vous êtes prêt.
 
-1. Installer Obsidian : <https://obsidian.md>
-2. Ouvrir Obsidian → *Open folder as vault* → sélectionner `memory/`.
+### Visualiser dans Obsidian (optionnel)
 
-Le dossier `memory/` est déjà un vault Obsidian valide.
+1. Installer [Obsidian](https://obsidian.md).
+2. *Open folder as vault* → sélectionner le dossier `memory/`.
 
-### Configurations Obsidian canoniques (v0.7.2)
-
-`deploy.ps1` / `deploy.sh` déploie automatiquement une palette de couleurs canonique pour le graph view (un coloris distinct par zone : `episodes`, `knowledge`, `principles`, `goals`, etc.). Le bridge **refuse silencieusement si Obsidian est ouvert** sur le vault (pour éviter une corruption des configs en mémoire), respecte les personnalisations utilisateur (ne touche pas aux fichiers sans le marker `_secondbrain_canonical`), et fait un backup horodaté avant tout écrasement.
-
-Pour bypass (force) : `--force-obsidian-style`. Pour skip : `--skip-obsidian-style`.
-
-Plugin community **fortement recommandé** : **Front Matter Title** (par snezhig). Il lit le champ `display` du frontmatter universel et l'utilise comme label dans le graph view, le file explorer et les wikilinks — sans lui, les nœuds homonymes (`context.md` répétés par projet) sont indistinguables. Le champ `display` est défini par les conventions de `core/procedures/_frontmatter-universal.md` et patché rétroactivement par `scripts/inject-display-frontmatter.py`.
-
-Voir `adapters/obsidian-style/README.md` pour les détails.
+Le vault est immédiatement consultable.
 
 ---
 
-## Architecture
+## Concepts
 
-```
-SecondBrain/
-├── core/
-│   ├── procedures/             Spec procédurale agnostique (source de vérité)
-│   │   ├── _router.md          Router sémantique — pattern central d'ingestion
-│   │   ├── _frontmatter-universal.md, _encoding.md, _concurrence.md
-│   │   ├── mem-recall.md, mem-archive.md, mem-list.md, mem-search.md
-│   │   ├── mem-doc.md, mem-archeo.md, mem-archeo-atlassian.md
-│   │   ├── mem-note.md, mem-principle.md, mem-goal.md, mem-person.md
-│   │   ├── mem-rename.md, mem-merge.md, mem-reclass.md, mem-promote-domain.md
-│   │   ├── mem-digest.md, mem-rollback-archive.md
-│   │   └── mem.md              Router universel d'ingestion
-│   └── i18n/strings.yaml       Chaînes structurelles localisées (EN/FR/ES/DE/RU)
-├── adapters/
-│   ├── claude-code/            Skills + slash commands + bloc CLAUDE.md
-│   ├── gemini-cli/             Extension memory-kit + GEMINI.md + TOML
-│   ├── codex/                  Prompts + skills
-│   ├── mistral-vibe/           Bloc AGENTS.md + skills (format Anthropic)
-│   └── copilot-cli/            Bloc copilot-instructions.md + skills (format Anthropic)
-├── mcp-server/                 Serveur MCP Python (v0.8.0)
-│   ├── pyproject.toml          hatchling + fastmcp ≥2.13 + Pydantic v2
-│   ├── src/memory_kit_mcp/
-│   │   ├── server.py           FastMCP instance + main() entry stdio
-│   │   ├── config.py           ~/.memory-kit/config.json loader
-│   │   ├── tools/              36 outils mem_* (1 fichier par tool)
-│   │   └── vault/              Primitives partagées (paths, frontmatter,
-│   │                           atomic_io, scanner)
-│   └── tests/                  pytest, 465 tests (v0.11.0)
-├── memory/                     Vault Obsidian local (non versionné — voir .gitignore)
-│   ├── index.md                Catalogue maître à la racine
-│   ├── 00-inbox/               Captation brute non qualifiée
-│   ├── 10-episodes/
-│   │   ├── projects/{slug}/
-│   │   │   ├── context.md      Snapshot mutable (fast lane)
-│   │   │   ├── history.md      Fil chronologique
-│   │   │   └── archives/       Une archive par session complète (immuable)
-│   │   └── domains/{slug}/     Domaines transverses (sans date de fin)
-│   ├── 20-knowledge/           Mémoire sémantique (faits, concepts, fiches)
-│   ├── 30-procedures/          Savoir-faire / how-to
-│   ├── 40-principles/          Heuristiques et lignes rouges
-│   ├── 50-goals/               Intentions prospectives
-│   ├── 60-people/              Carnet relationnel
-│   ├── 70-cognition/           Productions non verbales (cerveau droit)
-│   └── 99-meta/                Méta-mémoire du vault (doctrine, taxonomie)
-├── deploy.ps1                  Déploiement Windows (PowerShell)
-└── deploy.sh                   Déploiement macOS/Linux (bash)
-```
+### Le triptyque mémoire
 
-**Single source of truth** — toute logique procédurale vit dans `core/procedures/`. Les adapters n'apportent que du frontmatter et du formatage spécifique à leur plateforme. Les scripts de déploiement substituent à la volée le marqueur `{{PROCEDURE}}` par le contenu du fichier core correspondant. Pas de duplication, pas de divergence entre plateformes.
+Chaque projet a trois fichiers vivants :
 
-**Architecture brain-centric** — depuis v0.5, le vault est organisé par **fonctions mémorielles** (épisodique, sémantique, procédurale, prospective…) et non plus par projet. Un projet devient un tag transverse qui se projette dans plusieurs zones via le router sémantique.
+- **`context.md`** — le snapshot mutable, mis à jour à chaque décision. C'est ce que l'agent lit en priorité au `/mem-recall`. Court, précis, toujours à jour.
+- **`history.md`** — le fil chronologique des sessions, avec liens vers chaque archive.
+- **`archives/`** — un fichier horodaté immuable par session complète. Trace historique, jamais modifiée.
+
+### Architecture brain-centric
+
+Le vault est organisé par **fonctions cognitives**, pas par projet :
+
+| Zone | Contenu |
+|---|---|
+| `00-inbox` | Captation brute non triée |
+| `10-episodes` | Mémoire épisodique — projets et domaines |
+| `20-knowledge` | Mémoire sémantique — faits, concepts, fiches |
+| `30-procedures` | Savoir-faire — comment faire X |
+| `40-principles` | Heuristiques et lignes rouges |
+| `50-goals` | Intentions prospectives |
+| `60-people` | Carnet relationnel |
+| `70-cognition` | Productions non verbales |
+| `99-meta` | Méta-mémoire du vault |
+
+Un projet devient un tag transverse qui se projette dans plusieurs zones.
+
+### Déclenchement par langage naturel
+
+Les commandes `/mem-*` sont toujours disponibles, mais le plus souvent vous n'en avez pas besoin :
+
+- « **on continue** », « **reprends** », « **tu te rappelles ?** » → `/mem-recall`
+- « **on s'arrête** », « **je pars**, **/clear** » → `/mem-archive`
+- « **note ça** », « **garde ce principe** » → `/mem-note`, `/mem-principle`
+
+Le déclenchement automatique est très fiable sur les modèles principaux (Claude, Gemini), variable ailleurs. Les commandes explicites marchent partout.
 
 ---
 
-## Commandes
-
-Toutes les commandes sont préfixées `mem-*` pour éviter les collisions avec les commandes natives des CLI.
+## Aperçu des commandes
 
 ### Cycle de session
 
-| Déclencheur | Contexte | Effet |
-|---|---|---|
-| Langage naturel (« reprends », « on continue », « tu te rappelles ») | Début de session | Chargement automatique du contexte |
-| `/mem-recall` | Début de session (explicite) | Chargement + briefing affiché |
-| `/mem-recall {projet}` | Plusieurs projets existent | Chargement direct du projet nommé |
-| *Silencieux (incrémental)* | Fait important émergeant en cours de session | Mise à jour de `context.md` sans création d'archive |
-| Langage naturel (« on s'arrête », « je pars ») | Fin de session | Mode archive complet |
-| `/mem-archive` | Avant `/clear` (explicite) | Résumé + écriture des fichiers |
+| Commande | Effet |
+|---|---|
+| `/mem-recall` | Charge le contexte du projet courant |
+| `/mem-recall {projet}` | Charge un projet précis |
+| `/mem-archive` | Sauvegarde la session, prêt à `/clear` |
 
-### Ingestion (router universel + shortcuts)
+### Capture et ingestion
 
-| Commande | Intention | Effet |
-|---|---|---|
-| `/mem` | Capture libre, le router classe | Segmente en atomes et route vers la bonne zone (cascade d'heuristiques) |
-| `/mem-doc {chemin}` | Ingérer un document local | 1 fichier (PDF, MD, texte, image, docx) → archive single-shot |
-| `/mem-archeo [repo]` | Archeo triphasée (orchestrateur) | Phase 0 topologie + Phase 1 contexte (`archeo-context`) + Phase 2 stack (`archeo-stack`) + Phase 3 Git (`archeo-git`). Topologie persistée. |
-| `/mem-archeo-context [repo]` | Phase 1 isolée — contexte projet | Lit AI files + README + docs/ + cadrage/ + adr/. Atomes principles/goals/knowledge ADR. Idempotent par `(project, source_doc, extracted_category)`. |
-| `/mem-archeo-stack [repo]` | Phase 2 isolée — stack technique | Résout par layer (frontend/backend/db/ci/infra/tests/tooling). Idempotent par `(project, source_manifest, detected_layer)`. |
-| `/mem-archeo-git [repo]` | Phase 3 isolée — historique Git | Archives datées par tag/release/merge/fenêtre. Surfacage des frictions (≥3 commits successifs même thème). |
-| `/mem-archeo --branch-first {branch}` | Mode branch-first (v0.7.1) | Focus serré sur une branche feature, ambient context léger, granularité `--by-author` par défaut, détection workspaces monorepo et liaison cross-projet. Topologie de branche dans `99-meta/repo-topology/{slug}-branches/{branch-san}.md`. |
-| `/mem-archeo-atlassian {url}` | Rétro Confluence + Jira | 1 archive par page Confluence, enrichies par les tickets Jira liés |
-| `/mem-note` | Note de connaissance | Insère dans `20-knowledge/` |
-| `/mem-principle` | Principe / heuristique / ligne rouge | Insère dans `40-principles/` |
-| `/mem-goal` | Objectif (intention future) | Insère dans `50-goals/` (horizon court/moyen/long détecté) |
-| `/mem-person` | Fiche personne | Insère dans `60-people/` (sensitive=true par défaut) |
+| Commande | Usage |
+|---|---|
+| `/mem` | Capture libre — l'agent classe et range |
+| `/mem-doc {fichier}` | Ingère un document local (PDF, DOCX, MD, image, ...) |
+| `/mem-note`, `/mem-principle`, `/mem-goal`, `/mem-person` | Captures ciblées par type |
 
-### Formats supportés par `/mem-doc`
+### Archeo de dépôt
 
-| Extension | Stratégie | Dépendance Python |
-|---|---|---|
-| `.md`, `.txt`, `.json` | Lecture native | — |
-| `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` | Description par vision LLM native | — |
-| `.pdf` | `read_pdf.py` ; fallback automatique vers la vision LLM si le PDF est scanné | `pypdf` |
-| `.docx` | `read_docx.py` | `python-docx` |
-| `.pptx` | `read_pptx.py` | `python-pptx` |
-| `.xlsx` | `read_xlsx.py` (clip à 200 lignes × 30 colonnes par feuille) | `openpyxl` |
-| `.csv` | `read_csv.py` (auto-détection du délimiteur) | stdlib |
-| `.html`, `.htm` | `read_html.py` (extraction texte + tables, anti-noise script/style/nav) | `beautifulsoup4` + `lxml` |
-
-Les readers vivent dans `scripts/doc-readers/`. Chacun déclare ses dépendances via [PEP 723](https://peps.python.org/pep-0723/) inline metadata et est invoqué par `uv run` — `uv` résout et installe les dépendances à la volée, sans venv ni `requirements.txt`. Les fichiers texte natifs et images n'ont pas besoin de `uv`.
+| Commande | Effet |
+|---|---|
+| `/mem-archeo` | Archeo complète d'un dépôt Git (topologie + stack + historique) |
+| `/mem-archeo --branch-first {branche}` | Focus sur une branche feature, avec analyse du périmètre fonctionnel |
+| `/mem-archeo-atlassian {url}` | Archeo de pages Confluence + tickets Jira liés |
 
 ### Gestion du vault
 
-| Commande | Intention | Effet |
-|---|---|---|
-| `/mem-list` | Lister projets + domaines | Tableau : slug, kind, scope, dernière session, nb de sessions |
-| `/mem-search {requête}` | Rechercher dans le vault | Recherche plein-texte avec contexte |
-| `/mem-rename {old} {new}` | Renommer un projet ou domaine | Renomme partout (dossier, frontmatters, tags, index) |
-| `/mem-merge {source} {target}` | Fusionner deux projets ou domaines | Retaggue, concatène, supprime la source. `context.md` à fusionner manuellement |
-| `/mem-reclass {chemin}` | Changer scope/zone d'un contenu | Met à jour frontmatter + tags + déplace le fichier |
-| `/mem-promote-domain {slug}` | Promouvoir des items inbox en domaine permanent | Vérifie l'anti-dérive (≥3 items au même fil) |
-| `/mem-digest {projet} [N]` | Synthétiser les N dernières sessions | Arcs majeurs, décisions, dérive. Lecture seule (N=5 par défaut) |
-| `/mem-rollback-archive [projet]` | Annuler la dernière archive | Supprime l'archive et retire ses références. N'auto-restaure pas `context.md` |
-| `/mem-health-scan` | Auditer l'hygiène du vault (v0.7.3) | Détecte stray-zone-md, missing-zone-index, missing-display, dangling-wikilinks, orphan-atoms, missing-archeo-hashes. Rapport read-only dans `99-meta/health/scan-{ts}.md` |
-| `/mem-health-repair` | Appliquer les fixes d'hygiène (v0.7.3) | Dry-run par défaut, `--apply` opt-in. Délègue aux scripts utilitaires existants. Orphan-atoms semi-automatique avec prompt par fichier |
+| Commande | Effet |
+|---|---|
+| `/mem-list` | Lister projets et domaines |
+| `/mem-search {requête}` | Recherche plein-texte |
+| `/mem-digest {projet}` | Synthèse des dernières sessions |
+| `/mem-rename`, `/mem-merge`, `/mem-reclass` | Réorganisation du vault |
+| `/mem-health-scan`, `/mem-health-repair` | Audit + réparation automatique |
+
+Liste complète et options détaillées : voir [`docs/`](./docs/).
 
 ---
 
 ## Langues supportées
 
-Le LLM converse avec l'utilisateur dans la langue choisie à l'installation. Les chaînes structurelles écrites dans le vault (titres de sections d'index, libellés `## Projects` / `## Domains` / `## Archives`, placeholders empty-state) sont résolues via `core/i18n/strings.yaml`.
-
 | Code | Langue |
 |---|---|
-| `en` | English (défaut, fallback) |
+| `en` | English (défaut) |
 | `fr` | Français |
 | `es` | Español |
 | `de` | Deutsch |
 | `ru` | Русский |
 
-**Sélection** : à la première installation, le script propose la langue détectée depuis la locale système (`$PSCulture` / `$LANG`). Modifiable plus tard via `.\deploy.ps1 -Language fr` (Windows) ou `./deploy.sh --language fr` (macOS/Linux), ou en éditant directement le champ `language` dans `~/.{cli}/memory-kit.json`.
-
-**Ajouter une langue** : dupliquer le bloc `en:` de `core/i18n/strings.yaml`, traduire les valeurs en gardant les clés identiques. Le fallback EN est garanti pour toute clé manquante.
+Choisie à l'installation, modifiable via `.\deploy.ps1 -Language fr` ou en éditant `~/.{cli}/memory-kit.json`. Ajout d'une langue : dupliquer le bloc `en:` de `core/i18n/strings.yaml`.
 
 ---
 
-## Performances
+## Sous le capot
 
-Chaque archive complet produit deux fichiers :
+Pour ceux que ça intéresse : SecondBrain combine deux modes complémentaires.
 
-- Une **archive** complète (~70 lignes) — immuable, trace historique.
-- Un **`context.md`** synthétisé (~25 lignes) — écrasé à chaque session.
+- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 36 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (465 tests).
+- **Mode skills fallback** — quand le serveur n'est pas démarré (ou pour les CLI sans MCP), les CLI exécutent les procédures Markdown originales. Comportement identique côté utilisateur.
 
-Au `/mem-recall` suivant, l'agent lit `context.md` en priorité. Le briefing fait donc 25 lignes au lieu de 70, soit approximativement 2× moins de tokens qu'un re-briefing manuel qui reproduirait tout le contexte historique.
+Le pattern **MCP-first / skills-fallback** est transparent : l'agent décide à l'invocation, vous ne voyez aucune différence.
 
----
-
-## Multi-projets
-
-Un seul vault peut contenir N projets et N domaines. Chaque projet a son propre dossier dans `memory/10-episodes/projects/{slug}/` :
-
-```
-/mem-recall site-client-a
-/mem-recall app-mobile
-```
-
-Le kit étant installé au niveau utilisateur, il n'est pas nécessaire de le recopier dans chaque projet.
-
----
-
-## Outils de maintenance
-
-Scripts Python livrés dans `scripts/` pour les opérations de maintenance ponctuelles sur un vault existant. Tous tournent en **dry-run par défaut** ; ajouter `--apply` pour écrire.
-
-| Script | Quand l'utiliser |
-|---|---|
-| `migrate-vault-v0.5.py` | Migrer un vault **v0.4** (project-centric, `archives/` + `projets/` à plat) vers la structure brain-centric **v0.5** (9 zones). Backup automatique avant `--apply`. |
-| `migrate-vault-v05-to-v052.py` | Migrer un vault **v0.5 encore en français** (zones `40-principes`, valeurs `kind: projet`, etc.) vers le schéma **v0.5.2 anglais** (`40-principles`, `kind: project`, …). Préserve la prose française des archives narratives. |
-| `rebuild-vault-index.py` | Régénérer `{vault}/index.md` depuis un scan du filesystem en consommant `core/i18n/strings.yaml`. Utile après une migration ou une réorganisation manuelle. Détecte la langue de l'utilisateur depuis `~/.{cli}/memory-kit.json`. |
-| `enforce-linking.py` | Appliquer rétroactivement l'invariant **zero orphan atom** sur un vault existant : ajoute la ligne d'intro localisée avec liens croisés dans chaque `context.md` ↔ `history.md`. Idempotent. À utiliser une fois après upgrade vers v0.5.4. |
-| `scaffold-vault.py` | Bootstrap d'un nouveau vault v0.5 vide (9 zones + sous-dossiers + `.gitignore` + `index.md` squelette i18n via `rebuild-vault-index.py`). Idempotent. Appelé automatiquement par `deploy.{sh,ps1}` lors d'une première installation (vault sans `10-episodes/`). |
-| `fix-double-encoding.py` | Correction rétroactive du double-encodage UTF-8→CP1252→UTF-8 sur les fichiers du vault (signature `Ã©`, `â€"`, `Â `). À utiliser uniquement si l'agent a écrit via un shell mal configuré. |
-| `inject-archeo-hashes.py` | Correction rétroactive des frontmatters d'atomes archeo-* et de fichiers topologie produits avant le durcissement v0.7.0 : injecte `content_hash` (SHA-256 du body normalisé), `previous_atom`/`previous_topology_hash` vides, `source_doc_hash`, `friction_detected`. Dédup les top-level keys YAML doublées. Normalise les enum localisées (`force: ligne-rouge` → `red-line`). Pour les archives `archeo-git` sans `commit_sha` : tente `git rev-list -n 1 <tag>` via `--repo-root`. Idempotent. |
-| `validate-archeo-frontmatter.py` | Lint des frontmatters d'atomes archeo-* et de fichiers topologie contre le schéma v0.7.0 (no duplicate keys, MUST fields par source, enum values en anglais canonique). Exit 0 si conforme, 1 sinon — utilisable en CI. |
-| `inject-display-frontmatter.py` | Backfill du champ `display` du frontmatter universel sur tous les fichiers du vault (v0.7.2). Conventions par kind : `{slug} — context`, `{slug} — history`, `{slug} — {date} {short}` (archives), `{slug} — topology`, `principle: {title}`, etc. Idempotent, dry-run par défaut. Préserve les `display` custom (utiliser `--force` pour les écraser). Sans valeur ajoutée tant que le plugin Obsidian Front Matter Title n'est pas installé, mais safe à exécuter de toute façon (le champ reste un no-op si non lu). |
-
-Exemple de migration FR→EN d'un vault existant :
-
-```bash
-# 1. Backup obligatoire
-cp -r ~/vault ~/vault.backup-$(date +%Y-%m-%d)
-
-# 2. Dry-run pour inspecter le plan
-python scripts/migrate-vault-v05-to-v052.py --vault ~/vault
-
-# 3. Apply
-python scripts/migrate-vault-v05-to-v052.py --vault ~/vault --apply
-
-# 4. Régénérer l'index avec le bon i18n
-python scripts/rebuild-vault-index.py --vault ~/vault
-
-# 5. Appliquer l'invariant zero-orphan-atom (liens croisés context ↔ history)
-python scripts/enforce-linking.py --vault ~/vault
-```
+Documentation technique complète : [`docs/architecture/`](./docs/architecture/).
 
 ---
 
@@ -433,58 +277,15 @@ python scripts/enforce-linking.py --vault ~/vault
 
 | Phase | État | Portée |
 |---|---|---|
-| **Phase 1** | Terminée | Détection multi-CLI et adapters pour Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI. |
-| **Phase 3** | **Terminée (v0.8.0)** | Serveur MCP `secondbrain-memory-kit` (Python, fastmcp 2.x). 24 outils MCP, 7 cibles auto-configurées (Claude Code/Desktop, Codex CLI/Desktop, Copilot CLI, Mistral Vibe, Gemini CLI). Pattern MCP-first / skills-fallback : les adapters skills restent en place et servent de fallback transparent. |
-| **Phase 3.x** | **Terminée (v0.9.0 + v0.9.1)** | Port natif progressif des 5 outils archeo : `mem_archeo_stack` (Phase 2), `mem_archeo_git` (Phase 3 complète : tags + releases + merges + commits + branch-first), orchestrator `mem_archeo`. `mem_archeo_context` et `mem_archeo_atlassian` restent skill-only **par design** (LLM territory + MCP client-side existant). Doc-readers vendorisés en package interne (`memory_kit_mcp.readers/`). Hygiène 9-10 catégories, manifest `sync.json` anti-drift, enforcement wikilinks à l'écriture, audit longueur SKILL.md description. |
-| **Phase 2** | À venir | Déploiement standardisé pour équipe ; vault partagé sur infrastructure locale ; promotion `CollectiveBrain` (flag `collective` déjà persisté en v0.5). |
+| **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot |
+| **Phase 3** | ✅ Terminée | Serveur MCP natif — 36 outils, 7 cibles auto-configurées |
+| **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |
 
 ---
 
 ## Désinstallation
 
-Retirer les installations correspondant aux CLI déployées. Chemins par défaut ci-dessous ; adapter si `CLAUDE_CONFIG_DIR` (ou équivalent) est défini.
-
-```powershell
-# Serveur MCP secondbrain-memory-kit (v0.8.0)
-pipx uninstall memory-kit-mcp
-Remove-Item "$HOME\.memory-kit\config.json" -Force
-# Retirer manuellement l'entrée mcpServers.secondbrain-memory-kit dans :
-#   $HOME\.claude.json
-#   $HOME\AppData\Roaming\Claude\claude_desktop_config.json
-#   $HOME\.copilot\mcp-config.json
-#   $HOME\.gemini\settings.json
-# Retirer manuellement la section MEMORY-KIT (entre markers # MEMORY-KIT:START/END) dans :
-#   $HOME\.codex\config.toml
-#   $HOME\.vibe\config.toml
-
-# Claude Code (skills fallback)
-Remove-Item "$HOME\.claude\commands\mem-*.md" -Force
-Remove-Item "$HOME\.claude\skills\mem-*.md" -Force
-Remove-Item "$HOME\.claude\memory-kit.json" -Force
-# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.claude\CLAUDE.md
-# Retirer manuellement les patterns allow mem-* dans $HOME\.claude\settings.json
-
-# Gemini CLI (skills fallback)
-Remove-Item "$HOME\.gemini\extensions\memory-kit" -Recurse -Force
-Remove-Item "$HOME\.gemini\memory-kit.json" -Force
-# Retirer l'entrée memory-kit dans $HOME\.gemini\extension-enablement.json
-
-# Codex CLI (skills fallback)
-Remove-Item "$HOME\.codex\prompts\mem-*.md" -Force
-Remove-Item "$HOME\.codex\skills\mem-*" -Recurse -Force
-Remove-Item "$HOME\.codex\memory-kit.json" -Force
-
-# Mistral Vibe (skills fallback)
-Remove-Item "$HOME\.vibe\skills\mem-*" -Recurse -Force
-# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.vibe\AGENTS.md
-
-# GitHub Copilot CLI (skills fallback)
-Remove-Item "$HOME\.copilot\skills\mem-*" -Recurse -Force
-Remove-Item "$HOME\.copilot\memory-kit.json" -Force
-# Retirer manuellement le bloc MEMORY-KIT dans $HOME\.copilot\copilot-instructions.md
-```
-
-Le vault `memory/` reste intact. Les archives, projets et domaines sont préservés.
+Le serveur MCP s'enlève via `pipx uninstall memory-kit-mcp`. Les fichiers déployés dans `~/.{cli}/` se retirent à la main (chemins listés dans `docs/uninstall.md`). **Le vault `memory/` n'est jamais touché** — vos archives, projets et domaines restent intacts.
 
 ---
 
@@ -492,34 +293,30 @@ Le vault `memory/` reste intact. Les archives, projets et domaines sont préserv
 
 ### Licence
 
-Distribué sous licence **GNU Affero General Public License v3.0 ou ultérieure (AGPL-3.0-or-later)** — © 2026 SI Groupe Mondial Tissus.
+Distribué sous **GNU AGPL v3.0 ou ultérieure** — © 2026 SI-GMT.
 
-**Implications pratiques** :
+- **Usage libre** sur poste personnel ou en équipe interne.
+- **Modification autorisée** — adaptez à vos besoins.
+- **Redistribution + dérivés** restent sous AGPL — partage des modifications obligatoire.
+- **Clause SaaS AGPL** : héberger SecondBrain en service tiers oblige à publier les modifications de votre instance.
 
-- Tu peux **librement utiliser** SecondBrain sur ton poste, en équipe, dans ton organisation, sans contrepartie.
-- Tu peux **modifier le code** et l'adapter à tes besoins.
-- Toute **redistribution** ou **dérivé** (fork, adaptation, intégration) doit rester sous AGPL-3.0-or-later — le code modifié doit être publié.
-- **Clause SaaS spécifique à l'AGPL** : si tu héberges SecondBrain en service tiers accessible par d'autres utilisateurs (par exemple un SaaS commercial qui packagerait le kit), tu dois publier les modifications de ton instance sous AGPL.
+Choix volontaire : protéger l'innovation contre l'appropriation commerciale fermée, sans entraver les usages individuels, internes ou open source.
 
-Ce choix est volontaire : il protège l'innovation portée par SI-GMT (architecture multi-CLI, serveur MCP, port archeo, disciplines de cohérence formalisées, etc.) contre l'appropriation commerciale fermée, sans entraver les usages individuels, internes ou open source. Les **principes fondateurs** crédités à Raphaël Fages (cf. ci-dessous) ne sont pas brevetables — l'AGPL ne porte que sur le code et les concepts d'implémentation propres à cette distribution.
-
-Les versions antérieures publiées sous licence MIT (v0.1.0 → v0.9.1) **restent légalement disponibles sous MIT** pour quiconque les a téléchargées avant le passage en AGPL — la licence v0.9.2+ ne s'applique qu'à la version actuelle et aux suivantes.
+Les versions antérieures publiées sous MIT (v0.1.0 → v0.9.1) restent légalement disponibles sous MIT pour quiconque les avait téléchargées.
 
 ### Concept original — Raphaël Fages / Fractality Studio
 
-SecondBrain est l'adaptation d'un concept proposé à l'origine par **Raphaël Fages** au sein de son agence [Fractality Studio](https://fractality.studio/) : structurer la mémoire d'un agent LLM comme un *second cerveau* personnel, avec un cycle de prise de notes et de relecture analogue à un rythme biologique veille-sommeil.
+SecondBrain est l'adaptation d'un concept proposé par **Raphaël Fages** au sein de [Fractality Studio](https://fractality.studio/) : structurer la mémoire d'un agent LLM comme un *second cerveau* personnel, avec un cycle de prise de notes et de relecture analogue à un rythme veille-sommeil.
 
-Les principes fondateurs suivants viennent directement de ce travail initial :
+Principes fondateurs hérités de ce travail initial :
 
 - Une couche de fichiers Markdown lus et écrits par l'agent suffit à briser l'amnésie inter-sessions, sans infrastructure serveur.
 - Le triptyque **archive immuable / contexte mutable / historique chronologique** permet à la fois la traçabilité et la reprise rapide.
-- Le déclenchement par langage naturel — et pas seulement par commande explicite — rend le cycle ergonomique pour l'utilisateur final.
+- Le déclenchement par langage naturel rend le cycle ergonomique pour l'utilisateur final.
 
-L'implémentation présente dans ce dépôt adapte et étend ces principes au contexte du SI du Groupe Mondial Tissus : support multi-CLI, vault Obsidian, procédures factorisées en une source unique de vérité, déploiement PowerShell + bash, refonte brain-centric (v0.5), schéma anglais + i18n conversationnel (v0.5.2), préparation aux Phases 2 (déploiement équipe) et 3 (serveur MCP).
+L'implémentation présente dans ce dépôt étend ces principes avec : support multi-CLI, vault Obsidian, procédures factorisées en source unique de vérité, déploiement PowerShell + bash, refonte brain-centric (v0.5), schéma anglais + i18n conversationnel (v0.5.2), serveur MCP natif (v0.8.0+).
 
 ### Double nommage
 
-Le projet conserve volontairement un double nom pour honorer cette origine :
-
-- **SecondBrain** — nom de la distribution SI-GMT, du dépôt GitHub et de la documentation utilisateur.
-- **memory-kit** — nom technique conservé pour les artefacts internes : fichier de configuration (`memory-kit.json`), extension Gemini CLI, futur serveur MCP.
+- **SecondBrain** — nom de la distribution, du dépôt GitHub et de la documentation utilisateur.
+- **memory-kit** — nom technique des artefacts internes (`memory-kit.json`, extension Gemini, serveur MCP `secondbrain-memory-kit`).
