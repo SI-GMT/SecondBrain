@@ -1,6 +1,6 @@
 # SecondBrain
 
-> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.10.0, **production stabilisée sous AGPL-3.0-or-later**, 32 outils MCP) + skills fallback transparente.
+> Mémoire persistante pour agents CLI et apps desktop — Claude Code, Gemini CLI, Codex, Mistral Vibe, GitHub Copilot CLI, Claude Desktop, Codex Desktop. Serveur MCP `secondbrain-memory-kit` (v0.11.0, **production stabilisée sous AGPL-3.0-or-later**, 36 outils MCP) + skills fallback transparente.
 
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
@@ -13,6 +13,8 @@
 SecondBrain s'appuie sur un concept développé à l'origine par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir la section [Licence et crédits](#licence-et-crédits) pour les détails sur le travail original et l'adaptation menée au sein du SI du Groupe Mondial Tissus.
 
 ## Quoi de neuf
+
+**v0.11.0 — branch-first archeo Rolls Royce + Phase 1 LLM round-trip**. Réponse à la cascade de drifts Gemini sur le repo IRIS USER (branche `ecosav` réutilisée 30 fois via reset workflow + composants EcoSAV répartis sur 5 dossiers). Six chantiers coordonnés : (1) **Phase 0 cadrage** — nouvel outil `mem_archeo_plan` (35e tool) qui retourne un plan structuré (slug + scope + granularité + filters) AVANT toute écriture, gating via `acknowledged_via_plan=True`. Plus de Gemini qui crée 73 archives sous le mauvais slug. (2) **Stratégie `merged-via-perimeter`** — walker multi-signal (file overlap réciproque + author match + subject match, threshold 0.4) qui capture **tous** les cycles de merge d'une branche réutilisée. Bootstrap via subject (`Merge branch 'X'`), itérative widening sur perimeter. Détecte le pattern `dev-reset workflow` que la stratégie single-tip ratait. (3) **next_call literal** — `ArcheoPlan.next_call: dict` carrying l'invocation exacte de `mem_archeo` orchestrateur (pas `mem_archeo_git` direct). Bloque la translation drift où Gemini droppait `branch_first` en interprétant la granularité. (4) **Body extractor mécanique** — nouveau module `archeo/file_summary.py` qui lit chaque fichier du cycle via `git show` et extrait classes/properties/methods/docstrings (.cls IRIS, .py, .js/.ts, .sql, .md). Pré-remplit `Analyse technique` au lieu de `_(LLM TODO ...)_` placeholders bruts. (5) **Phase 1 LLM round-trip** — `mem_archeo_context` (brief, 36e tool) + `mem_archeo_project_topology` (finalize) forcent le LLM à **lire** chaque fichier du périmètre via son outil de lecture, puis re-soumettre une synthèse strictement validée Pydantic (chaque composant DOIT avoir role + ≥1 fichier). Token `acknowledged_via_read=True` bloque la finalize sans la lecture. (6) **Phase 5 zone-index patches** — projet auto-listé dans root `index.md` Projets ; topology atom auto-listé dans `20-knowledge/index.md`. Tests : 465 passed (78 nouveaux, +12 catégories testées). Procédures `mem-archeo-git.md` / `mem-archeo.md` / `mem-archeo-context.md` mises à jour avec les case studies 2026-05-08/09 IRIS USER pour ancrer la doctrine.
 
 **v0.10.0 — durcissement frontmatter cross-LLM**. Réponse aux atomes silencieusement malformés produits par les adapters LLM moins rigoureux que le client de référence (frontmatter universel omis, `context_origin` absent, `derived_atoms` non rétroliés — autant de YAML qui parse fine mais que `mem_recall` ne reconnaît pas). Trois renforts coordonnés : (1) nouveau bloc doctrinal `core/procedures/_frontmatter-archeo.md` — checklist exhaustive 31 fields × 5 sources + pre-write LLM walkthrough, inclus par les 3 procédures `mem-archeo-*` ; (2) `mem-health-scan` étendu de 11 à **15 catégories** (12 vault + 3 kit-only) — détecte `missing-universal-frontmatter`, `missing-archeo-context-origin`, `archeo-derived-orphan`, `topology-archives-out-of-sync` ; (3) nouvel outil MCP `mem_archeo_context_finalize` — **32 tools au total** : le LLM hands off ses spans pré-classifiés, Python force le frontmatter canonique, idempotence automatique. Bonus : bug fix `mem_archeo_stack` (manquait `collective`/`modality`/`type` canonique).
 
@@ -102,12 +104,12 @@ Le serveur MCP `secondbrain-memory-kit` (Python, dans `mcp-server/`) expose les 
 - **Framework** : `fastmcp` 2.x (standalone, pas le SDK officiel intégré) — choisi pour le `Client` in-memory qui rend les tests pytest triviaux sans subprocess stdio.
 - **Validation** : Pydantic v2 (args + retours typés), sérialisés automatiquement en `structuredContent` MCP.
 - **Build** : hatchling + uv (Python ≥3.12), packaging via `pipx install ./mcp-server`.
-- **Tests** : pytest + pytest-asyncio + pytest-cov, **294 tests** (v0.10.0), fixture `vault_tmp` qui copie un mini-vault de référence dans `tmp_path` à chaque test.
+- **Tests** : pytest + pytest-asyncio + pytest-cov, **465 tests** (v0.11.0), fixture `vault_tmp` qui copie un mini-vault de référence dans `tmp_path` à chaque test.
 - **Transport** : stdio uniquement (lancé par le client CLI à chaque session).
 
 `deploy.ps1` / `deploy.sh` détecte `pipx`, installe ou met à jour `memory-kit-mcp`, écrit `~/.memory-kit/config.json` (vault, scope, langue, kit_repo), et inject la déclaration MCP dans les configs des cibles compatibles. En cas de WinError 32 (binaire verrouillé par une CLI active), l'upgrade est différé proprement et la version précédente reste fonctionnelle.
 
-### Inventaire des 32 outils
+### Inventaire des 36 outils
 
 | Catégorie | Outils MCP (snake_case) | État |
 |---|---|---|
@@ -254,10 +256,10 @@ SecondBrain/
 │   ├── src/memory_kit_mcp/
 │   │   ├── server.py           FastMCP instance + main() entry stdio
 │   │   ├── config.py           ~/.memory-kit/config.json loader
-│   │   ├── tools/              32 outils mem_* (1 fichier par tool)
+│   │   ├── tools/              36 outils mem_* (1 fichier par tool)
 │   │   └── vault/              Primitives partagées (paths, frontmatter,
 │   │                           atomic_io, scanner)
-│   └── tests/                  pytest, 294 tests (v0.10.0)
+│   └── tests/                  pytest, 465 tests (v0.11.0)
 ├── memory/                     Vault Obsidian local (non versionné — voir .gitignore)
 │   ├── index.md                Catalogue maître à la racine
 │   ├── 00-inbox/               Captation brute non qualifiée

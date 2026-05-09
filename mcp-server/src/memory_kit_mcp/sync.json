@@ -7,7 +7,7 @@
     },
     "mem_archive": {
       "procedure": "mem-archive.md",
-      "last_synced_hash": "e292ec6b22e7d8caebb7e354344ffd0ec6e6a793877b5e1ef0936421d831c351"
+      "last_synced_hash": "171e23bfc20f0e1ec07a269e8db5f70e52725cae32bdf3e492538b0f3a27abca"
     },
     "mem_list": {
       "procedure": "mem-list.md",
@@ -89,6 +89,10 @@
       "procedure": "mem-archeo-index-files.md",
       "last_synced_hash": "94961a7275492843815db98d0ba6d8a8468c3d8c00af76ccfc92964e05300dad"
     },
+    "mem_archeo_plan": {
+      "procedure": "mem-archeo-plan.md",
+      "last_synced_hash": "7c06fd89c942e874f233990f42d86a1ff67a416fd05e5f2fd31f7fa8444b7f0a"
+    },
     "mem_note": {
       "procedure": "mem-note.md",
       "last_synced_hash": "ae347643c125cab0b0d9a0c29d37fb28472422c0f7071ca7f53fe76a82ecc242"
@@ -115,11 +119,11 @@
     },
     "mem_archeo": {
       "procedure": "mem-archeo.md",
-      "last_synced_hash": "b317e99ec740586cbc394f94a5df5b9badf34be12ee93aa99055ae9349f9e5f0"
+      "last_synced_hash": "097bc3c08f72be4498484791f2dc19843795c155a95334dba4809aa874d2fe64"
     },
     "mem_archeo_context": {
       "procedure": "mem-archeo-context.md",
-      "last_synced_hash": "62e0c17eac0ded0f3b1abc1d7811ad464c7bcdb3f72c876d0884cb4f123d334f"
+      "last_synced_hash": "aad2aa565b0172aafb1e4cc8d791bc1abddf4c85b51b2c6444fab5913ff59af7"
     },
     "mem_archeo_stack": {
       "procedure": "mem-archeo-stack.md",
@@ -127,7 +131,7 @@
     },
     "mem_archeo_git": {
       "procedure": "mem-archeo-git.md",
-      "last_synced_hash": "6b8171c873495eb350014749b0e76d1f5e44d0cbbd1a0beba16a74c7895f60ad"
+      "last_synced_hash": "d4f2f7f515817f574da3147f8ab22d163885fc1387c820b564d9904842dd0c50"
     },
     "mem_archeo_atlassian": {
       "procedure": "mem-archeo-atlassian.md",

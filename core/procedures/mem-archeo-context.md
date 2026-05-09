@@ -1,4 +1,20 @@
-# Procedure: Archeo Context (Phase 1, v0.7.0)
+# Procedure: Archeo Context (Phase 1)
+
+## Two complementary workflows
+
+**A. Project-topology synthesis (v0.10.x post-2026-05-09 IRIS USER)** — MCP-side LLM round-trip that forces the LLM caller to actually **read** every file in the project's perimeter (collected from Phase 3 archive bodies) and synthesize a hierarchical project-topology atom + populate `context.md` with extracted components / domain concepts / patterns / decisions / risks.
+
+  - Tools : `mem_archeo_context` (brief, returns paginated `files_to_read` + schema + instructions) → LLM reads all files via its file-reading tool (`Read` / `read_file` / equivalent) → `mem_archeo_project_topology(synthesis={...}, acknowledged_via_read=True)` writes the atoms.
+  - Token gate `acknowledged_via_read=True` blocks finalize unless the LLM explicitly claims the read happened. Mitigates the case study where Gemini wrote 30 mechanical archives without ever opening a single project file (`context.md` left skeleton-empty).
+  - Auto-prepared by `mem_archeo` after Phase 3 succeeds : the orchestrator returns `needs_context_synthesis=True` + the brief result, so the next step is obvious to the LLM caller.
+
+**B. Span-category extraction (v0.7.0, span doctrine)** — original Phase 1 workflow that scans current HEAD docs (`*.md`, `README`, `ADR`, etc.), classifies spans into seven categories (workflow / sync / multi-tenant / security / adr / goal / other), and writes one atom per span. Skill-only — use `/mem-archeo-context` interactively or call `mem_archeo_context_finalize` MCP tool with structured spans.
+
+The two are **not redundant** : workflow A reconstructs the project's structural understanding from code, workflow B extracts declarative principles/goals/ADRs from documentation. Both feed the same vault.
+
+The remainder of this procedure documents workflow B (the original span doctrine). For workflow A, see the tool docstrings of `mem_archeo_context` and `mem_archeo_project_topology`.
+
+---
 
 Goal: extract from a repo's **organizational, decisional, and functional documents** the principles, goals, architectural decisions and methodological conventions that frame the project. Produces atoms with `source: archeo-context`, classified by category and routed to their proper zone.
 

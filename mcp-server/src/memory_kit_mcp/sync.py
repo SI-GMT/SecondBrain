@@ -74,6 +74,8 @@ TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
     ("mem_check_update", "mem-check-update.md"),
     # Archeo v2 — Phase 0 preview (v0.10.x)
     ("mem_archeo_index_files", "mem-archeo-index-files.md"),
+    # Archeo Phase 0 interactive cadrage (v0.10.x post-Gemini-drift case study)
+    ("mem_archeo_plan", "mem-archeo-plan.md"),
     # Ingestion
     ("mem_note", "mem-note.md"),
     ("mem_principle", "mem-principle.md"),

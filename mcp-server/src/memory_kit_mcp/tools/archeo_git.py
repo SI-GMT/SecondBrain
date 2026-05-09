@@ -55,6 +55,15 @@ from typing import Any
 from fastmcp import FastMCP
 from pydantic import Field
 
+from memory_kit_mcp.archeo.file_summary import (
+    render_technical_section,
+    summarize_files,
+)
+from memory_kit_mcp.archeo.topology import (
+    BranchMerge,
+    find_branch_merges_via_perimeter,
+    find_merge_commit_for_branch,
+)
 from memory_kit_mcp.config import get_config
 from memory_kit_mcp.tools._models import ArcheoGitResult, MilestoneInfo
 from memory_kit_mcp.vault import frontmatter, paths
@@ -171,6 +180,9 @@ def execute_git(
     files_modified: list[str] = []
     created = revised = skipped = 0
 
+    archives_created_paths: list[str] = []
+    archives_revised_paths: list[str] = []
+
     for info in milestones:
         outcome, archive_path = _write_archive(
             vault, slug, repo, info, existing_milestones,
@@ -182,11 +194,40 @@ def execute_git(
         if outcome == "created":
             created += 1
             files_created.append(archive_path)
+            archives_created_paths.append(archive_path)
         elif outcome == "revised":
             revised += 1
             files_modified.append(archive_path)
+            archives_revised_paths.append(archive_path)
         else:
             skipped += 1
+
+    # Phase 5 enforcement (v0.10.x post-Gemini-drift case study) : auto-init
+    # the project skeleton if missing, prepend new archives to history.md,
+    # update context.md phase + last-session, register in root index.md.
+    # Doctrine: every archeo write lands inside a project that carries
+    # context.md + history.md.
+    if archives_created_paths or archives_revised_paths:
+        try:
+            extra_created, extra_modified = _enforce_phase5(
+                vault=vault,
+                slug=slug,
+                repo=repo,
+                archives_created=archives_created_paths,
+                archives_revised=archives_revised_paths,
+                branch_ctx=branch_ctx,
+            )
+            files_created.extend(extra_created)
+            files_modified.extend(extra_modified)
+        except (OSError, RuntimeError, ValueError) as exc:
+            # Surface as warning rather than crash — the archives have already
+            # been written successfully. The user can re-run mem_health_repair
+            # to recover the skeleton.
+            warnings.append(
+                f"Phase 5 enforcement failed: {type(exc).__name__}: {exc}. "
+                "Archives were written but context.md / history.md / index.md "
+                "may be out of sync. Run mem_health_repair to reconcile."
+            )
 
     return ArcheoGitResult(
         project=slug,
@@ -400,7 +441,7 @@ def _list_semver_tags(repo: Path, since: str | None, until: str | None) -> list[
         "refs/tags",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError):
         return []
 
@@ -434,6 +475,7 @@ def _rev_parse_commit(repo: Path, ref: str) -> str:
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", f"{ref}^{{commit}}"],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return ""
@@ -523,6 +565,7 @@ def _commit_metadata_batch(
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=True,
             encoding="utf-8", errors="replace",
+        stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return out
@@ -597,7 +640,7 @@ def _commit_metadata(
         sha,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
         parts = result.stdout.strip().split("|", 3)
     except (FileNotFoundError, subprocess.CalledProcessError):
         parts = ["", "", fallback_iso, ""]
@@ -610,6 +653,7 @@ def _commit_metadata(
         stat = subprocess.run(
             ["git", "-C", str(repo), "show", "--shortstat", "--format=", sha],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
         last_line = ""
         for line in stat.stdout.splitlines():
@@ -683,6 +727,7 @@ def _read_at_commit(repo: Path, sha: str, file: str) -> str | None:
         result = subprocess.run(
             ["git", "-C", str(repo), "show", f"{sha}:{file}"],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
         return result.stdout
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -879,6 +924,7 @@ def _gh_available() -> bool:
         subprocess.run(
             ["gh", "auth", "status"],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
         return True
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -908,6 +954,7 @@ def _list_github_releases(
                 "--json", "tagName,name,publishedAt,url,isPrerelease,isDraft,body",
             ],
             capture_output=True, text=True, check=True, cwd=str(repo),
+        stdin=subprocess.DEVNULL,
         )
     except subprocess.CalledProcessError as exc:
         warnings.append(f"gh release list failed: {exc.stderr.strip() or exc}")
@@ -1000,6 +1047,7 @@ def _list_github_merges(
                 "--json", "number,title,mergeCommit,mergedAt,baseRefName,headRefName,url,author",
             ],
             capture_output=True, text=True, check=True, cwd=str(repo),
+        stdin=subprocess.DEVNULL,
         )
     except subprocess.CalledProcessError as exc:
         warnings.append(f"gh pr list failed: {exc.stderr.strip() or exc}")
@@ -1127,7 +1175,7 @@ def _list_commit_windows(
         if until:
             cmd.append(f"--until={until} 23:59:59")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         warnings.append(f"git log failed for commits level: {exc}")
         return []
@@ -1223,7 +1271,7 @@ def _co_authors_for_commits(repo: Path, shas: list[str]) -> dict[str, list[str]]
         "--no-walk",
     ] + shas
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError):
         return out
     email_re = re.compile(r"<([^>]+)>")
@@ -1251,16 +1299,30 @@ class _BranchContext:
     base: str
     base_sha: str  # divergence point — semantics depend on `mode` below
     # Mode values:
-    #   'live'              — branch not fully merged; merge_base..branch is the range
-    #   'since-sha'         — explicit anchor via since_sha
-    #   'since-date'        — explicit anchor via since_date
-    #   'by-files'          — scope = files introduced by the branch (--diff-filter=A)
-    #   'auto-scope-by-name' — branch fully merged, scope derived from branch name
-    #                         heuristic matching repo directories (v0.10.x post-Codex
-    #                         case study — replaced the retired 'merged-fallback' mode)
+    #   'live'                    — branch not fully merged; merge_base..branch is the range
+    #   'merged-via-merge-commit' — branch fully merged AND the absorbing merge commit M
+    #                               is detectable on base first-parent. base_sha = M^1
+    #                               (merge_base at merge time), head_ref = M^2 (= branch tip).
+    #                               Range = base_sha..head_ref = commits unique to the absorbed
+    #                               branch. Deterministic; replaces by-name as primary
+    #                               strategy whenever possible.
+    #   'since-sha'               — explicit anchor via since_sha
+    #   'since-date'              — explicit anchor via since_date
+    #   'by-files'                — scope = files introduced by the branch (--diff-filter=A)
+    #   'auto-scope-by-name'      — fallback when the merge commit was lost to squash/rebase;
+    #                               scope derived from branch name heuristic matching repo dirs
     mode: str = "live"
     files: list[str] = field(default_factory=list)  # populated when mode='by-files' or 'auto-scope-by-name'
     scope_glob: str | None = None  # populated when mode='auto-scope-by-name'
+    # When mode='merged-via-merge-commit', head_ref = M (the merge commit
+    # itself). Range = base_sha..head_ref. Other modes use branch as the
+    # range tip and leave this empty.
+    head_ref: str = ""
+    # When mode='merged-via-perimeter', the multi-signal walker captured
+    # ≥1 merge cycles (handles dev-reset workflows). Phase 3 emits one
+    # archive per captured merge instead of treating the branch as a
+    # contiguous range.
+    captured_merges: list[BranchMerge] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)  # human-readable explanation
 
 
@@ -1276,6 +1338,7 @@ def _first_parent_ancestors(repo: Path, ref: str) -> list[str]:
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-list", "--first-parent", ref],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return []
@@ -1326,6 +1389,7 @@ def _branch_specific_files(repo: Path, branch: str, base_sha: str) -> list[str]:
                 f"{base_sha}..{branch}",
             ],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return []
@@ -1419,6 +1483,7 @@ def _suggest_scope_from_branch_name(
                 "git", "-C", str(repo), "ls-tree", "-r", "-d", "--name-only", "HEAD",
             ],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return []
@@ -1506,6 +1571,7 @@ def _resolve_branch_context(
             mb = subprocess.run(
                 ["git", "-C", str(repo), "merge-base", base, branch],
                 capture_output=True, text=True,
+            stdin=subprocess.DEVNULL,
             )
             if mb.returncode == 0:
                 fallback_base = mb.stdout.strip()
@@ -1524,6 +1590,7 @@ def _resolve_branch_context(
         result = subprocess.run(
             ["git", "-C", str(repo), "merge-base", base, branch],
             capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
@@ -1546,8 +1613,51 @@ def _resolve_branch_context(
             )
         return ctx
 
-    # Fully merged branch: no first-parent fallback. Try by-files first
-    # (if requested), then auto-scope-by-name, else raise.
+    # Fully merged branch: try perimeter walker FIRST (handles dev-reset
+    # cycles via multi-signal scoring), then single-tip merge-commit,
+    # then by-files (if requested), then auto-scope-by-name, else raise.
+    captured = find_branch_merges_via_perimeter(repo, branch, base)
+    if captured:
+        notes = [
+            f"branch fully merged into {base}; perimeter walker captured "
+            f"{len(captured)} merge cycle(s) (multi-signal scoring: file "
+            "overlap with reciprocity + author match + subject match). "
+            "Handles dev-reset workflows (branch reset to origin/base "
+            "between cycles). Per-merge audit:",
+        ]
+        for bm in captured:
+            notes.append(
+                f"  - M={bm.sha[:12]} score={bm.score:.2f} "
+                f"file={bm.breakdown['file_score']:.2f} "
+                f"author={bm.breakdown['author_score']:.2f} "
+                f"subject={bm.breakdown['subject_score']:.2f} "
+                f"({len(bm.files)} file(s)) — {bm.subject[:80]}"
+            )
+        return _BranchContext(
+            branch=branch, base=base,
+            base_sha=captured[0].parent1,  # first cycle anchor
+            mode="merged-via-perimeter",
+            captured_merges=captured,
+            notes=notes,
+        )
+
+    merge_info = find_merge_commit_for_branch(repo, branch, base)
+    if merge_info is not None:
+        m_sha, parent1, parent2 = merge_info
+        return _BranchContext(
+            branch=branch, base=base, base_sha=parent1,
+            mode="merged-via-merge-commit",
+            head_ref=m_sha,
+            notes=[
+                f"branch fully merged into {base}; absorbing merge commit "
+                f"detected on base first-parent: M={m_sha[:12]}, "
+                f"M^1={parent1[:12]} (merge_base at merge time), "
+                f"M^2={parent2[:12]} (= branch tip). Range = "
+                f"{parent1[:12]}..{m_sha[:12]} = commits unique to the "
+                "absorbed branch (deterministic, no name heuristic).",
+            ],
+        )
+
     if by_files:
         ctx_files = _branch_specific_files(repo, branch, merge_base)
         if ctx_files:
@@ -1585,8 +1695,10 @@ def _resolve_branch_context(
         )
 
     raise BranchScopeUnresolvedError(
-        f"branch '{branch}' is fully merged into '{base}' and the name "
-        f"does not match any directory in the repo. Provide one of:\n"
+        f"branch '{branch}' is fully merged into '{base}' AND no absorbing "
+        f"merge commit was found on '{base}' first-parent (squash or rebase + "
+        f"ff erased the merge) AND the name does not match any directory in "
+        f"the repo. Provide one of:\n"
         f"  - scope_glob='<glob>'                 (e.g. 'src/Module/**')\n"
         f"  - since_sha=<sha>                     (commit before the "
         f"branch's specialisation)\n"
@@ -1629,6 +1741,21 @@ def _discover_branch_first(
     for note in branch_ctx.notes:
         warnings.append(f"branch-first: {note}")
 
+    # Perimeter-walker mode: emit one milestone per captured merge cycle
+    # directly. Bypasses the rev_range path because the captured merges
+    # are NOT contiguous in master history (they're separated by reset
+    # cycles). Each archive corresponds to one merge cycle of the branch.
+    if branch_ctx.mode == "merged-via-perimeter":
+        if not branch_ctx.captured_merges:
+            warnings.append(
+                "merged-via-perimeter mode: captured_merges empty (should "
+                "not happen; mode requires ≥1 captured merge). Falling back."
+            )
+            return []
+        return _list_perimeter_merge_milestones(
+            repo, branch_ctx, warnings=warnings,
+        )
+
     # By-files / auto-scope-by-name: query commits that TOUCHED any of the
     # branch-specific paths (files for by-files, a directory for
     # auto-scope-by-name), repo-wide — not constrained to a rev-range.
@@ -1651,6 +1778,10 @@ def _discover_branch_first(
     if branch_ctx.mode == "since-date":
         # No base_sha — use git log directly with --since on the branch tip.
         rev_range = branch_ctx.branch
+    elif branch_ctx.mode == "merged-via-merge-commit":
+        # head_ref = M (the absorbing merge commit), base_sha = M^1.
+        # Range = M^1..M = commits unique to the absorbed branch + M itself.
+        rev_range = f"{branch_ctx.base_sha}..{branch_ctx.head_ref}"
     else:
         rev_range = f"{branch_ctx.base_sha}..{branch_ctx.branch}"
 
@@ -1718,7 +1849,7 @@ def _list_commits_for_files(
     cmd.append("--")
     cmd.extend(files)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         warnings.append(f"git log on branch-specific files failed: {exc}")
         return []
@@ -1788,6 +1919,38 @@ def _list_commits_for_files(
     return out
 
 
+def _list_perimeter_merge_milestones(
+    repo: Path,
+    branch_ctx: _BranchContext,
+    *,
+    warnings: list[str],
+) -> list[MilestoneInfo]:
+    """Emit one MilestoneInfo per captured BranchMerge.
+
+    Used when ``branch_ctx.mode == 'merged-via-perimeter'``. Each milestone
+    represents one full merge cycle of the branch (handles dev-reset
+    workflows where the branch was reset to ``origin/base`` between cycles).
+    """
+    out: list[MilestoneInfo] = []
+    shas = [bm.sha for bm in branch_ctx.captured_merges]
+    meta_cache = _commit_metadata_batch(repo, shas)
+    for bm in branch_ctx.captured_merges:
+        info = _commit_metadata(repo, bm.sha, fallback_iso="", cache=meta_cache)
+        info.milestone_kind = "merge"
+        info.pr_base = branch_ctx.base
+        info.pr_head = branch_ctx.branch
+        info.subject = info.subject or bm.subject or f"merge into {branch_ctx.base}"
+        # Perimeter audit fields — surfaced in body + frontmatter so the
+        # user can audit the walker's decision per cycle.
+        info.perimeter_score = bm.score
+        info.perimeter_breakdown = dict(bm.breakdown)
+        info.perimeter_files = sorted(bm.files)
+        info.perimeter_range = bm.range
+        out.append(info)
+    out.sort(key=lambda m: m.date)
+    return out
+
+
 def _list_branch_merges(
     repo: Path,
     branch_ctx: _BranchContext,
@@ -1797,13 +1960,16 @@ def _list_branch_merges(
     warnings: list[str],
 ) -> list[MilestoneInfo]:
     """Enumerate merge commits unique to the branch since divergence."""
-    rev_range = f"{branch_ctx.base_sha}..{branch_ctx.branch}"
+    if branch_ctx.mode == "merged-via-merge-commit" and branch_ctx.head_ref:
+        rev_range = f"{branch_ctx.base_sha}..{branch_ctx.head_ref}"
+    else:
+        rev_range = f"{branch_ctx.base_sha}..{branch_ctx.branch}"
     cmd = [
         "git", "-C", str(repo), "log", "--merges", rev_range,
         "--format=%H|%aI",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         warnings.append(f"git log --merges failed: {exc}")
         return []
@@ -1841,7 +2007,15 @@ def _list_branch_merges(
 
 
 def _resolve_project_slug(vault: Path, repo: Path, explicit: str | None) -> str:
-    """Same deterministic resolution as archeo_stack."""
+    """Resolve the target project slug.
+
+    With an explicit slug, trust the caller — Phase 5 will auto-init the
+    project skeleton if it doesn't exist yet. Without an explicit slug,
+    refuse to guess past basename(repo) (still requires the project to
+    exist already in the vault — auto-init for an inferred slug would risk
+    creating typo'd / mis-classified projects without user oversight,
+    exactly the 2026-05-08 Gemini drift).
+    """
     if explicit:
         return explicit
     candidate = repo.name
@@ -1850,7 +2024,8 @@ def _resolve_project_slug(vault: Path, repo: Path, explicit: str | None) -> str:
     raise ValueError(
         f"Cannot auto-resolve target project slug for repo {repo.name!r}. "
         f"No project named {candidate!r} exists in {paths.ZONE_EPISODES}/projects/. "
-        "Pass `project=<slug>` explicitly, or create the project via mem_archive first."
+        "Pass `project=<slug>` explicitly (Phase 5 will auto-init the skeleton), "
+        "or create the project via mem_init_project first."
     )
 
 
@@ -1927,17 +2102,89 @@ def _build_body(
     *,
     ai_cache: dict[str, dict[str, str | None]] | None = None,
 ) -> str:
-    """Build the archive body. The Main / AI files context / Friction sections
-    are always present (per spec invariant) — only the Main section's headline
-    metadata varies per milestone kind."""
+    """Build the archive body. Five mandatory sections, always present per the
+    v0.10.x doctrine (extends the v0.7.0 invariant):
+
+    1. Headline metadata (date, author, commit SHA, diff stats — kind-specific).
+    2. **Analyse fonctionnelle** — what changed for the user/business. Empty
+       skeleton with explicit fallback ; the LLM is doctrinally expected to
+       enrich this section post-write when material warrants narrative.
+    3. **Analyse technique** — how the change is implemented (layer touched,
+       pattern, side-effects, risks). Same skeleton+fallback contract.
+    4. **AI files context** — verbatim contents of the project's AI files
+       (CLAUDE.md / AGENTS.md / GEMINI.md / MISTRAL.md / README.md) at the
+       time of the representative commit. Pre-computed by the AI cache.
+    5. **Friction & Resolution** — surfaced when ≥3 successive commits target
+       the same theme (heuristic deferred ; explicit fallback line in body).
+
+    The 2026-05-08 Gemini case study showed mechanical archives ("subject Git
+    + diff stats" only) lose all narrative value. The 2 new sections force
+    the LLM to either fill them with judgment OR explicitly mark them empty
+    via the fallback marker — no silent omission possible.
+    """
     ai_section = (
         _build_ai_context_section(repo, info.commit_sha, ai_cache=ai_cache)
         if info.commit_sha
         else "No commit SHA resolved for this milestone — AI files context unavailable.\n"
     )
     head = _milestone_headline(info)
+
+    # Perimeter-mode milestones carry a list of files touched in the cycle
+    # range. Pre-fill Analyse technique with mechanical extraction (class
+    # names, method signatures, top docstrings, schema lines) so the
+    # archive carries actual file content, not placeholder markers. The
+    # 2026-05-09 IRIS USER case study showed that "subject + diff stats"
+    # alone strips all narrative value from the archive.
+    perimeter_audit = ""
+    if info.perimeter_files and info.commit_sha:
+        summaries, truncated = summarize_files(
+            repo, info.commit_sha, info.perimeter_files
+        )
+        technical_block = render_technical_section(summaries, truncated)
+        if info.perimeter_score:
+            bd = info.perimeter_breakdown or {}
+            perimeter_audit = (
+                f"\n\n## Perimeter walker audit\n\n"
+                f"- **Score** : `{info.perimeter_score:.2f}` "
+                f"(threshold 0.4)\n"
+                f"- **Breakdown** : "
+                f"file=`{bd.get('file_score', 0):.2f}` · "
+                f"author=`{bd.get('author_score', 0):.2f}` · "
+                f"subject=`{bd.get('subject_score', 0):.2f}`\n"
+                f"- **Range** : `{info.perimeter_range}`\n"
+                f"- **Files in cycle** : {len(info.perimeter_files)}"
+            )
+        functional_block = (
+            f"_Cycle covers {len(info.perimeter_files)} file(s) "
+            f"({info.commit_count or 'n'} commit(s) in range "
+            f"`{info.perimeter_range or info.pr_head + '→' + info.pr_base}`)._\n\n"
+            f"_(LLM verifier — synthesize the user-facing / business intent "
+            f"of this cycle from the file list below + commit subjects. "
+            f"What feature was delivered? What bug was fixed? Replace this "
+            f"paragraph with a one-line narrative.)_"
+        )
+    else:
+        technical_block = (
+            "_(LLM TODO — describe how the change is implemented : layer touched, "
+            "pattern introduced, dependencies added/removed, side-effects, risks, "
+            "perf implications. Surface anything an experienced engineer reading "
+            "the diff would want to know in 30 seconds. If the diff is trivial "
+            "(typo, format), replace with a one-liner saying so.)_"
+        )
+        functional_block = (
+            "_(LLM TODO — surface the user-facing / business intent of this milestone : "
+            "what changed for the user, what feature was delivered, what bug was fixed, "
+            "what behaviour was altered. Strip technical detail — that lives in the "
+            "next section. If genuinely no functional impact (refactor, tooling, doc), "
+            "replace this paragraph with a one-liner saying so.)_"
+        )
+
     return (
-        f"{head}\n\n"
+        f"{head}{perimeter_audit}\n\n"
+        f"## Analyse fonctionnelle\n\n"
+        f"{functional_block}\n\n"
+        f"## Analyse technique\n\n"
+        f"{technical_block}\n\n"
         f"## AI files context\n\n"
         f"{ai_section}\n"
         f"## Friction & Resolution\n\n"
@@ -2096,6 +2343,301 @@ def _write_archive(
 
     frontmatter.write(target, fm, body)
     return "created", archive_rel
+
+
+# ----------------------------------------------------------------------
+# Phase 5 enforcement — context / history / index updates (v0.10.x)
+# ----------------------------------------------------------------------
+#
+# Doctrine: every archeo write must land inside a project that carries a
+# context.md + history.md + archives/ skeleton. The 2026-05-08 Gemini case
+# study showed what happens when this is left to LLM judgement: 73 archives
+# under user-prod-iris/, no context.md, no history.md, broken doctrine. The
+# functions below are called from execute_git AFTER the per-milestone write
+# loop to guarantee the project skeleton exists, history is kept current,
+# and the root index references the new archives.
+
+
+def _ensure_project_skeleton(
+    vault: Path, slug: str, repo_path: Path | None = None
+) -> list[str]:
+    """If the project's context.md / history.md is missing, initialise the skeleton.
+
+    Returns the list of files created (vault-relative POSIX paths). Empty list
+    when nothing was needed (project already initialised). Re-uses
+    ``execute_init_project`` for the skeleton — same content as a manual
+    ``mem_init_project`` call.
+
+    Refuses to overwrite existing files. Idempotent — calling twice is a
+    no-op the second time.
+    """
+    project_dir = vault / "10-episodes" / "projects" / slug
+    ctx_path = project_dir / "context.md"
+    hist_path = project_dir / "history.md"
+    if ctx_path.is_file() and hist_path.is_file():
+        return []
+    # Lazy import to avoid a circular dependency at module load.
+    from memory_kit_mcp.tools.init_project import execute_init_project
+
+    # When the skeleton is partial (one file present, one missing), back the
+    # existing file out of the way so init_project can write its skeleton
+    # without raising. In practice this branch is rare; real-world drift
+    # produces fully-missing skeletons (the Gemini case study).
+    if ctx_path.is_file() or hist_path.is_file():
+        for stale in (ctx_path, hist_path):
+            if stale.is_file():
+                stale.rename(stale.with_suffix(".md.partial"))
+    # Move the archives/ folder out of the way temporarily so init_project
+    # (which refuses to overwrite an existing project) can run; then merge
+    # the existing archives back in afterwards.
+    archives_existing = project_dir / "archives"
+    archives_backup = project_dir.with_name(project_dir.name + ".__archeo_archives_backup")
+    has_backup = False
+    if project_dir.is_dir():
+        if archives_existing.is_dir():
+            archives_existing.rename(archives_backup)
+            has_backup = True
+        # Remove the now-empty project_dir so init_project starts clean.
+        try:
+            project_dir.rmdir()
+        except OSError:
+            pass
+
+    report = execute_init_project(vault=vault, slug=slug, kind="project")
+
+    if has_backup:
+        # Restore the user's archives, dropping the freshly-created (empty)
+        # archives/ folder + .gitkeep that init_project just produced.
+        new_archives = project_dir / "archives"
+        if new_archives.is_dir():
+            for child in new_archives.iterdir():
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+            try:
+                new_archives.rmdir()
+            except OSError:
+                pass
+        archives_backup.rename(new_archives)
+
+    return list(report.files_created)
+
+
+def _patch_history_with_archives(
+    vault: Path, slug: str, archive_rels: list[str], display: str | None = None
+) -> bool:
+    """Prepend an entry per new archive to ``{project}/history.md``.
+
+    Idempotent — skips entries whose archive filename is already present in
+    the body. Returns True when at least one entry was inserted.
+    """
+    if not archive_rels:
+        return False
+    hist_path = vault / "10-episodes" / "projects" / slug / "history.md"
+    if not hist_path.is_file():
+        return False
+    fm, body = frontmatter.read(hist_path)
+    inserted = 0
+    new_lines: list[str] = []
+    for rel in archive_rels:
+        archive_name = Path(rel).name
+        if archive_name in body or rel in body:
+            continue
+        # Surface a minimal entry (archeo-git archives are mechanical;
+        # the heavy narrative lives in the archive itself).
+        stem = Path(archive_name).stem
+        line = f"- [{stem}](archives/{archive_name})"
+        new_lines.append(line)
+        inserted += 1
+    if not new_lines:
+        return False
+    # Insert after the first H1 header line ("# {Slug} — Historique des sessions").
+    lines = body.splitlines()
+    out: list[str] = []
+    inserted_flag = False
+    for line in lines:
+        out.append(line)
+        if not inserted_flag and line.startswith("# "):
+            out.append("")
+            out.extend(new_lines)
+            inserted_flag = True
+    if not inserted_flag:
+        out.extend([""] + new_lines)
+    new_body = "\n".join(out) + ("\n" if not body.endswith("\n") else "")
+    frontmatter.write(hist_path, fm, new_body)
+    return inserted > 0
+
+
+def _patch_context_phase(
+    vault: Path,
+    slug: str,
+    archives_count: int,
+    branch_ctx: _BranchContext | None,
+) -> bool:
+    """Update ``{project}/context.md`` ``phase`` + ``last-session`` after an archeo run.
+
+    The phase is rewritten to summarise what was archived (count + branch +
+    base), not to replace any narrative the user already wrote. Idempotent:
+    if ``last-session`` already equals today and the phase already mentions
+    the same archives_count, the file is left untouched.
+    """
+    if archives_count <= 0:
+        return False
+    ctx_path = vault / "10-episodes" / "projects" / slug / "context.md"
+    if not ctx_path.is_file():
+        return False
+    fm, body = frontmatter.read(ctx_path)
+    today = _today_iso()
+    branch_part = ""
+    if branch_ctx:
+        branch_part = f" branch {branch_ctx.branch} ← {branch_ctx.base} (sha {branch_ctx.base_sha[:12]})"
+    phase = (
+        f"archeo-git run on {today} — {archives_count} archive(s) created" + branch_part
+    )
+    if fm.get("last-session") == today and fm.get("phase") == phase:
+        return False
+    fm["last-session"] = today
+    fm["phase"] = phase
+    frontmatter.write(ctx_path, fm, body)
+    return True
+
+
+def _patch_root_index(vault: Path, archive_rels: list[str]) -> bool:
+    """Insert each new archive at the top of the ## Archives section of index.md.
+
+    Idempotent — skips entries already referenced. Best-effort: if the
+    Archives section is not found (older vault layout), append a one-line
+    fallback at the end of the file.
+    """
+    if not archive_rels:
+        return False
+    index_path = vault / "index.md"
+    if not index_path.is_file():
+        return False
+    fm, body = frontmatter.read(index_path)
+    lines = body.splitlines()
+    new_entries: list[str] = []
+    for rel in archive_rels:
+        archive_name = Path(rel).name
+        if archive_name in body:
+            continue
+        stem = Path(archive_name).stem
+        new_entries.append(f"- [{stem}]({rel})")
+    if not new_entries:
+        return False
+    out: list[str] = []
+    inserted_flag = False
+    for i, line in enumerate(lines):
+        out.append(line)
+        if (
+            not inserted_flag
+            and line.strip() == "## Archives"
+        ):
+            # Look ahead for the next non-empty non-list line to preserve
+            # blank-line separator. Insert right after the "## Archives"
+            # header.
+            out.append("")
+            out.extend(new_entries)
+            inserted_flag = True
+    if not inserted_flag:
+        out.extend(["", "## Archives", ""] + new_entries)
+    new_body = "\n".join(out) + ("\n" if not body.endswith("\n") else "")
+    frontmatter.write(index_path, fm, new_body)
+    return True
+
+
+def _patch_root_index_projects(vault: Path, slug: str) -> bool:
+    """Add the project to the ## Projets section of root index.md if absent.
+
+    The Phase 5 skeleton initialiser ensures ``10-episodes/projects/{slug}/
+    history.md`` exists; this patch ensures the root index lists it as a
+    first-class project (not just via its archives). Idempotent.
+    """
+    index_path = vault / "index.md"
+    if not index_path.is_file():
+        return False
+    fm, body = frontmatter.read(index_path)
+    target_link = f"10-episodes/projects/{slug}/history.md"
+    if target_link in body:
+        return False
+    lines = body.splitlines()
+    out: list[str] = []
+    inserted = False
+    in_projects = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "## Projets" or stripped == "## Projects":
+            in_projects = True
+            out.append(line)
+            continue
+        if in_projects and stripped.startswith("## "):
+            # End of projects section : insert before next H2.
+            out.append(f"- [{slug}]({target_link})")
+            inserted = True
+            in_projects = False
+        out.append(line)
+    if in_projects and not inserted:
+        out.append(f"- [{slug}]({target_link})")
+        inserted = True
+    if not inserted:
+        return False
+    new_body = "\n".join(out) + ("\n" if not body.endswith("\n") else "")
+    frontmatter.write(index_path, fm, new_body)
+    return True
+
+
+def _today_iso() -> str:
+    from datetime import datetime
+
+    return datetime.now().date().isoformat()
+
+
+def _enforce_phase5(
+    vault: Path,
+    slug: str,
+    repo: Path,
+    archives_created: list[str],
+    archives_revised: list[str],
+    branch_ctx: _BranchContext | None,
+) -> tuple[list[str], list[str]]:
+    """Run all Phase 5 enforcement steps after the per-milestone write loop.
+
+    Returns ``(extra_files_created, extra_files_modified)`` — paths to add to
+    the parent ``execute_git`` report so the user sees the full surface of
+    side-effects (skeleton init, history.md / context.md / index.md updates).
+
+    Order is important: the skeleton MUST be initialised before history /
+    context can be patched, since those targets only exist post-init.
+    """
+    extra_created: list[str] = list(_ensure_project_skeleton(vault, slug, repo))
+    extra_modified: list[str] = []
+
+    # All archives that just landed (created OR revised) get listed in
+    # history.md / index.md.
+    all_archives = archives_created + archives_revised
+    if all_archives:
+        if _patch_history_with_archives(vault, slug, all_archives):
+            extra_modified.append(
+                f"10-episodes/projects/{slug}/history.md"
+            )
+        if _patch_root_index(vault, all_archives):
+            extra_modified.append("index.md")
+
+    # Always ensure the project is listed in root index Projets section,
+    # even when the run produced 0 new archives (re-run on existing project).
+    if _patch_root_index_projects(vault, slug):
+        if "index.md" not in extra_modified:
+            extra_modified.append("index.md")
+
+    if _patch_context_phase(
+        vault, slug, len(archives_created), branch_ctx
+    ):
+        extra_modified.append(
+            f"10-episodes/projects/{slug}/context.md"
+        )
+
+    return extra_created, extra_modified
 
 
 # ----------------------------------------------------------------------

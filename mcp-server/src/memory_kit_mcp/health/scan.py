@@ -73,6 +73,22 @@ Read-only. Detects 15 categories of issues:
                                   more existing archives in 10-episodes/
                                   projects/{slug}/archives/ under its
                                   'Atomes dérivés' section.
+- archeo-archive-incomplete-frontmatter (warn) v0.10.x. Catches the manual-
+                                  fallback drift demonstrated by the
+                                  gmt-user/archeo-dev-compta case study :
+                                  an archive in 10-episodes/.../archives/
+                                  whose source is `archeo-git` but lacks
+                                  one of the MUST keys from
+                                  _frontmatter-archeo.md (branch,
+                                  branch_base, branch_base_sha,
+                                  milestone_kind, source_milestone,
+                                  granularity, derived_atoms,
+                                  friction_detected). Also flags the
+                                  inverse — an archive whose filename
+                                  matches `*-archeo-*-branch-first.md`
+                                  but whose `source` is not `archeo-git`
+                                  (the LLM fell back to mem_archive
+                                  without the source_hint).
 
 The function returns Pydantic HealthFinding objects (defined in
 tools._models) so the MCP tool layer can serialize them directly.
@@ -80,6 +96,7 @@ tools._models) so the MCP tool layer can serialize them directly.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -112,7 +129,33 @@ CATEGORIES: tuple[str, ...] = (
     "missing-archeo-context-origin",
     "archeo-derived-orphan",
     "topology-archives-out-of-sync",
+    "archeo-archive-incomplete-frontmatter",
 )
+
+# MUST keys for an archeo-git archive (cf. _frontmatter-archeo.md MUST table,
+# "source: archeo-git (archive)" column). Mirror of
+# tools/archive.py::_ARCHEO_GIT_ARCHIVE_REQUIRED_KEYS minus `source` itself
+# (we only check key presence on archives whose source is already archeo-git).
+_ARCHEO_GIT_ARCHIVE_MUST_KEYS: tuple[str, ...] = (
+    "scope",
+    "collective",
+    "modality",
+    "branch",
+    "branch_base",
+    "branch_base_sha",
+    "milestone_kind",
+    "source_milestone",
+    "commit_sha",
+    "granularity",
+    "friction_detected",
+    "derived_atoms",
+    "content_hash",
+    "previous_atom",
+)
+
+# Filename pattern for archeo-git "branch-first" archives. Strong signal that
+# `source: archeo-git` should be set even if the writer forgot.
+_BRANCH_FIRST_FILENAME_RE = re.compile(r"-archeo-.+-branch-first\.md$")
 
 # Universal frontmatter MUST fields per _frontmatter-universal.md
 # (excluding inbox + meta zones which have their own minimal schemas).
@@ -202,7 +245,7 @@ def scan_vault(
     only_filter: str | None = None,
     kit_repo: Path | None = None,
 ) -> tuple[list[HealthFinding], list[tuple[str, str]], int]:
-    """Run all 9 category checks against `vault`.
+    """Run all category checks against `vault`. See ``CATEGORIES``.
 
     Args:
         vault: absolute path to the vault root.
@@ -725,6 +768,55 @@ def scan_vault(
                            if len(missing_arch) > 1 else ""),
                         auto_fixable=False,
                     ))
+
+    # ---- 14. archeo-archive-incomplete-frontmatter ----------------------
+    # Two heuristics, both targeting archives in 10-episodes/.../archives/ :
+    #   (a) source == archeo-git but missing one of the MUST keys from
+    #       _frontmatter-archeo.md "archive" column.
+    #   (b) filename matches `*-archeo-*-branch-first.md` but source is
+    #       not archeo-git (LLM fell back to mem_archive without the
+    #       source_hint='archeo-git' parameter).
+    # Both situations would have been refused at write time by mem_archive
+    # had source_hint been set; the scan catches the legacy/manual drift.
+    if cat_active("archeo-archive-incomplete-frontmatter"):
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            in_archives = (
+                len(parts) >= 4
+                and parts[0] == "10-episodes"
+                and parts[3] == "archives"
+            )
+            if not in_archives:
+                continue
+            src = fm.get("source")
+            filename_branch_first = bool(_BRANCH_FIRST_FILENAME_RE.search(p.name))
+            if src == "archeo-git":
+                missing = [k for k in _ARCHEO_GIT_ARCHIVE_MUST_KEYS if k not in fm]
+                if missing:
+                    findings_by_cat["archeo-archive-incomplete-frontmatter"].append(
+                        _finding(
+                            "archeo-archive-incomplete-frontmatter", "warning", rel,
+                            f"Archive has source: archeo-git but is missing MUST "
+                            f"key(s) per _frontmatter-archeo.md: "
+                            f"{', '.join(missing)}.",
+                            auto_fixable=False,
+                        )
+                    )
+            elif filename_branch_first:
+                findings_by_cat["archeo-archive-incomplete-frontmatter"].append(
+                    _finding(
+                        "archeo-archive-incomplete-frontmatter", "warning", rel,
+                        f"Filename signals an archeo-git branch-first archive "
+                        f"but `source` is {src!r} (expected `archeo-git`). "
+                        "This is the manual-fallback drift caught at scan time "
+                        "— rewrite via mem_archeo_git or mem_archive with "
+                        "source_hint='archeo-git'.",
+                        auto_fixable=False,
+                    )
+                )
 
     # ---- Flatten in canonical category order ----------------------------
     findings: list[HealthFinding] = []

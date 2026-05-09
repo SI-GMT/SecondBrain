@@ -37,6 +37,41 @@ Arguments:
 
 Read {{CONFIG_FILE}} and extract `vault`, `default_scope`, and `kit_repo`. If `vault` is missing, standard error message and stop.
 
+## Phase 0 cadrage gating (v0.10.x — REQUIRED for branch-first)
+
+**Doctrinal rule, post-Gemini-drift case study 2026-05-09** : every branch-first invocation of `mem_archeo` is gated by an explicit cadrage round-trip with the user. The orchestrator MCP tool refuses to write until the LLM caller has acknowledged the structured plan via `acknowledged_via_plan=True`.
+
+### Round-trip flow
+
+1. **First call** : LLM invokes `mem_archeo` with `branch_first={branch}` (and optionally `branch_base`, `project`). The LLM does NOT pass `acknowledged_via_plan=True` on this first call.
+
+2. **Tool response** : the orchestrator builds the Phase 0 cadrage plan internally (same logic as `mem_archeo_plan` — captures git user identity, resolves branch + base + scope, lists branch authors, proposes slug + project init flag + scope mode + granularity + filters + warnings). It returns an `ArcheoResult` with :
+   - `needs_validation: true`
+   - `plan: {full ArcheoPlan structure}`
+   - `summary_md: {plan summary, ready to display}`
+   - `stack: null`, `git: null`, `topology_outcome: 'skipped'`
+   - **No vault writes happened.** The vault is untouched.
+
+3. **LLM presentation** : the LLM MUST display `summary_md` to the user, then surface for explicit validation/override :
+   - **slug** : if `plan.slug.needs_confirmation == true` (cryptic branch like `JIRA-1234`), MUST ask the user. Override : `--project {slug}`.
+   - **project init** : if `plan.project.will_init == true`, announce explicitly that the skeleton (context.md + history.md + archives/) will be created on next call.
+   - **scope mode** : if `plan.scope.mode == 'refusal'`, the user MUST provide an anchor (`--since-sha`, `--since-date`). When mode is `auto-scope-by-name`, surface the resolved glob.
+   - **granularity** : present `plan.granularity.proposed` with reason. Override possible (`--by-merge`, `--by-window`, `--by-author`).
+   - **filters** : present `plan.filters.author_self_only` / `include_team`. Override possible.
+   - **warnings** : every warning in `plan.warnings` MUST be acknowledged.
+
+4. **Second call** : LLM re-invokes `mem_archeo` with the validated parameters AND `acknowledged_via_plan=True`. The orchestrator now bypasses the gating, runs Phase 0 scan + Phase 2 stack + Phase 3 git (with branch_first + the validated scope_glob / since_sha / etc.) + Phase 5 enforcement (auto-init project skeleton, prepend history.md entries, patch context.md phase, register in root index.md) + topology persistence.
+
+### Why the gating
+
+The 2026-05-08 Gemini run on `ecosav` of `IRIS USER` repo produced 73 archives with wrong slug (`user-prod-iris`), no branch-first scope (commits unrelated to ecosav), no skeleton, no narrative. The 2026-05-09 retry produced 57 archives with the right slug but still no branch-first (branch frontmatter empty), no topology, no derived atoms. The diagnostic is mechanical : Gemini took the shortest path (direct `mem_archeo_git`) instead of the orchestrated path because the procedure left the orchestration as LLM judgement.
+
+The cadrage gating turns the orchestration into a hard contract : Gemini cannot write until it has surfaced the plan to the user. The single round-trip is the cheapest defence against a class of drift (slug confusion, scope confusion, granularity confusion, missing skeleton) that no amount of frontmatter validation could prevent.
+
+### When the gating is OPTIONAL
+
+Standard mode runs (no `--branch-first` flag, milestone source = `tags` or `releases` for well-defined boundaries) skip the gating by design — the cadrage is unnecessary when the milestone discovery is mechanical. Branch-first runs are the only path where the gating is mandatory.
+
 ## Procedure
 
 ### 1. Validate the source repository
@@ -108,15 +143,21 @@ Execute the phases in the order: **context → stack → git**. The order matter
 
 If `--only-phase {phase}` is set, run only that phase. If `--skip-phase {list}` is set, exclude those phases.
 
-#### a. Phase 1 — `mem-archeo-context`
+#### a. Phase 1 — `mem-archeo-context` (project topology synthesis, v0.10.x)
 
-Invoke the procedure described in `mem-archeo-context.md` with:
-- The shared `topology` object (skip its own Phase 0 scan).
-- The resolved `{slug}`.
-- All passed-through arguments (`--depth`, `--no-confirm`, `--dry-run`).
-- Phase-specific arguments if any (`--only-categories`, but the orchestrator does not pass per-phase scoping unless explicitly given).
+The MCP path (orchestrator `mem_archeo`) **auto-prepares the Phase 1 brief after Phase 3 succeeds** : `mem_archeo_context` is invoked internally with the resolved slug, walking the just-written archive bodies to collect every perimeter file across captured cycles. The resulting `ArcheoContextBriefResult` is attached to `mem_archeo`'s return as `context_brief`, with `needs_context_synthesis=True`.
 
-Capture the structured result: list of atoms created/revised/skipped, by category.
+The LLM caller MUST then :
+
+1. Read every file in `context_brief.files_to_read` using its file-reading tool (`Read` / `read_file` / equivalent). Do not skim or sample.
+2. Aggregate findings into the synthesis schema (components / domain_concepts / patterns / decisions / risks_or_friction).
+3. Invoke `mem_archeo_project_topology(project=slug, synthesis=..., acknowledged_via_read=True)` to write `20-knowledge/architecture/{slug}-project-topology.md` and patch `context.md`.
+
+The token `acknowledged_via_read=True` is the only barrier between "LLM actually read the files" and "LLM made up plausible-looking content". Without it, finalize refuses with a structured error.
+
+For the legacy span-categorization workflow (`/mem-archeo-context` skill), see `core/procedures/mem-archeo-context.md`.
+
+Capture the structured result: project-topology atom written + context.md patched (or warnings when synthesis is empty).
 
 #### b. Phase 2 — `mem-archeo-stack`
 

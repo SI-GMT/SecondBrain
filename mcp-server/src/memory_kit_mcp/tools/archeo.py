@@ -32,7 +32,12 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from memory_kit_mcp.config import get_config
-from memory_kit_mcp.tools import archeo_git, archeo_stack
+from memory_kit_mcp.tools import (
+    archeo_context,
+    archeo_git,
+    archeo_plan,
+    archeo_stack,
+)
 from memory_kit_mcp.tools._models import ArcheoResult
 from memory_kit_mcp.vault import frontmatter, paths
 from memory_kit_mcp.vault.atomic_io import hash_content
@@ -74,12 +79,46 @@ def register(mcp: FastMCP) -> None:
             None,
             description=(
                 "If set, scope Phase 3 to commits unique to this branch since its "
-                "divergence from branch_base. Activates branch-first mode."
+                "divergence from branch_base. Activates branch-first mode + the "
+                "Phase 0 cadrage gating (see acknowledged_via_plan)."
             ),
         ),
         branch_base: str = Field(
             "main",
             description="Branch-first mode: base branch to compute the divergence point from.",
+        ),
+        since_sha: str | None = Field(
+            None,
+            description=(
+                "Branch-first escape hatch: explicit start SHA (passed through to "
+                "Phase 3). Bypasses merge-base detection."
+            ),
+        ),
+        since_date: str | None = Field(
+            None,
+            description=(
+                "Branch-first escape hatch: YYYY-MM-DD floor (passed through to "
+                "Phase 3)."
+            ),
+        ),
+        by_files: bool = Field(
+            False,
+            description=(
+                "Branch-first strategy B: query commits TOUCHING the files "
+                "introduced by the branch (passed through to Phase 3)."
+            ),
+        ),
+        acknowledged_via_plan: bool = Field(
+            False,
+            description=(
+                "Phase 0 cadrage gating (v0.10.x post-Gemini-drift) : MUST be "
+                "True for branch-first invocations. When False with branch_first "
+                "set, the orchestrator returns the structured plan WITHOUT any "
+                "writes, so the caller can present it to the user for "
+                "validation. Re-invoke with acknowledged_via_plan=True after "
+                "the user validates (or overrides) the slug / scope / "
+                "granularity / filters."
+            ),
         ),
     ) -> ArcheoResult:
         """Triphasic archeo: Phase 0 + Phase 2 + Phase 3 (Phase 1 skipped — LLM territory).
@@ -87,13 +126,55 @@ def register(mcp: FastMCP) -> None:
         Scans the repo's topology once and runs Phase 2 (stack resolution) and
         Phase 3 (Git history reconstruction at the chosen ``level``) sharing the
         scan. Branch-first mode (``branch_first``) restricts Phase 3 to commits
-        unique to that branch. Phase 1 (context extraction) is intentionally
-        skipped on the MCP path — run ``mem-archeo-context`` skill separately if
-        needed. Refuses non-Git directories.
+        unique to that branch.
+
+        **Branch-first cadrage gating (v0.10.x)** : when ``branch_first`` is set
+        and ``acknowledged_via_plan=False`` (the default), the orchestrator
+        runs Phase 0 cadrage (mem_archeo_plan), returns the structured plan
+        with ``needs_validation=True``, and writes nothing. The caller MUST
+        surface the plan to the user, get explicit validation/override on the
+        slug / scope / granularity / filters, then re-invoke with
+        ``acknowledged_via_plan=True``. This eliminates the macro-drift class
+        demonstrated by the 2026-05-08 Gemini case study.
+
+        Phase 1 (context extraction) is intentionally skipped on the MCP path —
+        run ``mem-archeo-context`` skill separately if needed. Refuses non-Git
+        directories.
         """
         config = get_config()
         vault = config.vault
         repo = Path(repo_path).expanduser().resolve()
+
+        # Branch-first cadrage gating: build the plan first; if not yet
+        # acknowledged, return it for user validation without any writes.
+        if branch_first and not acknowledged_via_plan:
+            plan = archeo_plan._build_plan(
+                repo=repo,
+                vault=vault,
+                branch_arg=branch_first,
+                branch_base_arg=branch_base,
+                project_arg=project,
+            )
+            return ArcheoResult(
+                project=plan.slug.candidate,
+                repo_path=str(repo),
+                needs_validation=True,
+                plan=plan,
+                phase_1_skipped=True,
+                phase_1_message="",
+                stack=None,
+                git=None,
+                topology_path="",
+                topology_outcome="skipped",
+                files_created=[],
+                files_modified=[],
+                warnings=[
+                    "Branch-first cadrage required — plan returned for "
+                    "user validation. Re-invoke with acknowledged_via_plan="
+                    "True after validation.",
+                ],
+                summary_md=plan.summary_md,
+            )
 
         # Phase 0 — single topology scan shared by Phases 2 and 3
         try:
@@ -125,6 +206,9 @@ def register(mcp: FastMCP) -> None:
             by_author=by_author,
             branch_first=branch_first,
             branch_base=branch_base,
+            since_sha=since_sha,
+            since_date=since_date,
+            by_files=by_files,
             skip_repo_validation=True,
         )
 
@@ -140,27 +224,62 @@ def register(mcp: FastMCP) -> None:
             files_modified.append(topology_rel_path)
 
         warnings = list(stack_result.warnings) + list(git_result.warnings)
-        phase_1_msg = (
-            "Phase 1 (context) skipped on the MCP path — semantic span "
-            "classification is LLM territory. Run `mem-archeo-context` "
-            "skill separately if you want Phase 1 outputs (workflow / sync / "
-            "multi-tenant / security / adr / goal extraction)."
-        )
+
+        # Phase 1 — auto-prepare brief from Phase 3 archives. The LLM caller
+        # MUST then read files_to_read and invoke mem_archeo_context(
+        # phase='finalize', acknowledged_via_read=True, synthesis=...)
+        # to write the topology atom + patch context.md. Bypassing this
+        # leaves context.md skeleton-empty (the 2026-05-09 IRIS USER drift
+        # class : extraction without reading).
+        context_brief = None
+        needs_synthesis = False
+        try:
+            context_brief = archeo_context.execute_brief(
+                vault=vault, project=slug, batch=1
+            )
+            if context_brief.files_to_read:
+                needs_synthesis = True
+                phase_1_msg = (
+                    f"Phase 1 brief prepared : {len(context_brief.files_to_read)} "
+                    f"file(s) in batch 1/{context_brief.total_batches}, "
+                    f"{len(context_brief.cycles)} cycle(s). "
+                    "READ every file in context_brief.files_to_read with your "
+                    "file-reading tool, then invoke mem_archeo_context("
+                    "phase='finalize', acknowledged_via_read=True, "
+                    "synthesis=...) to finalize Phase 1."
+                )
+            else:
+                phase_1_msg = (
+                    "Phase 1 brief skipped : no perimeter files in archives "
+                    "(Phase 3 produced 0 merge-mode milestones). Run "
+                    "mem-archeo-context skill manually if you need Phase 1."
+                )
+        except Exception as exc:
+            phase_1_msg = (
+                f"Phase 1 brief failed : {exc}. Falling back to skill-only "
+                "invocation (run /mem-archeo-context manually)."
+            )
+            warnings.append(phase_1_msg)
         warnings.append(phase_1_msg)
 
         return ArcheoResult(
             project=slug,
             repo_path=str(repo),
-            phase_1_skipped=True,
+            phase_1_skipped=not needs_synthesis,
             phase_1_message=phase_1_msg,
             stack=stack_result,
             git=git_result,
             topology_path=topology_rel_path,
             topology_outcome=topology_outcome,
+            needs_context_synthesis=needs_synthesis,
+            context_brief=context_brief,
             files_created=files_created,
             files_modified=files_modified,
             warnings=warnings,
-            summary_md=_summary_md(slug, stack_result, git_result, topology_outcome),
+            summary_md=_summary_md(
+                slug, stack_result, git_result, topology_outcome,
+                needs_synthesis=needs_synthesis,
+            ),
         )
 
 
@@ -287,11 +406,19 @@ def _summary_md(
     stack: object,
     git: object,
     topology_outcome: str,
+    *,
+    needs_synthesis: bool = False,
 ) -> str:
+    p1 = (
+        "brief prepared — LLM MUST read files + invoke mem_archeo_context"
+        "(phase='finalize')"
+        if needs_synthesis
+        else "skipped (no merge-cycle archives produced)"
+    )
     return (
         f"**mem_archeo** — {slug}\n\n"
         f"**Phase 0** (topology scan) : OK\n"
-        f"**Phase 1** (context) : skipped (LLM territory — run `/mem-archeo-context` separately)\n"
+        f"**Phase 1** (context) : {p1}\n"
         f"**Phase 2** (stack) : {getattr(stack, 'layers_resolved', 0)} layers resolved, "
         f"{getattr(stack, 'atoms_created', 0)} atoms created, "
         f"{getattr(stack, 'atoms_skipped', 0)} skipped\n"

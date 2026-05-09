@@ -17,6 +17,7 @@ from memory_kit_mcp.tools import (
     archeo_context_finalize,
     archeo_git,
     archeo_index_files,
+    archeo_plan,
     archeo_stack,
     archive,
     check_update,
@@ -96,3 +97,5 @@ def register_all(mcp: FastMCP) -> None:
     archeo_atlassian.register(mcp)
     # Archeo v2 — Phase 0 preview (v0.10.x)
     archeo_index_files.register(mcp)
+    # Archeo Phase 0 interactive cadrage (v0.10.x post-Gemini-drift case study)
+    archeo_plan.register(mcp)

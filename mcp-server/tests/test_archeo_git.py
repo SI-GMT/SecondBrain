@@ -698,6 +698,86 @@ async def test_branch_first_fully_merged_no_anchor_falls_back_to_skill(
     )
 
 
+@pytest.fixture
+def repo_branch_merged_via_merge_commit(tmp_path: Path) -> tuple[Path, str]:
+    """Repo where ``feat/x`` was merged into main via a real merge commit
+    AND the branch ref was NOT advanced past the merge.
+
+    main:   c0 ── M (merge feat/x)
+                  /
+    feat/x: c1 ── c2
+
+    HEAD(feat/x) = c2 (preserved). Walking ``git log main --merges
+    --first-parent`` finds M with parent2 == HEAD(feat/x) → mode
+    'merged-via-merge-commit' kicks in (range = c0..M).
+    """
+    repo = tmp_path / "merge-commit-repo"
+    repo.mkdir()
+    _git_init_with_user(repo)
+    _commit_file(repo, "README.md", "init", "c0")
+    # Normalize default branch to 'main' across git versions.
+    try:
+        _git(repo, "branch", "-m", "main")
+    except subprocess.CalledProcessError:
+        pass
+    _git(repo, "checkout", "-b", "feat/x")
+    (repo / "src" / "x").mkdir(parents=True, exist_ok=True)
+    _commit_file(repo, "src/x/a.py", "A", "feat: add a")
+    _commit_file(repo, "src/x/b.py", "B", "feat: add b")
+    _git(repo, "checkout", "main")
+    subprocess.run(
+        ["git", "-C", str(repo), "merge", "--no-ff", "-q",
+         "-m", "merge feat/x", "feat/x"],
+        check=True, capture_output=True, text=True,
+    )
+    return repo, "feat/x"
+
+
+async def test_branch_first_merged_via_perimeter_runs_deterministically(
+    client: Client,
+    repo_branch_merged_via_merge_commit: tuple[Path, str],
+    vault_tmp: Path,
+) -> None:
+    """End-to-end: archeo_git on a fully-merged branch with a real merge
+    commit resolves via perimeter walker (mode 'merged-via-perimeter'),
+    NOT via auto-scope-by-name. Frontmatter records branch + base.
+    """
+    repo, branch = repo_branch_merged_via_merge_commit
+    (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {
+            "repo_path": str(repo),
+            "project": "alpha",
+            "level": "commits",
+            "branch_first": branch,
+            "branch_base": "main",
+            "window": "day",
+            "by_author": True,
+        },
+    )
+    d = res.structured_content
+    # Resolution path surfaced in warnings — mentions perimeter walker.
+    assert any(
+        "perimeter walker" in w.lower()
+        or "multi-signal" in w.lower()
+        for w in d["warnings"]
+    ), f"expected perimeter-walker warning, got: {d['warnings']}"
+    # 1 cycle captured → 1 archive.
+    assert d["milestones_processed"] >= 1
+    # Frontmatter carries the branch + base.
+    archives = list(
+        (vault_tmp / "10-episodes" / "projects" / "alpha" / "archives").glob(
+            "*archeo-git-*.md"
+        )
+    )
+    assert archives, "expected at least one archive"
+    fm, _body = frontmatter.read(archives[0])
+    assert fm["branch"] == "feat/x"
+    assert fm["branch_base"] == "main"
+    assert fm["branch_base_sha"]
+
+
 async def test_branch_first_C_since_sha_explicit_anchor(
     client: Client, repo_with_merged_branch: tuple[Path, str], vault_tmp: Path,
 ) -> None:
@@ -788,16 +868,18 @@ def repo_with_merged_branch_named_dir(tmp_path: Path) -> tuple[Path, str, str]:
     return repo, "ecosav", "src/EcoSAV"
 
 
-async def test_branch_first_auto_scope_by_name_matches_directory(
+async def test_branch_first_perimeter_wins_over_name_heuristic_when_branch_ffd(
     client: Client,
     repo_with_merged_branch_named_dir: tuple[Path, str, str],
     vault_tmp: Path,
 ) -> None:
-    """v0.10.x post-Codex: when the branch is fully merged and its name
-    matches a repo directory, the tool auto-scopes to that directory
-    (no first-parent fallback) and surfaces the decision in warnings.
+    """v0.10.x post-2026-05-09 amendment: even when the branch was ff'd onto
+    base after the merge (HEAD(branch) == HEAD(base) → single-tip walker
+    fails), the multi-signal perimeter walker captures the merge cycle via
+    author + subject signals, winning over auto-scope-by-name (which is
+    now the last-resort fallback for squash/rebase scenarios).
     """
-    repo, branch, expected_dir = repo_with_merged_branch_named_dir
+    repo, branch, _expected_dir = repo_with_merged_branch_named_dir
     (vault_tmp / "10-episodes" / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
     res = await client.call_tool(
         "mem_archeo_git",
@@ -812,12 +894,11 @@ async def test_branch_first_auto_scope_by_name_matches_directory(
         },
     )
     d = res.structured_content
-    # Auto-scope should have surfaced the matched directory in the warnings.
+    # Perimeter walker captured the merge cycle.
     assert any(
-        "auto-scope-by-name" in w.lower() or expected_dir.lower() in w.lower()
+        "perimeter walker" in w.lower() or "multi-signal" in w.lower()
         for w in d["warnings"]
-    ), f"expected auto-scope warning mentioning {expected_dir}, got: {d['warnings']}"
-    # And produced milestones for the commits that touched that directory.
+    ), f"expected perimeter-walker warning, got: {d['warnings']}"
     assert d["milestones_processed"] >= 1
 
 
@@ -918,3 +999,185 @@ async def test_branch_first_C_since_date_floor(
     d = res.structured_content
     assert d["milestones_processed"] >= 1
     assert any("since_date" in w.lower() for w in d["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 enforcement (v0.10.x post-Gemini-drift case study)
+# ---------------------------------------------------------------------------
+
+
+async def test_phase5_auto_inits_missing_project_skeleton(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """Project doesn't exist before mem_archeo_git → auto-init context.md + history.md."""
+    project_dir = vault_tmp / "10-episodes" / "projects" / "fresh-slug"
+    assert not project_dir.exists()
+
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "fresh-slug", "level": "tags"},
+    )
+    d = res.data
+
+    assert (project_dir / "context.md").is_file()
+    assert (project_dir / "history.md").is_file()
+    assert (project_dir / "archives").is_dir()
+    # The created skeleton files appear in files_created.
+    rels = [p.replace("\\", "/") for p in d.files_created]
+    assert any("fresh-slug/context.md" in r for r in rels)
+    assert any("fresh-slug/history.md" in r for r in rels)
+
+
+async def test_phase5_history_md_lists_new_archives(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """Each created archive is referenced in history.md (prepended)."""
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "histo-test", "level": "tags"},
+    )
+    assert res.data.archives_created == 3
+
+    hist_path = vault_tmp / "10-episodes" / "projects" / "histo-test" / "history.md"
+    body = hist_path.read_text(encoding="utf-8")
+    # 3 archive entries prepended (one per tag v0.1.0 / v0.2.0 / v0.3.0).
+    assert body.count("](archives/") >= 3
+
+
+async def test_phase5_context_md_phase_updated(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """context.md phase reflects the archeo run."""
+    await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "ctx-test", "level": "tags"},
+    )
+    ctx_path = vault_tmp / "10-episodes" / "projects" / "ctx-test" / "context.md"
+    fm, _ = frontmatter.read(ctx_path)
+    assert "archeo-git run on" in str(fm.get("phase", ""))
+    assert "archive(s) created" in str(fm.get("phase", ""))
+
+
+async def test_phase5_root_index_lists_new_archives(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """Each created archive is added to the root index.md ## Archives section."""
+    # Ensure there's an Archives section in the index.
+    index_path = vault_tmp / "index.md"
+    index_path.write_text(
+        "---\nzone: meta\ntype: index\n---\n\n# Vault index\n\n## Archives\n\n"
+        "- (existing)\n",
+        encoding="utf-8",
+    )
+    res = await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "idx-test", "level": "tags"},
+    )
+    body = index_path.read_text(encoding="utf-8")
+    # 3 new archive entries inserted after ## Archives.
+    for tag in ("v0-1-0", "v0-2-0", "v0-3-0"):
+        assert tag in body, f"expected {tag} in index.md"
+
+
+async def test_phase5_idempotent_history_no_duplicates(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """Running archeo twice doesn't duplicate history.md entries."""
+    await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "idem-test", "level": "tags"},
+    )
+    hist_path = (
+        vault_tmp / "10-episodes" / "projects" / "idem-test" / "history.md"
+    )
+    body_first = hist_path.read_text(encoding="utf-8")
+    count_first = body_first.count("](archives/")
+
+    # Re-run — all archives should be skipped (idempotent), history not touched.
+    await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "idem-test", "level": "tags"},
+    )
+    body_second = hist_path.read_text(encoding="utf-8")
+    count_second = body_second.count("](archives/")
+    assert count_first == count_second, (
+        f"history.md entry count drifted on re-run: {count_first} -> {count_second}"
+    )
+
+
+async def test_phase5_preserves_existing_archives_when_initialising(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """If the project folder already has archives but no context/history, init must NOT clobber the archives."""
+    project_dir = vault_tmp / "10-episodes" / "projects" / "partial-slug"
+    archives_dir = project_dir / "archives"
+    archives_dir.mkdir(parents=True)
+    legacy_archive = archives_dir / "2020-01-01-legacy.md"
+    legacy_archive.write_text(
+        "---\nproject: partial-slug\n---\n\n# Legacy\n", encoding="utf-8"
+    )
+
+    await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "partial-slug", "level": "tags"},
+    )
+    assert legacy_archive.is_file(), "legacy archive must survive Phase 5 init"
+    assert (project_dir / "context.md").is_file()
+    assert (project_dir / "history.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Body skeleton enforcement (Jet 2 light, v0.10.x)
+# ---------------------------------------------------------------------------
+
+
+async def test_body_contains_all_five_mandatory_sections(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """Every archeo-git archive body must carry the 5 mandatory sections, in order."""
+    await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "body-test", "level": "tags"},
+    )
+    archives_dir = vault_tmp / "10-episodes" / "projects" / "body-test" / "archives"
+    archives = sorted(archives_dir.glob("*.md"))
+    assert archives, "expected at least one archive"
+    for arc in archives:
+        body = arc.read_text(encoding="utf-8")
+        for section in (
+            "## Analyse fonctionnelle",
+            "## Analyse technique",
+            "## AI files context",
+            "## Friction & Resolution",
+        ):
+            assert section in body, (
+                f"missing section '{section}' in archive body of {arc.name}"
+            )
+        # Order: fonctionnelle before technique before AI before Friction.
+        idx_fn = body.index("## Analyse fonctionnelle")
+        idx_tk = body.index("## Analyse technique")
+        idx_ai = body.index("## AI files context")
+        idx_fr = body.index("## Friction & Resolution")
+        assert idx_fn < idx_tk < idx_ai < idx_fr, (
+            f"section order broken in {arc.name}"
+        )
+
+
+async def test_body_analyse_sections_carry_explicit_fallback_marker(
+    client: Client, vault_tmp: Path, repo_with_tags: Path
+) -> None:
+    """Empty Analyse fonctionnelle / technique sections carry the LLM TODO marker so
+    drift (silent omission) is impossible to miss on review."""
+    await client.call_tool(
+        "mem_archeo_git",
+        {"repo_path": str(repo_with_tags), "project": "fallback-test", "level": "tags"},
+    )
+    archives_dir = (
+        vault_tmp / "10-episodes" / "projects" / "fallback-test" / "archives"
+    )
+    archives = sorted(archives_dir.glob("*.md"))
+    for arc in archives:
+        body = arc.read_text(encoding="utf-8")
+        assert "_(LLM TODO" in body, (
+            f"Analyse sections must carry explicit LLM TODO marker in {arc.name}"
+        )

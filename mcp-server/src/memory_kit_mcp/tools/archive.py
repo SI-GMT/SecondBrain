@@ -33,6 +33,29 @@ from memory_kit_mcp.vault.wikilinks import find_dangling
 
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
+# Required frontmatter keys when source_hint == "archeo-git" — mirrors the
+# "source: archeo-git (archive)" column of _frontmatter-archeo.md MUST table.
+# Empty string `""` and empty list `[]` are accepted; a missing key is not.
+_ARCHEO_GIT_ARCHIVE_REQUIRED_KEYS: tuple[str, ...] = (
+    "source",
+    "scope",
+    "collective",
+    "modality",
+    "branch",
+    "branch_base",
+    "branch_base_sha",
+    "milestone_kind",
+    "source_milestone",
+    "commit_sha",
+    "granularity",
+    "friction_detected",
+    "derived_atoms",
+    "content_hash",
+    "previous_atom",
+    "topology_snapshot_hash",
+    "repo_path",
+)
+
 
 class DanglingWikilinkError(ValueError):
     """Raised when a body about to be persisted contains unresolved wikilinks.
@@ -40,6 +63,16 @@ class DanglingWikilinkError(ValueError):
     The error message lists every offending target so the LLM client can
     correct the body in one pass — either by creating the targets first or
     by demoting them to inline backticks per the _linking.md convention.
+    """
+
+
+class ArcheoFrontmatterIncompleteError(ValueError):
+    """Raised when ``source_hint="archeo-git"`` is set but ``archive_extra_fm``
+    does not provide every MUST key required by ``_frontmatter-archeo.md``.
+
+    The error message lists every missing key so the LLM client can correct
+    the call in one pass. No partial write happens — the archive file is not
+    created if validation fails.
     """
 
 
@@ -135,6 +168,56 @@ def _do_incremental(
     )
 
 
+def _merge_archive_fm(
+    base_fm: dict[str, Any], extra_fm: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Merge ``extra_fm`` into ``base_fm``. Tags lists are concatenated
+    (deduplicated, order-preserving); every other key is overridden by extra.
+
+    Returns a new dict — does not mutate either input.
+    """
+    merged = dict(base_fm)
+    if not extra_fm:
+        return merged
+    for key, value in extra_fm.items():
+        if key == "tags" and isinstance(value, list):
+            existing = list(merged.get("tags", []))
+            for tag in value:
+                if tag not in existing:
+                    existing.append(tag)
+            merged["tags"] = existing
+        else:
+            merged[key] = value
+    return merged
+
+
+def _validate_archeo_git_archive_fm(fm: dict[str, Any]) -> None:
+    """Validate that ``fm`` carries every MUST key for an archeo-git archive.
+
+    Raises ``ArcheoFrontmatterIncompleteError`` listing every missing key. A
+    key whose value is `""` / `[]` / `False` is considered present (the
+    doctrine accepts empty defaults). A key absent from the dict is missing.
+
+    Also enforces ``source == "archeo-git"`` — a different source value is
+    treated as a hint mismatch, not as a missing key (the message is
+    explicit).
+    """
+    missing = [k for k in _ARCHEO_GIT_ARCHIVE_REQUIRED_KEYS if k not in fm]
+    if missing:
+        raise ArcheoFrontmatterIncompleteError(
+            f"source_hint='archeo-git' requires every key from "
+            f"_frontmatter-archeo.md, but {len(missing)} are missing from "
+            f"archive_extra_fm: {', '.join(missing)}. "
+            "See core/procedures/mem-archive.md §'Manual fallback after "
+            "mem_archeo_git failure' for the canonical contract."
+        )
+    if fm.get("source") != "archeo-git":
+        raise ArcheoFrontmatterIncompleteError(
+            f"source_hint='archeo-git' requires archive_extra_fm['source'] "
+            f"== 'archeo-git', got {fm.get('source')!r}."
+        )
+
+
 def _do_full(
     vault: Path,
     slug: str,
@@ -142,6 +225,8 @@ def _do_full(
     archive_body_md: str,
     new_context_md: str,
     phase: str | None,
+    archive_extra_fm: dict[str, Any] | None = None,
+    source_hint: str | None = None,
 ) -> ChangeReport:
     """End-of-session — create a new archive + update history.md + reset context.md."""
     folder, kind = _resolve_active(vault, slug)
@@ -158,7 +243,7 @@ def _do_full(
     archives_dir.mkdir(parents=True, exist_ok=True)
     archive_path = archives_dir / archive_filename
 
-    archive_fm = {
+    base_fm: dict[str, Any] = {
         "project" if kind == "project" else "domain": slug,
         "tags": [f"{kind}/{slug}", "zone/episodes", "kind/archive"],
         "zone": "episodes",
@@ -167,6 +252,15 @@ def _do_full(
         "date": date_iso,
         "display": f"{slug} — {timestamp.replace('-', ' ', 1)} {archive_subject}",
     }
+    archive_fm = _merge_archive_fm(base_fm, archive_extra_fm)
+
+    if source_hint == "archeo-git":
+        _validate_archeo_git_archive_fm(archive_fm)
+    elif source_hint is not None:
+        raise ValueError(
+            f"Unknown source_hint {source_hint!r}. Supported: 'archeo-git'."
+        )
+
     frontmatter.write(archive_path, archive_fm, archive_body_md)
 
     # Update history.md — prepend the new archive line
@@ -276,6 +370,27 @@ def register(mcp: FastMCP) -> None:
         phase: str | None = Field(
             None, description="Optional new phase string to set in context.md frontmatter."
         ),
+        archive_extra_fm: dict[str, Any] | None = Field(
+            None,
+            description=(
+                "full mode only: extra frontmatter fields merged into the "
+                "archive's frontmatter. Tags lists are concatenated "
+                "(deduplicated); other keys override the universal defaults. "
+                "Required when source_hint is set, see _frontmatter-archeo.md."
+            ),
+        ),
+        source_hint: Literal["archeo-git"] | None = Field(
+            None,
+            description=(
+                "full mode only. When 'archeo-git', enforces the "
+                "_frontmatter-archeo.md MUST table on the merged frontmatter "
+                "(branch, branch_base, milestone_kind, source_milestone, "
+                "commit_sha, granularity, derived_atoms, friction_detected, "
+                "content_hash, etc.). Use this as the manual fallback after "
+                "mem_archeo_git fails. Raises ArcheoFrontmatterIncompleteError "
+                "if any MUST key is missing — no partial write."
+            ),
+        ),
     ) -> ChangeReport:
         """Archive the current session into the vault.
 
@@ -291,6 +406,11 @@ def register(mcp: FastMCP) -> None:
 
         Refuses archived projects (per _archived.md). Use mem_historize with
         revive=True first.
+
+        Manual archeo-git fallback (v0.10.x): pass source_hint='archeo-git'
+        with archive_extra_fm populated per _frontmatter-archeo.md. Use only
+        when mem_archeo_git fails (timeout, refusal, etc.) — the regular
+        mem_archeo_git path remains the primary writer.
         """
         config = get_config()
         vault = config.vault
@@ -304,5 +424,12 @@ def register(mcp: FastMCP) -> None:
                 "full mode requires both archive_subject and archive_body_md"
             )
         return _do_full(
-            vault, slug, archive_subject, archive_body_md, context_md, phase
+            vault,
+            slug,
+            archive_subject,
+            archive_body_md,
+            context_md,
+            phase,
+            archive_extra_fm=archive_extra_fm,
+            source_hint=source_hint,
         )

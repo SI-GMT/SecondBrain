@@ -214,6 +214,7 @@ def _is_git_repo(path: Path) -> bool:
     try:
         result = subprocess.run(
             ["git", "-C", str(path), "rev-parse", "--git-dir"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
@@ -227,6 +228,7 @@ def _git_remote(path: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "-C", str(path), "remote", "get-url", "origin"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,
@@ -240,6 +242,7 @@ def _has_commits(path: Path) -> bool:
     try:
         result = subprocess.run(
             ["git", "-C", str(path), "rev-list", "-n", "1", "--all"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,

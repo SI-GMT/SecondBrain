@@ -252,6 +252,235 @@ def test_git_branch_first_fully_merged_works_with_explicit_base_ref(
 
 
 # ---------------------------------------------------------------------------
+# find_merge_commit_for_branch
+# ---------------------------------------------------------------------------
+
+
+def test_find_merge_commit_returns_triple_when_no_ff_merge_exists(
+    git_repo: Path,
+) -> None:
+    """--no-ff merge of feature/x into main + branch ref left at branch tip:
+    walker finds M with parent2 == HEAD(feature/x)."""
+    from memory_kit_mcp.archeo.topology import find_merge_commit_for_branch
+
+    branch_tip = subprocess.run(
+        ["git", "rev-parse", "feature/x"],
+        cwd=str(git_repo), capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    _git(["checkout", "main"], git_repo)
+    _git(["merge", "--no-ff", "-m", "merge feature/x", "feature/x"], git_repo)
+
+    result = find_merge_commit_for_branch(git_repo, "feature/x", "main")
+    assert result is not None
+    m_sha, parent1, parent2 = result
+    assert parent2 == branch_tip
+    assert m_sha != parent1 != parent2
+
+
+def test_find_merge_commit_returns_none_when_branch_advanced_past_merge(
+    git_repo: Path,
+) -> None:
+    """If the branch was fast-forwarded onto main after the merge, branch tip
+    no longer matches any merge commit's parent2. Walker returns None,
+    signalling the caller to fall back to auto-scope-by-name."""
+    from memory_kit_mcp.archeo.topology import find_merge_commit_for_branch
+
+    _git(["checkout", "main"], git_repo)
+    _git(["merge", "--no-ff", "-m", "merge feature/x", "feature/x"], git_repo)
+    # ff feature/x onto main → branch ref now points at M, not at original tip
+    _git(["checkout", "feature/x"], git_repo)
+    _git(["merge", "--ff-only", "main"], git_repo)
+
+    result = find_merge_commit_for_branch(git_repo, "feature/x", "main")
+    assert result is None
+
+
+def test_find_merge_commit_returns_none_for_unknown_branch(
+    git_repo: Path,
+) -> None:
+    from memory_kit_mcp.archeo.topology import find_merge_commit_for_branch
+
+    assert find_merge_commit_for_branch(git_repo, "nonexistent", "main") is None
+
+
+# ---------------------------------------------------------------------------
+# find_branch_merges_via_perimeter — multi-signal walker
+# ---------------------------------------------------------------------------
+
+
+def _commit(repo: Path, fname: str, content: str, msg: str) -> str:
+    target = repo / fname
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    _git(["add", fname], repo)
+    _git(["commit", "-m", msg], repo)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(repo), capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _commit_as(
+    repo: Path, fname: str, content: str, msg: str,
+    email: str, name: str,
+) -> str:
+    target = repo / fname
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    _git(["add", fname], repo)
+    subprocess.run(
+        ["git", "-c", f"user.email={email}", "-c", f"user.name={name}",
+         "commit", "-m", msg],
+        cwd=str(repo), check=True, capture_output=True, text=True,
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(repo), capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def test_perimeter_walker_captures_single_cycle(git_repo: Path) -> None:
+    """Single --no-ff merge of feature/x into main → walker captures 1 cycle."""
+    from memory_kit_mcp.archeo.topology import find_branch_merges_via_perimeter
+
+    _git(["checkout", "main"], git_repo)
+    _git(["merge", "--no-ff", "-m", "Merge branch 'feature/x'", "feature/x"],
+         git_repo)
+
+    result = find_branch_merges_via_perimeter(git_repo, "feature/x", "main")
+    assert len(result) == 1
+    bm = result[0]
+    assert bm.score >= 0.4
+    assert "src/feature.py" in bm.files
+
+
+def test_perimeter_walker_captures_multi_cycle_after_reset(
+    tmp_path: Path,
+) -> None:
+    """Branch reset to origin/main between cycles → walker still captures
+    BOTH merge cycles via subject + author signals (HEAD(branch) only
+    matches the latest cycle's parent2)."""
+    from memory_kit_mcp.archeo.topology import find_branch_merges_via_perimeter
+
+    repo = tmp_path / "reset_repo"
+    repo.mkdir()
+    _git(["init", "--initial-branch=main"], repo)
+    _git(["config", "user.email", "ben@example.com"], repo)
+    _git(["config", "user.name", "Ben"], repo)
+    _git(["config", "commit.gpgsign", "false"], repo)
+    _commit(repo, "README.md", "init", "init")
+
+    # Cycle 1
+    _git(["checkout", "-b", "ecosav"], repo)
+    _commit(repo, "src/EcoSAV/Detail.cls", "A1", "ecosav: detail v1")
+    _commit(repo, "src/EcoSAV/Devis.cls", "B1", "ecosav: devis v1")
+    _git(["checkout", "main"], repo)
+    _git(["merge", "--no-ff", "-m", "Merge branch 'ecosav' (cycle 1)", "ecosav"],
+         repo)
+
+    # Reset ecosav to main (simulate dev-reset workflow)
+    _git(["checkout", "ecosav"], repo)
+    _git(["reset", "--hard", "main"], repo)
+
+    # Cycle 2
+    _commit(repo, "src/EcoSAV/Materiel.cls", "C2", "ecosav: materiel v2")
+    _commit(repo, "src/EcoSAV/Service.cls", "D2", "ecosav: service v2")
+    _git(["checkout", "main"], repo)
+    _git(["merge", "--no-ff", "-m", "Merge branch 'ecosav' (cycle 2)", "ecosav"],
+         repo)
+
+    # Reset ecosav to main again
+    _git(["checkout", "ecosav"], repo)
+    _git(["reset", "--hard", "main"], repo)
+
+    result = find_branch_merges_via_perimeter(repo, "ecosav", "main")
+    assert len(result) == 2, (
+        f"expected 2 cycles, got {len(result)}: "
+        f"{[(bm.sha[:8], bm.score, bm.subject) for bm in result]}"
+    )
+    # All captured files visible in union.
+    union = set()
+    for bm in result:
+        union.update(bm.files)
+    assert {
+        "src/EcoSAV/Detail.cls",
+        "src/EcoSAV/Devis.cls",
+        "src/EcoSAV/Materiel.cls",
+        "src/EcoSAV/Service.cls",
+    } <= union
+
+
+def test_perimeter_walker_excludes_cross_project_refactor(
+    tmp_path: Path,
+) -> None:
+    """Refactor branch touching only 1 EcoSAV file (out of N) but mostly
+    unrelated dirs should NOT be captured — reciprocal overlap (file_score)
+    catches the asymmetry."""
+    from memory_kit_mcp.archeo.topology import find_branch_merges_via_perimeter
+
+    repo = tmp_path / "refactor_repo"
+    repo.mkdir()
+    _git(["init", "--initial-branch=main"], repo)
+    _git(["config", "user.email", "ben@example.com"], repo)
+    _git(["config", "user.name", "Ben"], repo)
+    _git(["config", "commit.gpgsign", "false"], repo)
+    _commit(repo, "README.md", "init", "init")
+
+    # Ecosav cycle: dedicated EcoSAV files.
+    _git(["checkout", "-b", "ecosav"], repo)
+    for i in range(4):
+        _commit(repo, f"src/EcoSAV/F{i}.cls", f"A{i}", f"ecosav: f{i}")
+    _git(["checkout", "main"], repo)
+    _git(["merge", "--no-ff", "-m", "Merge branch 'ecosav'", "ecosav"], repo)
+
+    # Cross-project refactor: barely touches one EcoSAV file but mostly
+    # rewrites OTHER subsystem files. Different author = signal off.
+    _git(["checkout", "-b", "perf-rewrite"], repo)
+    for i in range(8):
+        _commit_as(repo, f"src/Perf/p{i}.cls", f"P{i}", f"perf: p{i}",
+                   "alice@example.com", "Alice")
+    _commit_as(repo, "src/EcoSAV/F0.cls", "A0v2", "perf: incidental EcoSAV touch",
+               "alice@example.com", "Alice")
+    _git(["checkout", "main"], repo)
+    _git(["merge", "--no-ff", "-m", "Merge branch 'perf-rewrite'", "perf-rewrite"],
+         repo)
+
+    # Reset ecosav to main (so HEAD(ecosav) doesn't trivially match anything)
+    _git(["checkout", "ecosav"], repo)
+    _git(["reset", "--hard", "main"], repo)
+
+    result = find_branch_merges_via_perimeter(repo, "ecosav", "main")
+    captured_subjects = [bm.subject for bm in result]
+    # ecosav merge captured.
+    assert any("'ecosav'" in s for s in captured_subjects), captured_subjects
+    # perf-rewrite NOT captured: different author + low reciprocal overlap
+    # (only 1 of 9 files in perimeter).
+    assert not any("perf-rewrite" in s for s in captured_subjects), (
+        f"cross-project refactor leaked: {captured_subjects}"
+    )
+
+
+def test_perimeter_walker_returns_empty_when_no_merges_match(
+    tmp_path: Path,
+) -> None:
+    """Branch that has no detectable merge signal → walker returns []."""
+    from memory_kit_mcp.archeo.topology import find_branch_merges_via_perimeter
+
+    repo = tmp_path / "noop_repo"
+    repo.mkdir()
+    _git(["init", "--initial-branch=main"], repo)
+    _git(["config", "user.email", "ben@example.com"], repo)
+    _git(["config", "user.name", "Ben"], repo)
+    _git(["config", "commit.gpgsign", "false"], repo)
+    _commit(repo, "README.md", "init", "init")
+    _git(["checkout", "-b", "orphan"], repo)
+    # No merges back to main.
+
+    result = find_branch_merges_via_perimeter(repo, "orphan", "main")
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
 # Soft caps + warnings
 # ---------------------------------------------------------------------------
 

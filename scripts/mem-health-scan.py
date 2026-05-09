@@ -49,6 +49,22 @@ Read-only. Detects 12 categories of issues:
                                           or more existing archives in
                                           10-episodes/projects/{slug}/archives/
                                           under its 'Atomes dérivés' section.
+  - archeo-archive-incomplete-frontmatter (warn) v0.10.x. Catches the
+                                          manual-fallback drift demonstrated
+                                          by gmt-user/archeo-dev-compta:
+                                          archive in 10-episodes/.../archives/
+                                          whose source is `archeo-git` but is
+                                          missing one of the MUST keys from
+                                          _frontmatter-archeo.md (branch,
+                                          branch_base, branch_base_sha,
+                                          milestone_kind, source_milestone,
+                                          granularity, derived_atoms,
+                                          friction_detected). Inverse case
+                                          flagged too: filename matches
+                                          `*-archeo-*-branch-first.md` but
+                                          source != archeo-git (LLM fell
+                                          back to mem_archive without
+                                          source_hint='archeo-git').
 
 Persists a structured report at {vault}/99-meta/health/scan-{ts}.md unless
 --no-write is passed. Prints a parseable summary on stdout.
@@ -107,6 +123,7 @@ CATEGORIES = [
     "missing-archeo-context-origin",
     "archeo-derived-orphan",
     "topology-archives-out-of-sync",
+    "archeo-archive-incomplete-frontmatter",
 ]
 
 # Severity defaults per category (used by the report renderer + exit code logic).
@@ -123,7 +140,32 @@ SEVERITIES = {
     "missing-archeo-context-origin": "warn",
     "archeo-derived-orphan": "warn",
     "topology-archives-out-of-sync": "info",
+    "archeo-archive-incomplete-frontmatter": "warn",
 }
+
+# MUST keys for an archeo-git archive (cf. _frontmatter-archeo.md MUST table,
+# "source: archeo-git (archive)" column). Source canonical is the standalone;
+# the lib mirror in memory_kit_mcp/health/scan.py must stay aligned.
+ARCHEO_GIT_ARCHIVE_MUST_KEYS = (
+    "scope",
+    "collective",
+    "modality",
+    "branch",
+    "branch_base",
+    "branch_base_sha",
+    "milestone_kind",
+    "source_milestone",
+    "commit_sha",
+    "granularity",
+    "friction_detected",
+    "derived_atoms",
+    "content_hash",
+    "previous_atom",
+)
+
+# Filename pattern for archeo-git "branch-first" archives. Strong signal the
+# `source: archeo-git` field should have been set even if the writer forgot.
+BRANCH_FIRST_FILENAME_RE = re.compile(r"-archeo-.+-branch-first\.md$")
 
 # Universal frontmatter MUST fields per _frontmatter-universal.md
 # (excluding inbox + meta zones which have their own minimal schemas).
@@ -588,6 +630,46 @@ def collect_findings(vault: Path, zones_filter, only_filter):
                            if len(missing_arch) > 1 else ""),
                         "rebuild-topology-derived-section",
                     ))
+
+    # ---- 2.12 archeo-archive-incomplete-frontmatter ------------------------
+    # Two heuristics, both targeting archives in 10-episodes/.../archives/ :
+    #   (a) source == archeo-git but missing one of the MUST keys per
+    #       _frontmatter-archeo.md "archive" column.
+    #   (b) filename matches `*-archeo-*-branch-first.md` but source is not
+    #       archeo-git (LLM fell back to mem_archive without the
+    #       source_hint='archeo-git' parameter — typical drift after
+    #       mem_archeo_git failed/timed out).
+    if cat_active("archeo-archive-incomplete-frontmatter"):
+        for p, (fm, _body) in file_fm.items():
+            if p in malformed_paths:
+                continue
+            rel = p.relative_to(vault).as_posix()
+            parts = Path(rel).parts
+            in_archives = (
+                len(parts) >= 4
+                and parts[0] == "10-episodes"
+                and parts[3] == "archives"
+            )
+            if not in_archives:
+                continue
+            src = fm.get("source")
+            filename_branch_first = bool(BRANCH_FIRST_FILENAME_RE.search(p.name))
+            if src == "archeo-git":
+                missing = [k for k in ARCHEO_GIT_ARCHIVE_MUST_KEYS if k not in fm]
+                if missing:
+                    findings["archeo-archive-incomplete-frontmatter"].append((
+                        "warn", rel,
+                        f"archive has source: archeo-git but is missing "
+                        f"MUST key(s): {', '.join(missing)}",
+                        "fix-archeo-archive-frontmatter",
+                    ))
+            elif filename_branch_first:
+                findings["archeo-archive-incomplete-frontmatter"].append((
+                    "warn", rel,
+                    f"filename signals an archeo-git branch-first archive but "
+                    f"`source` is {src!r} (expected `archeo-git`)",
+                    "fix-archeo-archive-frontmatter",
+                ))
 
     return findings, errors
 

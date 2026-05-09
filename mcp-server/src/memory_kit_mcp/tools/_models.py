@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class LinkRef(BaseModel):
@@ -304,6 +304,12 @@ class MilestoneInfo(BaseModel):
     commit_count: int = 0  # commits aggregated in this window
     co_authors: list[str] = Field(default_factory=list)  # for --by-author granularity
 
+    # Branch-first perimeter mode (one milestone per captured cycle)
+    perimeter_score: float = 0.0
+    perimeter_breakdown: dict[str, float] = Field(default_factory=dict)
+    perimeter_files: list[str] = Field(default_factory=list)
+    perimeter_range: str = ""  # M^1..M
+
     # Bookkeeping
     archive_path: str = ""  # vault-relative path of the resulting archive (empty if skipped)
     outcome: str = "skipped"  # 'created' | 'revised' | 'skipped'
@@ -332,16 +338,60 @@ class ArcheoResult(BaseModel):
     Phase 1 (context) is intentionally skipped — semantic categorization is
     LLM territory. Phase 2 (stack) and Phase 3 (git) are run sequentially
     sharing a single Phase 0 topology scan.
+
+    Branch-first cadrage gating (v0.10.x post-Gemini-drift) : when the
+    orchestrator is invoked with ``branch_first=…`` and the caller has NOT
+    yet acknowledged the plan (``acknowledged_via_plan=False``, the
+    default), no writes happen — instead, ``needs_validation=True`` is set
+    and ``plan`` carries the structured plan that the caller MUST surface
+    to the user. The caller then re-invokes with the validated parameters
+    and ``acknowledged_via_plan=True``. The empty stack/git/topology fields
+    in that case are populated with default-empty placeholders.
     """
 
     project: str
     repo_path: str
+    needs_validation: bool = Field(
+        default=False,
+        description=(
+            "True when branch_first was set but acknowledged_via_plan=False. "
+            "Caller MUST surface plan + get user validation, then re-invoke "
+            "with acknowledged_via_plan=True. No writes happened in this "
+            "response."
+        ),
+    )
+    plan: ArcheoPlan | None = Field(
+        default=None,
+        description=(
+            "Populated when needs_validation=True : the Phase 0 cadrage to "
+            "present to the user."
+        ),
+    )
     phase_1_skipped: bool = True
-    phase_1_message: str
-    stack: ArcheoStackResult
-    git: ArcheoGitResult
+    phase_1_message: str = ""
+    stack: ArcheoStackResult | None = None
+    git: ArcheoGitResult | None = None
     topology_path: str = ""  # vault-relative path of topology file (created or updated)
     topology_outcome: str = "skipped"  # 'created' | 'updated' | 'skipped'
+    needs_context_synthesis: bool = Field(
+        default=False,
+        description=(
+            "v0.10.x post-2026-05-09 : True after Phase 3 succeeded and "
+            "Phase 1 brief was auto-prepared. The LLM caller MUST read the "
+            "files in ``context_brief.files_to_read`` then invoke "
+            "``mem_archeo_context(phase='finalize', ...)`` to write the "
+            "topology atom + patch context.md. Bypassing this leaves "
+            "context.md skeleton-empty (extraction-without-reading drift)."
+        ),
+    )
+    context_brief: ArcheoContextBriefResult | None = Field(
+        default=None,
+        description=(
+            "Populated when needs_context_synthesis=True : the Phase 1 "
+            "brief result the LLM must process before context.md is "
+            "considered alive."
+        ),
+    )
     files_created: list[str] = Field(default_factory=list)
     files_modified: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -399,3 +449,452 @@ class ArcheoIndexResult(BaseModel):
         ),
     )
     summary_md: str
+
+
+# ----------------------------------------------------------------------
+# mem_archeo_plan (Phase 0 interactive cadrage, v0.10.x)
+# ----------------------------------------------------------------------
+
+
+class _UserSelf(BaseModel):
+    """Identity of the user invoking mem_archeo_plan, captured from git config.
+
+    Anchor for the 'self vs team' filter applied by Phase 3 archeo-git.
+    Empty strings when git config is not set in the target repo.
+    """
+
+    email: str = Field(default="", description="git config user.email")
+    name: str = Field(default="", description="git config user.name")
+
+
+class _BranchInfo(BaseModel):
+    """Resolved branch context for the archeo plan."""
+
+    name: str = Field(..., description="Branch name (e.g. 'ecosav', 'feat/foo').")
+    base: str = Field(..., description="Base ref used for divergence (e.g. 'master', 'main').")
+    base_sha: str = Field(default="", description="Resolved base SHA, '' if unresolved.")
+    head_sha: str = Field(default="", description="HEAD of the branch.")
+    fully_merged: bool = Field(
+        default=False,
+        description=(
+            "True if the branch is fully merged into ``base`` (merge-base == HEAD). "
+            "Triggers auto-scope-by-name / by-files heuristic in downstream Phase 3."
+        ),
+    )
+    commits_count: int = Field(
+        default=0,
+        description=(
+            "Number of commits in the resolved scope (0 when fully merged + no "
+            "by-files/auto-scope-by-name fallback)."
+        ),
+    )
+
+
+class _BranchAuthor(BaseModel):
+    """One author present in the branch scope."""
+
+    email: str
+    name: str
+    commits: int = Field(default=0, description="Commits authored by this email in the scope.")
+
+
+class _SlugProposal(BaseModel):
+    """Proposed slug for the project the archeo will write under."""
+
+    candidate: str = Field(
+        ..., description="Proposed slug (kebab-case, ASCII-fold, ≥3 chars)."
+    )
+    source: str = Field(
+        ...,
+        description=(
+            "How the slug was derived: 'project-arg' (user passed --project), "
+            "'branch-name' (sanitized branch name, human-readable), "
+            "'cwd-basename' (fallback: basename of repo_path), "
+            "'needs-prompt' (cryptic branch — caller MUST ask the user)."
+        ),
+    )
+    needs_confirmation: bool = Field(
+        default=False,
+        description=(
+            "True if the LLM caller MUST surface the candidate to the user for "
+            "confirmation before any side-effect runs. False = trust the heuristic."
+        ),
+    )
+    reason: str = Field(
+        default="",
+        description="Human-readable reason behind the slug choice.",
+    )
+
+
+class _ProjectInfo(BaseModel):
+    """State of the target project in the vault."""
+
+    slug: str
+    exists: bool = Field(
+        default=False,
+        description=(
+            "True if {vault}/10-episodes/projects/{slug}/ already exists "
+            "(with context.md + history.md)."
+        ),
+    )
+    will_init: bool = Field(
+        default=False,
+        description=(
+            "True if a fresh project skeleton will be created during Phase 5 "
+            "(context.md + history.md + archives/). Implies exists=False."
+        ),
+    )
+    path: str = Field(
+        default="",
+        description="Vault-relative path to the project (resolved or candidate).",
+    )
+
+
+class _ScopeProposal(BaseModel):
+    """Resolution strategy + scope estimate for Phase 0 file enumeration."""
+
+    mode: str = Field(
+        ...,
+        description=(
+            "Strategy: 'live' (range-strict merge_base..branch), "
+            "'merged-via-perimeter' (fully merged AND multi-signal walker "
+            "captured ≥1 merge cycle via file/author/subject scoring with "
+            "reciprocal-overlap reciprocity — primary strategy when "
+            "fully_merged, handles dev-reset cycles where HEAD(branch) was "
+            "reset to origin/base between cycles), "
+            "'merged-via-merge-commit' (single absorbing merge commit M "
+            "detectable on base first-parent — exact range = M^1..M^2, "
+            "fallback when perimeter walker captures nothing), 'by-files' "
+            "(commits touching files introduced by branch, repo-wide), "
+            "'auto-scope-by-name' (every dir whose last component matches "
+            "the branch name, repo-wide — fallback when no merge commit "
+            "detectable, lost to squash/rebase), 'since-sha' / 'since-date' "
+            "(explicit anchor), 'refusal' (fully merged + nothing matches — "
+            "caller must override)."
+        ),
+    )
+    scope_glob: str | None = Field(
+        default=None,
+        description=(
+            "Backward-compatible single glob (= scope_globs[0] when populated). "
+            "Legacy callers that only inspect one glob still work; new callers "
+            "should read ``scope_globs`` to capture every matched dir."
+        ),
+    )
+    scope_globs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "All directory globs matched by auto-scope-by-name (e.g. "
+            "['src/Components/EcoSAV/**', 'src/REST/EcoSAV/**', "
+            "'src/Models/EcoSAV/**']). Empty list when mode != 'auto-scope-by-name'. "
+            "Phase 3 unions these via ``git log -- glob1 glob2 ...`` to capture "
+            "every directory whose last component matches the branch name. The "
+            "2026-05-09 case study showed taking only the deepest match drops "
+            "4 of 5 EcoSAV directories on the IRIS USER repo."
+        ),
+    )
+    files_count_estimate: int = Field(
+        default=0,
+        description="Files matched by the scope (Phase 0 enumeration estimate, union across all globs).",
+    )
+    files_bytes_estimate: int = Field(default=0)
+
+
+class _GranularityProposal(BaseModel):
+    """Proposed Phase 3 granularity, with reasoning."""
+
+    proposed: str = Field(
+        ...,
+        description=(
+            "One of: 'by-merge' (1 archive per merge in branch — narrative), "
+            "'by-window-month' (1 archive per month, all authors), "
+            "'by-window-week' (1 archive per week, all authors), "
+            "'by-author-week' (1 archive per (author, week), fine-grained — "
+            "use only when explicitly needed for HR-style attribution)."
+        ),
+    )
+    reason: str = Field(
+        default="",
+        description=(
+            "Heuristic reasoning. Examples: 'solo branch with merges → by-merge', "
+            "'multi-author branch with no merges → by-window-month', etc."
+        ),
+    )
+
+
+class _FilterProposal(BaseModel):
+    """Proposed author-filter Phase 3 will apply."""
+
+    author_self_only: bool = Field(
+        default=False,
+        description=(
+            "True when only commits of user_self.email are kept. Default true on "
+            "solo personal branches, false on collective branches — caller can "
+            "override."
+        ),
+    )
+    include_team: bool = Field(
+        default=True,
+        description=(
+            "True keeps commits from all branch_authors. Mutually exclusive with "
+            "author_self_only=True (the latter wins if both are set)."
+        ),
+    )
+
+
+class ArcheoPlan(BaseModel):
+    """Result of mem_archeo_plan — interactive Phase 0 cadrage.
+
+    Doctrine: ``core/procedures/mem-archeo-git.md`` Phase 0 (v0.10.x).
+
+    Read-only — never writes the vault. The LLM caller MUST surface this
+    plan to the user, get explicit validation/override on the surfaced
+    fields (slug, granularity, filters, project init), then invoke
+    ``mem_archeo_git`` with the validated parameters. No subprocess git
+    fires for archive writing as long as the plan is not approved.
+
+    Tradeoff: 1 round-trip user (friction) — exactly the friction needed
+    on operations with large blast radius (writing 50+ archives in the
+    vault). Replaces the 2026-05-08 case study where Gemini mis-classified
+    the slug, picked too-fine granularity, and skipped context/history
+    creation entirely.
+    """
+
+    repo_path: str
+    user_self: _UserSelf
+    branch: _BranchInfo
+    branch_authors: list[_BranchAuthor] = Field(default_factory=list)
+    is_solo_branch: bool = Field(
+        default=False,
+        description="True iff branch_authors has exactly one entry == user_self.email.",
+    )
+    slug: _SlugProposal
+    project: _ProjectInfo
+    scope: _ScopeProposal
+    granularity: _GranularityProposal
+    filters: _FilterProposal
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Non-blocking warnings the caller should surface to the user before "
+            "validation. Examples: 'branch name is cryptic, please confirm slug', "
+            "'branch fully merged into base, scope resolved via auto-scope-by-name', "
+            "'project does not exist yet, will be initialized', 'scope > 500 files, "
+            "consider --by-merge granularity'."
+        ),
+    )
+    summary_md: str = Field(
+        ...,
+        description=(
+            "Pre-formatted Markdown summary of the plan, suitable for direct "
+            "display to the user. Lists the proposed slug + reason, the project "
+            "init flag, the scope estimate, the granularity + reason, the filters, "
+            "and the warnings — in that order."
+        ),
+    )
+    next_call: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Exact MCP arguments to pass to ``mem_archeo_git`` to execute the "
+            "validated plan. The LLM caller MUST invoke ``mem_archeo_git`` with "
+            "these arguments **literally** — no translation, no interpretation, "
+            "no extra filters. The 2026-05-09 IRIS USER case study showed that "
+            "free-form translation drops ``branch_first`` from the call when the "
+            "plan proposes ``--by-merge`` granularity (the API has no "
+            "``--by-merge`` flag — the perimeter mode produces one archive per "
+            "cycle natively, granularity input is informational). Always carries "
+            "``branch_first`` when ``scope.mode`` ∈ "
+            "{'merged-via-perimeter', 'merged-via-merge-commit', "
+            "'auto-scope-by-name', 'live'}."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# mem_archeo_context — Phase 1 (LLM round-trip)
+# ---------------------------------------------------------------------------
+
+
+class _ArcheoCycleSummary(BaseModel):
+    """One cycle's summary surfaced to the LLM during the brief phase."""
+
+    sha: str
+    date: str
+    subject: str
+    files: list[str] = Field(default_factory=list)
+
+
+class ArcheoContextBriefResult(BaseModel):
+    """Result of ``mem_archeo_context(phase='brief')``.
+
+    Round-trip Phase 1 doctrine (v0.10.x post-2026-05-09 IRIS USER case
+    study) : extraction-only archives lose all functional value. The LLM
+    host (Claude / Gemini / Codex) MUST read the actual files in the
+    project's perimeter and synthesize the result before the archeo cycle
+    is considered finalized.
+
+    The tool returns a paginated list of files to read + an instruction
+    block + the synthesis schema the LLM is expected to fill. The LLM
+    then re-invokes ``mem_archeo_context(phase='finalize',
+    acknowledged_via_read=True, synthesis={...})`` to write the topology
+    atom + patch context.md.
+    """
+
+    project: str
+    needs_llm_read: bool = True
+    batch: int = Field(
+        default=1,
+        description="1-indexed batch number when files exceed the per-call cap.",
+    )
+    total_batches: int = 1
+    files_to_read: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Repo-relative paths the LLM MUST open with its file-reading tool "
+            "(Read / read_file / equivalent). Capped per-batch to keep the LLM "
+            "context budget reasonable. Read EVERY file in the batch — do not "
+            "sample or skim."
+        ),
+    )
+    cycles: list[_ArcheoCycleSummary] = Field(
+        default_factory=list,
+        description=(
+            "Discovered merge cycles with their per-cycle files — context "
+            "for the LLM to group its synthesis by sub-system."
+        ),
+    )
+    synthesis_schema: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "JSON schema-like dict describing the structure expected in the "
+            "``synthesis`` argument of the finalize call."
+        ),
+    )
+    instructions: str = Field(
+        default="",
+        description=(
+            "Plain-text directive executable by any LLM host. Lists exactly "
+            "what to read, how to group, what schema to fill."
+        ),
+    )
+    next_call: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Exact MCP arguments for the next call (either next brief batch "
+            "or the finalize phase). Literal — do not translate."
+        ),
+    )
+    summary_md: str = ""
+
+
+class ArcheoContextSynthesis(BaseModel):
+    """Schema the LLM MUST fill after reading files_to_read.
+
+    Keys are intentionally generic so the schema works across project kinds
+    (IRIS .cls components, Python modules, JS apps, SQL schemas, etc.).
+
+    Strict validation (v0.10.x post-2026-05-09 IRIS USER) : ``components``
+    must either be empty (LLM had nothing to surface) OR every component
+    entry must carry a non-empty ``role`` AND a non-empty ``files`` list,
+    each file with a non-empty ``path``. Half-filled entries (role only,
+    no files; or files-without-paths) are rejected — the whole point of
+    Phase 1 is the file-level mapping, not a top-level dir summary.
+    """
+
+    components: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Hierarchical component map. Keys = directories or sub-system "
+            "names. Values = {role: str (REQUIRED, one-line), files: list of "
+            "{path: str (REQUIRED), role: str, key_methods: list[str]}} — "
+            "files MUST be non-empty when the component is included. "
+            "Example: {'src/Components/EcoSAV/DossierDon': {'role': 'Storage "
+            "layer for donation files', 'files': [{'path': 'Detail.cls', "
+            "'role': 'Stores per-donation detail records', 'key_methods': "
+            "['ValidateDossier']}]}}."
+        ),
+    )
+
+    @field_validator("components")
+    @classmethod
+    def _validate_components(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(v, dict):
+            raise ValueError("components must be a dict")
+        for raw_name, comp in v.items():
+            name = str(raw_name).strip().strip('"').strip("'").strip()
+            if not isinstance(comp, dict):
+                raise ValueError(
+                    f"components[{name!r}] must be a dict with 'role' and 'files'"
+                )
+            role = str(comp.get("role", "")).strip()
+            files = comp.get("files", [])
+            if not role:
+                raise ValueError(
+                    f"components[{name!r}].role is empty — every component "
+                    "MUST carry a one-line role (the LLM must explain what "
+                    "this sub-system does, not just list its directory)."
+                )
+            if not isinstance(files, list) or not files:
+                raise ValueError(
+                    f"components[{name!r}].files is empty — every component "
+                    "MUST list ≥1 file with a non-empty path. The whole "
+                    "point of Phase 1 is the file-level mapping. If you "
+                    "have nothing to say about this directory, drop it from "
+                    "components entirely."
+                )
+            for i, f in enumerate(files):
+                if not isinstance(f, dict):
+                    raise ValueError(
+                        f"components[{name!r}].files[{i}] must be a dict"
+                    )
+                path = str(f.get("path", "")).strip().strip('"').strip("'").strip()
+                if not path:
+                    raise ValueError(
+                        f"components[{name!r}].files[{i}].path is empty — "
+                        "every file entry MUST carry a non-empty repo-relative "
+                        "path."
+                    )
+        return v
+    domain_concepts: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Business / domain vocabulary the LLM extracted from file "
+            "contents (one line per concept). Example: 'DOSSIERDON = "
+            "donation file flag, default 0', 'savRegion = SAV region "
+            "reference table'."
+        ),
+    )
+    patterns: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Recurring code/architectural patterns. Example: '3-layer split "
+            "(Components/Models/Interface)', 'JSON adapter pattern via "
+            "%JSON.Adaptor'."
+        ),
+    )
+    decisions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Implicit decisions surfaced by the file contents. Example: "
+            "'Anonymisation enforced at sync layer, not storage', "
+            "'CODEETABLISSEMENT used as cross-cutting partition key'."
+        ),
+    )
+    risks_or_friction: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Risks / friction points the LLM noticed while reading. Example: "
+            "'No validation on DOSSIERDON setter — set silently'."
+        ),
+    )
+
+
+class ArcheoContextFinalizeResult(BaseModel):
+    """Result of ``mem_archeo_context(phase='finalize')``."""
+
+    project: str
+    success: bool
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    summary_md: str = ""

@@ -15,8 +15,9 @@ ARCHEO_TOOLS = [
 ]
 
 # Tools still in stub mode (raise NotImplementedError). Updated as ports land.
+# v0.10.x post-2026-05-09 : mem_archeo_context is no longer a stub — it now
+# returns the Phase 1 brief (paginated files_to_read + synthesis schema).
 STILL_STUB_TOOLS = [
-    "mem_archeo_context",
     "mem_archeo_atlassian",
 ]
 
@@ -38,19 +39,17 @@ async def test_all_archeo_tools_appear_in_inventory(client: Client) -> None:
         assert name in tool_names, f"{name} missing from MCP inventory"
 
 
-async def test_total_tool_count_is_34(client: Client) -> None:
-    """Sanity check: the v0.10.x milestone is 34 mem_* tools registered.
+async def test_total_tool_count_is_36(client: Client) -> None:
+    """Sanity check: the v0.10.x milestone is 36 mem_* tools registered.
 
-    History: 24 in v0.8.0 (initial Phase 3 MCP) → 30 in v0.9.3 (added
-    mem_init_project, mem_update_phase, mem_read_archive, mem_read_context,
-    mem_read_history, mem_get_topology to close UX gaps) → 31 in v0.9.4
-    (added mem_migrate for vault schema migrations) → 32 in v0.10.0 (added
-    mem_archeo_context_finalize for Python-side enforcement of Phase 1
-    archeo-context atom frontmatter) → 33 in v0.10.x (added mem_check_update
-    for explicit GitHub release version interrogation) → 34 in v0.10.x
-    (added mem_archeo_index_files — Phase 0 archeo v2 preview, doctrine
-    _archeo-architecture-v2.md).
+    History: 24 in v0.8.0 → 30 in v0.9.3 (mem_init_project + 5 readers) →
+    31 in v0.9.4 (mem_migrate) → 32 in v0.10.0 (mem_archeo_context_finalize)
+    → 33 in v0.10.x (mem_check_update) → 34 in v0.10.x
+    (mem_archeo_index_files) → 35 in v0.10.x (mem_archeo_plan) → 36 in
+    v0.10.x post-2026-05-09 (mem_archeo_project_topology — Phase 1 LLM
+    round-trip finalize, paired with the now-functional mem_archeo_context
+    brief, doctrine mem-archeo-context.md workflow A).
     """
     tools = await client.list_tools()
     mem_tools = [t for t in tools if t.name == "mem" or t.name.startswith("mem_")]
-    assert len(mem_tools) == 34, f"expected 34 mem_* tools, got {len(mem_tools)}: {[t.name for t in mem_tools]}"
+    assert len(mem_tools) == 36, f"expected 36 mem_* tools, got {len(mem_tools)}: {[t.name for t in mem_tools]}"

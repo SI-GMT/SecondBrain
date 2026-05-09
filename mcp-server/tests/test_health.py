@@ -755,3 +755,159 @@ async def test_health_scan_detects_topology_archives_out_of_sync(
         if f.category == "topology-archives-out-of-sync" and "ghost.md" in f.path
     ]
     assert matches
+
+
+# ---------- archeo-archive-incomplete-frontmatter (16th, v0.10.x) ----------
+
+
+def _full_archeo_git_archive_fm(slug: str = "alpha") -> dict:
+    """Return a complete archeo-git archive frontmatter dict — every MUST key."""
+    return {
+        "date": "2026-05-08",
+        "zone": "episodes",
+        "kind": "archive",
+        "project": slug,
+        "slug": slug,
+        "type": "archive",
+        "source": "archeo-git",
+        "scope": "work",
+        "collective": False,
+        "modality": "left",
+        "branch": "ecosav",
+        "branch_base": "master",
+        "branch_base_sha": "abc1234",
+        "milestone_kind": "merge",
+        "source_milestone": "branch-first-ecosav",
+        "commit_sha": "def5678",
+        "granularity": "by-merge",
+        "friction_detected": False,
+        "derived_atoms": [],
+        "content_hash": "0" * 64,
+        "previous_atom": "",
+        "topology_snapshot_hash": "",
+        "repo_path": "/x",
+        "display": f"{slug} — archive",
+    }
+
+
+async def test_health_scan_flags_archeo_archive_missing_branch(
+    client: Client, vault_tmp: Path
+) -> None:
+    """archeo-git archive missing the `branch` key is flagged."""
+    fm = _full_archeo_git_archive_fm()
+    del fm["branch"]
+    arch_path = (
+        vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+        / "2026-05-08-12h00-alpha-archeo-ecosav-branch-first.md"
+    )
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(arch_path, fm, "# Archive\n")
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-archive-incomplete-frontmatter"
+        and arch_path.name in f.path
+    ]
+    assert matches, "expected incomplete-frontmatter finding"
+    assert "branch" in matches[0].message
+
+
+async def test_health_scan_flags_archeo_archive_missing_multiple_keys(
+    client: Client, vault_tmp: Path
+) -> None:
+    """Multiple missing MUST keys are all enumerated in the finding message."""
+    fm = _full_archeo_git_archive_fm()
+    for key in ("branch", "branch_base_sha", "milestone_kind", "granularity"):
+        del fm[key]
+    arch_path = (
+        vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+        / "2026-05-08-12h05-alpha-multi-missing.md"
+    )
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(arch_path, fm, "# Archive\n")
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-archive-incomplete-frontmatter"
+        and arch_path.name in f.path
+    ]
+    assert matches
+    msg = matches[0].message
+    assert "branch" in msg
+    assert "branch_base_sha" in msg
+    assert "milestone_kind" in msg
+    assert "granularity" in msg
+
+
+async def test_health_scan_flags_branch_first_filename_without_archeo_source(
+    client: Client, vault_tmp: Path
+) -> None:
+    """Filename matches *-archeo-*-branch-first.md but source != archeo-git → finding.
+
+    Replicates the gmt-user/dev-compta drift: Gemini fell back to mem_archive
+    after mem_archeo_git timed out and produced an archive whose filename
+    encoded the archeo intent but whose frontmatter did not.
+    """
+    arch_path = (
+        vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+        / "2026-05-05-20h13-alpha-archeo-dev-compta-branch-first.md"
+    )
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(
+        arch_path,
+        {
+            "project": "alpha", "zone": "episodes", "kind": "archive",
+            "slug": "alpha", "date": "2026-05-05",
+            "display": "alpha — archive",
+            "scope": "work", "collective": False, "modality": "left",
+        },
+        "# Archive without source: archeo-git\n",
+    )
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-archive-incomplete-frontmatter"
+        and arch_path.name in f.path
+    ]
+    assert matches
+    assert "archeo-git" in matches[0].message
+
+
+async def test_health_scan_does_not_flag_complete_archeo_archive(
+    client: Client, vault_tmp: Path
+) -> None:
+    """A well-formed archeo-git archive triggers no finding."""
+    arch_path = (
+        vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+        / "2026-05-08-13h00-alpha-archeo-ecosav-branch-first.md"
+    )
+    arch_path.parent.mkdir(parents=True, exist_ok=True)
+    frontmatter.write(arch_path, _full_archeo_git_archive_fm(), "# Archive\n")
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-archive-incomplete-frontmatter"
+        and arch_path.name in f.path
+    ]
+    assert not matches
+
+
+async def test_health_scan_ignores_non_archive_files(
+    client: Client, vault_tmp: Path
+) -> None:
+    """An atom OUTSIDE the archives/ folder with source: archeo-git is not flagged
+    by this category — that's archeo-derived-orphan's job."""
+    derived_path = vault_tmp / "40-principles" / "work" / "branched-principle.md"
+    derived_path.parent.mkdir(parents=True, exist_ok=True)
+    fm = _full_archeo_git_archive_fm("alpha")
+    fm["kind"] = "principle"
+    fm["zone"] = "principles"
+    del fm["branch"]  # would be flagged if rule applied
+    frontmatter.write(derived_path, fm, "# A principle\n")
+    res = await client.call_tool("mem_health_scan", {})
+    matches = [
+        f for f in res.data.findings
+        if f.category == "archeo-archive-incomplete-frontmatter"
+        and "branched-principle" in f.path
+    ]
+    assert not matches

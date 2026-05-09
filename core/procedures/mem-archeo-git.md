@@ -15,6 +15,14 @@ Independent skill (invocable as `/mem-archeo-git`) and also called by the `mem-a
 
 Any contextual hint suggesting another path (`_archeo-comparison/`, `_test/`, `_sandbox/`, an inferred convention from sibling folders) is **ignored**. To compare multiple runs, the user snapshots the canonical output between executions — never write to a non-canonical path. This is the v0.7.0 doctrine fix from the 3-LLM analysis (correctif bonus).
 
+## ⚠️ Branch-first invocations MUST go through `mem_archeo` orchestrator (v0.10.x)
+
+**Doctrinal rule, post-Gemini-drift case study 2026-05-09** : when the user wants archeo on a feature branch, **invoke `mem_archeo` (the orchestrator), not `mem_archeo_git` directly**. The orchestrator chains Phase 0 cadrage (mem_archeo_plan) → user validation → Phase 2 stack → Phase 3 git → topology persistence → Phase 5 enforcement (skeleton, history, context, index) in a single mechanical chain.
+
+Direct invocation of `mem_archeo_git` for branch-first remains technically allowed (the tool accepts `branch_first`) but **bypasses the cadrage gating**. The 2026-05-09 Gemini run on `ecosav` produced 57 archives without branch_first, without scope_glob, without context.md/history.md narrative, without topology — exactly because Gemini took the shortest path (direct `mem_archeo_git`) instead of the orchestrated path. To prevent this, branch-first runs MUST go through `mem_archeo`, which refuses to write until the LLM has acknowledged the cadrage plan via `acknowledged_via_plan=True`.
+
+The Phase 0 cadrage section below documents the gating contract on `mem_archeo`. The remaining sections of this procedure describe Phase 3 mechanics that `mem_archeo` orchestrates internally — read them as reference, not as a stand-alone invocation guide.
+
 ## Trigger
 
 The user types `/mem-archeo-git [repo-path]` or expresses intent in natural language: "do a Git retro of this project", "reconstruct the history", "archeo the commits".
@@ -37,22 +45,85 @@ Arguments:
 
   - **Live (range strict)** — `git merge-base {base} {branch}` distinct from `HEAD(branch)`. The branch is not fully merged, so `merge_base..branch` yields the proper rev-range. Standard path.
 
-  - **By-files** — set `--by-files` to query commits **touching the files introduced by the branch** (detected via `--diff-filter=A` over `merge_base..branch`), repo-wide rather than constrained to the branch range. Captures creation, evolution **and** post-merge fixes on the same files. Recommended for archeology of long-lived feature branches whose post-merge maintenance happened on `main`. When the branch is fully merged AND the diff-filter yields no files (range empty), this mode falls through to **auto-scope-by-name** (below). When `--by-files` is OFF, auto-scope-by-name is also tried as the default fallback for fully-merged branches.
+  - **Merged-via-perimeter** _(new in v0.10.x post-2026-05-09 — primary strategy when fully merged)_ — when the branch is fully merged, a multi-signal walker captures **all** merge cycles of the branch by walking `git log {base} --merges --first-parent` and scoring each merge `M` against the branch perimeter. Bootstrap : merges whose subject contains the branch name (e.g. `Merge branch 'ecosav'`, `Merge pull request #X from owner/ecosav`) are captured first as definite cycle merges, defining the authoritative perimeter (files) + author set (avoids HEAD-ancestor pollution from dev-reset workflows). Iterative widening : remaining merges are scored via `0.5 × file_score + 0.3 × author_score + 0.2 × subject_score`, where `file_score = min(|perim ∩ files_M|/|files_M|, |perim ∩ files_M|/|perim|)` (reciprocal overlap suppresses drive-by refactors), `author_score = |authors_M ∩ branch_authors|/|authors_M|` (signal off when foreign authors), `subject_score = 1.0` iff branch name in subject. Threshold `0.4`, `min_commits=2`. Each captured merge represents one full cycle of the branch — handles **dev-reset workflows** (`git reset --hard origin/base` between cycles) where the single-tip merge-commit walker would only find the latest cycle. Each cycle becomes one archive in Phase 3. Per-merge `score` + `breakdown` surfaced in archive frontmatter for audit.
 
-  - **Auto-scope-by-name** _(new in v0.10.x)_ — when the branch is fully merged AND no explicit anchor was provided, the tool derives a scope from the **branch name**. Variants are generated (kebab, snake, camelCase, PascalCase, UPPER, lower, prefix-stripped — `feat/eco-sav` strips to `eco-sav`, generates `EcoSav`, `ecosav`, `ECO-SAV`, etc.) and matched case-insensitively against the **last component** of every directory tracked at `HEAD`. The deepest match wins. The resulting `scope_glob: '<dir>/**'` then drives a repo-wide query the same way as `by-files`. Surfaced explicitly in the report warnings as `branch-first: branch fully merged into <base>; auto-scope-by-name matched directory '<dir>'`.
+  - **Merged-via-merge-commit** _(fallback for single-cycle branches when perimeter walker captures nothing)_ — when the perimeter walker returns empty AND the absorbing merge commit `M` is detectable on `base` first-parent (`M^2 == HEAD(branch)`), the tool uses range `M^1..M`. Triggered on branches whose merge subjects don't mention the branch name AND HEAD(branch) still points at the original tip (rare).
 
-  - **Refusal (no fallback dérivant)** — when the branch is fully merged AND no anchor AND no name match → the tool raises a `BranchScopeUnresolvedError` (surfaced as a structured warning, not a fatal). The caller (LLM or user) must re-invoke with `scope_glob` / `since_sha` / `since_date`. **No first-parent fallback is attempted** — the v0.10.0 `merged-fallback` strategy was retired because on long-lived absorbed branches it dove into the base branch's history (often 1000+ irrelevant commits) and produced sloppy archives. The Codex case study on `ecosav` of the IRIS USER repo (2026-05-08) made the pattern obvious enough to drop.
+  - **By-files** — set `--by-files` to query commits **touching the files introduced by the branch** (detected via `--diff-filter=A` over `merge_base..branch`), repo-wide rather than constrained to the branch range. Captures creation, evolution **and** post-merge fixes on the same files. Recommended for archeology of long-lived feature branches whose post-merge maintenance happened on `main`. Tried only when `merged-via-merge-commit` could not detect M (squash/rebase scenarios).
+
+  - **Auto-scope-by-name** _(new in v0.10.x; demoted to fallback in v0.10.x post-2026-05-09)_ — last-resort fallback when the branch is fully merged AND no merge commit M was detectable AND `by_files` did not produce a scope. Derives a scope from the **branch name**: variants are generated (kebab, snake, camelCase, PascalCase, UPPER, lower, prefix-stripped — `feat/eco-sav` strips to `eco-sav`, generates `EcoSav`, `ecosav`, `ECO-SAV`, etc.) and matched case-insensitively against the **last component** of every directory tracked at `HEAD`. The deepest match drives `scope_glob: '<dir>/**'`. Surfaced explicitly in the report warnings as `branch-first: branch fully merged into <base> AND no merge commit absorbs the branch tip on base first-parent (squash or rebase + ff); scope falls back to auto-scope-by-name → '<dir>'`. **Unreliable** by construction (name = scope is a heuristic) — the user MUST verify.
+
+  - **Refusal (no fallback dérivant)** — when the branch is fully merged AND no merge commit AND no anchor AND no name match → the tool raises a `BranchScopeUnresolvedError` (surfaced as a structured warning, not a fatal). The caller (LLM or user) must re-invoke with `scope_glob` / `since_sha` / `since_date`. **No first-parent fallback is attempted** — the v0.10.0 `merged-fallback` strategy was retired because on long-lived absorbed branches it dove into the base branch's history (often 1000+ irrelevant commits) and produced sloppy archives. The Codex case study on `ecosav` of the IRIS USER repo (2026-05-08) made the pattern obvious enough to drop.
 
 - `--branch-base {ref}`: base ref for the divergence calculation (default `main`; pass `master` if your repo uses that).
 - `--by-author` (default in branch-first): granularity is `(author_email, time-window)`. Window defaults to `day`; configurable via `--window`.
 - `--by-merge`: granularity is by merge commit on the branch (relevant for long-lived branches that absorbed sub-features).
 - `--by-window`: granularity is the classic `--window` time grouping (overrides `--by-author`).
 
-The resolution mode is reported in the archive frontmatter (`branch_resolution: live | since-sha | since-date | by-files | auto-scope-by-name`) so the user can audit which strategy ran. The legacy value `merged-fallback` still appears on archives created before the v0.10.x amendment but is no longer produced for new runs.
+The resolution mode is reported in the archive frontmatter (`branch_resolution: live | merged-via-perimeter | merged-via-merge-commit | since-sha | since-date | by-files | auto-scope-by-name`) so the user can audit which strategy ran. The legacy value `merged-fallback` still appears on archives created before the v0.10.x amendment but is no longer produced for new runs.
 
 ## Vault and repo path resolution
 
 Read {{CONFIG_FILE}} and extract `vault`, `default_scope`, and `kit_repo`. If `vault` is missing, standard error message and stop.
+
+## Phase 0 — Interactive cadrage (REQUIRED for branch-first, v0.10.x)
+
+**Doctrinal rule** : on a branch-first invocation (or any invocation that targets a long-lived feature branch with multiple authors / merges / no semver tags), no subprocess git fires for archive writing until the user has validated a structured plan. This eliminates the macro-drift class that frontmatter validation alone cannot prevent (case study : Gemini 2026-05-08 producing 73 mechanical archives under a wrong slug, no `context.md`/`history.md` created, granularity `--by-author --window=week` chosen silently, `--branch-first` not even passed → archeo of `master` instead of `ecosav`). The plan is the cadrage that surfaces those decisions before they become writes.
+
+### 0.1 Invoke `mem_archeo_plan`
+
+Call the MCP tool `mem_archeo_plan` with the repo path and (optionally) `branch`, `branch_base`, `project`. The tool is **read-only** — zero vault writes, zero side-effects. It returns an `ArcheoPlan` containing :
+
+- `user_self` : email + name from `git config user.email|name` of the target repo. Anchor for the self-vs-team author filter.
+- `branch` : resolved branch (defaults to current HEAD), resolved base (auto-detected via `origin/HEAD` or probe `main`/`master`/`develop`), `fully_merged` bool, `commits_count`.
+- `branch_authors` : list of `(email, name, commits)` in the scope. `is_solo_branch` bool (true iff exactly one author == `user_self.email`).
+- `slug` : `{candidate, source, needs_confirmation, reason}`. `source` is one of `project-arg | branch-name | needs-prompt | cwd-basename`.
+- `project` : `{exists, will_init, path}`.
+- `scope` : `{mode, scope_glob, scope_globs, files_count_estimate}`. `mode` is `live | merged-via-perimeter | merged-via-merge-commit | by-files | auto-scope-by-name | since-sha | since-date | refusal`. `scope_globs` lists every directory matched when `mode == 'auto-scope-by-name'`. When `mode == 'merged-via-perimeter'`, `files_count_estimate` is the union across all captured cycles.
+- `granularity` : `{proposed, reason}`. Default heuristics : has-merges → `by-merge` ; solo + ≥3 commits → `by-window-month` ; multi-author + ≥10 → `by-window-month` ; small scope → `by-window-week`. **Never proposes `by-author-week` by default** — too noisy, only useful for HR-style attribution.
+- `filters` : `{author_self_only, include_team}`. Default solo-branch → `author_self_only=true` ; multi-author → `include_team=true`.
+- `warnings` : list of strings that the LLM MUST surface to the user.
+- `summary_md` : pre-formatted Markdown briefing.
+
+### 0.2 Surface plan to user, await validation
+
+Display the plan's `summary_md` to the user. Ask for explicit validation, with override slots for at least :
+
+- **slug** : when `needs_confirmation=true` (cryptic branch name like `JIRA-1234`, `feat/ABC-456`), MUST ask the user for a meaningful project slug. When `needs_confirmation=false` but `project.exists=false` AND a similarly-named project already exists in the vault (typo, plural, hyphen vs underscore), ALSO ask. Override : `--project {slug}`.
+- **project init** : when `project.will_init=true`, announce explicitly that `context.md` + `history.md` + `archives/` will be created. The user may decline (e.g. choose to merge into an existing project instead). Override : `--project {existing-slug}`.
+- **scope mode** : when `mode == 'refusal'`, the user MUST provide an anchor (`--since-sha`, `--since-date`, `--scope-glob`) — Phase 3 cannot proceed without it. When `mode == 'merged-via-perimeter'`, surface the **count of captured merge cycles** + per-cycle scores (from `branch-first` notes in `warnings`) so the user can spot any false positive (e.g. a cross-project refactor that scraped the threshold). When `mode == 'merged-via-merge-commit'`, surface the absorbing merge commit SHA + range (`M^1..M`) for transparency. When `mode == 'auto-scope-by-name'`, surface the resolved glob (and `scope_globs` list when several dirs matched) and ask the user to confirm or override — this fallback is heuristic.
+- **granularity** : present the proposed value with the reason. Override : `--by-merge`, `--by-window-month`, `--by-window-week`, `--by-author-week`. The user may also accept the proposal silently (typical case).
+- **filters** : present the `author_self_only` / `include_team` proposal. Override : `--author-self-only=true|false`, `--include-team=true|false`.
+- **warnings** : every warning in `plan.warnings` MUST be acknowledged. Don't just print them — re-present them as questions when relevant ("the branch is fully merged into base, do you want me to proceed with the auto-scope-by-name resolution?").
+
+The user may also abort (`/cancel`) — in which case nothing happens.
+
+### 0.3 Pass validated plan to `mem_archeo_git`
+
+Once the user has validated, invoke `mem_archeo_git` with the **exact arguments from `plan.next_call`** — literal copy, zero translation, zero reinterpretation. The plan field is structured precisely so the LLM does not have to translate "by-merge granularity" into a flag that does not exist (`mem_archeo_git` has no `by_merge` parameter — perimeter mode emits one archive per captured cycle natively, the granularity displayed in the plan is informational only).
+
+Doctrinal rule, post-2026-05-09 IRIS USER case study :
+
+- **Read `plan.next_call` (a `dict`).**
+- **Invoke `mem_archeo_git` with literally those keyword arguments.** Do NOT add `since`/`until`/`scope_glob` filters that were not in `next_call`. Do NOT change `level` / `window` / `by_author`. Do NOT drop `branch_first` because the user said "by-merge" — the perimeter mode already produces one archive per cycle.
+- **If the user explicitly overrides a field during validation** (e.g. picks a different slug, narrows scope to a sub-glob), update the corresponding key in `next_call` before invoking. Never re-derive the whole call from the user's text.
+
+The 2026-05-09 case study : Gemini invoked `mem_archeo_plan` correctly (mode `merged-via-perimeter`, ~50 files, 30 absorbed merge cycles), then translated the validated plan freely into `mem_archeo_git(level='commits', window='week', by_author=True, scope_glob=…)` — **dropping `branch_first=ecosav`**. Result : standard discovery fired, 2 archives instead of ~30 cycles, frontmatter `branch: ''`, no perimeter metadata, no per-merge audit. The `next_call` dict eliminates this drift category.
+
+If the user explicitly aborts (`/cancel`), nothing happens.
+
+The Phases 1 → 6 below operate on the validated parameters. **No silent re-derivation of the slug or granularity inside Phases 1+** — if the LLM finds a discrepancy (e.g. the resolved slug doesn't match an existing project found mid-Phase 5), surface it back to the user, do not auto-correct.
+
+### 0.4 Skip Phase 0 only when explicitly safe
+
+The Phase 0 cadrage is doctrinally required for branch-first runs. It is OPTIONAL (and may be skipped) only when ALL of the following are true :
+
+- standard mode (no `--branch-first` flag), AND
+- the milestone source is `tags` or `releases` (semver tags or GitHub releases — well-defined boundaries), AND
+- the project slug already exists in the vault (no init), AND
+- `--no-confirm` was passed explicitly by the user.
+
+In all other cases — branch-first, commit-windows, merges, missing project — Phase 0 is mandatory.
 
 ## Procedure
 
@@ -150,7 +221,7 @@ This is the v0.7.0 doctrine fix — without active surfacing of friction, multi-
 
 #### d. Build the content for the router
 
-Prepare a structured Markdown with explicit delimiters to ease segmentation by the router. **The first three sections (Main, AI files context, Friction & Resolution) are mandatory in the body — `## AI files context` always present (with explicit fallback if empty), `## Friction & Resolution` always present too (with explicit fallback if no friction).** Never omit a section without its fallback line. This rule is a doctrine fix from the v0.7.0 first-run analysis (the LLM tends to silently drop empty sections).
+Prepare a structured Markdown with explicit delimiters to ease segmentation by the router. **Five sections are mandatory in the body — Main, Analyse fonctionnelle, Analyse technique, AI files context, Friction & Resolution. Each carries an explicit fallback marker if the LLM has nothing material to add.** Never omit a section without its fallback line. The 2 new analysis sections (Analyse fonctionnelle + Analyse technique) extend the v0.7.0 invariant in v0.10.x after the 2026-05-08 Gemini case study showed that purely mechanical archives (subject Git + diff stats) lose all narrative value. Forcing the LLM to either fill them with judgment OR explicitly mark them empty makes the silent omission impossible.
 
 ```
 # Milestone archive — {tag|sha|range}
@@ -160,6 +231,37 @@ Prepare a structured Markdown with explicit delimiters to ease segmentation by t
 - Files modified (counts and notable paths)
 - Linked tickets and PRs
 - Summary of what shipped
+
+## Analyse fonctionnelle
+
+{What changed for the user / business: the feature delivered, the bug fixed,
+the behaviour altered. Strip technical detail — that lives in the next
+section. The audience here is the non-technical reader who wants to
+understand the user-facing intent of this milestone in 30 seconds.
+
+If the milestone has genuinely no functional impact (refactor, tooling, doc),
+write a one-liner explicitly saying so:
+
+  No user-facing functional change in this milestone — refactor / tooling / doc only.
+
+Never omit the section.}
+
+## Analyse technique
+
+{How the change is implemented: layer touched, pattern introduced,
+dependencies added/removed, side-effects, risks, perf implications.
+Surface anything an experienced engineer reading the diff would want to
+know in 30 seconds. Pull from the topology + stack context provided by
+Phase 0 / Phase 2 — the LLM should recognise stack-typical patterns
+(e.g. CORS issues are characteristic of self-hosted Supabase, RLS
+patterns are characteristic of multi-tenant pgsql).
+
+If the diff is trivial (typo, format, single-line config change), write
+a one-liner explicitly saying so:
+
+  Trivial change — typo / format / single-line config; no architectural impact.
+
+Never omit the section.}
 
 ## AI files context
 
@@ -268,6 +370,22 @@ Otherwise: iterate over all milestones. The router handles user confirmation in 
 After all milestones are ingested, scan the atoms produced by this run for **semantic overlaps** (lexical signals on subject + body keywords). For each pair of atoms whose subjects share ≥2 significant terms (excluding stop words), add reciprocal wikilinks in a `## Related` section of each atom.
 
 Heuristic: if atom A's subject mentions terms present in atom B's subject (and vice versa), create the link. This is intentionally simple — the goal is to break the "archipelago of atoms" failure mode from the 3-LLM analysis (correctif 3), not to build a perfect knowledge graph.
+
+### 7.6 Phase 5 enforcement — context / history / index updates (v0.10.x)
+
+After the per-milestone write loop, the MCP tool layer (`tools/archeo_git.py::_enforce_phase5`) automatically:
+
+1. **Auto-init project skeleton** — if `{project}/context.md` or `{project}/history.md` is missing, create both via `execute_init_project`. The 2026-05-08 Gemini case study showed what happens when this is left to LLM judgement: 73 archives under `user-prod-iris/` with no skeleton at all. The doctrine is now mechanical: every archeo write lands inside a project with a complete skeleton, full stop. Existing archives in the folder are preserved during init (they get backed up + restored).
+
+2. **Patch `{project}/history.md`** — prepend a new entry per archive created/revised, after the H1 header. Entries are minimal (`- [{stem}](archives/{filename})`) — the heavy narrative lives in the archive itself. Idempotent : entries already referenced are skipped, re-running the same archeo doesn't duplicate the history.
+
+3. **Patch `{project}/context.md`** — rewrite `phase` to `archeo-git run on {today} — {N} archive(s) created branch {branch} ← {base} (sha {sha[:12]})` and bump `last-session`. Idempotent on (today, count, branch). The previous `phase` value is overwritten — Phase 3 archeo runs are themselves the meaningful "phase" for the project's recent state.
+
+4. **Patch root `index.md`** — insert each new archive at the top of the `## Archives` section. Idempotent. Best-effort — if `## Archives` is not present (older vault layout), append at the end with the section header.
+
+5. **Failure mode** — Phase 5 enforcement runs in a try/except. If anything raises (vault read-only, partial filesystem failure, etc.), the error is surfaced as a `warning` in the result, not as a tool error. The archives have already been written successfully ; the user can re-run `mem_health_repair` to reconcile the skeleton.
+
+This step is **not optional**. The doctrinal rule is : every `mem_archeo_git` invocation that produces ≥1 archive MUST also leave `context.md` + `history.md` + `index.md` consistent. Skipping any of these reproduces the Gemini drift (no skeleton, no narrative recap, archives invisible to `mem_recall`).
 
 ### 8. Update the persisted topology
 

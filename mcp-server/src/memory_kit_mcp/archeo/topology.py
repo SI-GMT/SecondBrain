@@ -156,10 +156,20 @@ def _run_git(args: list[str], cwd: Path) -> list[str]:
 
     Raises ``RuntimeError`` on non-zero exit so callers can surface the
     underlying git error to the user instead of silently degrading.
+
+    ``stdin=subprocess.DEVNULL`` is critical when the MCP server runs over
+    stdio on Windows — otherwise the git subprocess inherits the parent
+    JSON-RPC stdin pipe, races the FastMCP reader for incoming bytes, and
+    the whole call deadlocks indefinitely. Symptom : the tool is logged as
+    'Processing request of type CallToolRequest' but never returns. Reproduced
+    on Gemini CLI 2026-05-08 with mem_archeo_index_files on a 1263-file repo
+    (the raw os.walk path was unaffected). Same fix applies to every other
+    git subprocess call in the codebase.
     """
     result = subprocess.run(
         ["git", *args],
         cwd=str(cwd),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -209,6 +219,412 @@ def _git_ls_files(
     if trace is not None:
         trace.append(f"[git] git ls-files -> {len(out)} file(s)")
     return [PurePosixPath(f) for f in sorted(out)]
+
+
+@dataclass
+class BranchMerge:
+    """One merge commit captured by :func:`find_branch_merges_via_perimeter`.
+
+    Fields:
+
+    - ``sha`` : merge commit SHA.
+    - ``parent1`` : merge_base at merge time (M^1).
+    - ``parent2`` : absorbed branch tip at merge time (M^2).
+    - ``range`` : ``f"{parent1}..{sha}"`` — git rev-range for this cycle.
+    - ``files`` : files touched in M^1..M^2 (deduped).
+    - ``score`` : multi-signal confidence ∈ [0, 1].
+    - ``breakdown`` : dict[str, float] with sub-scores
+      (file_score, author_score, subject_score) for audit.
+    """
+
+    sha: str
+    parent1: str
+    parent2: str
+    range: str
+    files: frozenset[str]
+    score: float
+    breakdown: dict[str, float]
+    subject: str = ""
+
+
+# Multi-signal scoring constants. Tuned conservatively — false positives are
+# more costly than false negatives in archeo (a wrong merge claimed pollutes
+# the project history with cross-project work). The user can audit per-merge
+# scores via the ``breakdown`` field of every captured BranchMerge.
+_PERIMETER_MIN_COMMITS = 2
+_PERIMETER_FILE_WEIGHT = 0.5
+_PERIMETER_AUTHOR_WEIGHT = 0.3
+_PERIMETER_SUBJECT_WEIGHT = 0.2
+_PERIMETER_SCORE_THRESHOLD = 0.4
+
+
+def _files_in_range(repo: Path, p1: str, p2: str) -> frozenset[str]:
+    """Files touched by ``git log p1..p2 --name-only``, deduped."""
+    try:
+        out = _run_git(
+            ["log", f"{p1}..{p2}", "--name-only", "--pretty=format:"], repo
+        )
+    except RuntimeError:
+        return frozenset()
+    return frozenset(ln.strip() for ln in out if ln.strip())
+
+
+def _authors_in_range(repo: Path, p1: str, p2: str) -> frozenset[str]:
+    """Author emails in ``git log p1..p2``, deduped."""
+    try:
+        out = _run_git(
+            ["log", f"{p1}..{p2}", "--format=%ae"], repo
+        )
+    except RuntimeError:
+        return frozenset()
+    return frozenset(ln.strip().lower() for ln in out if ln.strip())
+
+
+def _commits_count_range(repo: Path, p1: str, p2: str) -> int:
+    try:
+        out = _run_git(["rev-list", "--count", f"{p1}..{p2}"], repo)
+        return int(out[0]) if out else 0
+    except (RuntimeError, ValueError, IndexError):
+        return 0
+
+
+def _seed_perimeter_from_branch(
+    repo: Path, branch: str, *, max_commits: int = 30
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Seed perimeter from the last N commits of HEAD(branch).
+
+    Used when the current cycle is not absorbed by any merge commit on base
+    first-parent (e.g. branch was reset and not yet re-merged). Walks
+    HEAD(branch) backward up to ``max_commits`` and collects every file +
+    author touched. Includes ``--follow``-aware rename detection by reading
+    `git log --name-only --follow` per file would be O(n²); we approximate
+    by including stable file basenames as well.
+    """
+    try:
+        files_out = _run_git(
+            [
+                "log",
+                branch,
+                f"-n{max_commits}",
+                "--name-only",
+                "--pretty=format:",
+            ],
+            repo,
+        )
+    except RuntimeError:
+        files_out = []
+    files = frozenset(ln.strip() for ln in files_out if ln.strip())
+    try:
+        authors_out = _run_git(
+            ["log", branch, f"-n{max_commits}", "--format=%ae"], repo
+        )
+    except RuntimeError:
+        authors_out = []
+    authors = frozenset(
+        ln.strip().lower() for ln in authors_out if ln.strip()
+    )
+    return files, authors
+
+
+def _expand_seed_with_renames(
+    repo: Path, seed_files: frozenset[str]
+) -> frozenset[str]:
+    """Augment seed with historical names of each file via ``git log --follow``.
+
+    Captures dir migrations (``src/old/x.py`` → ``src/new/x.py``) so older
+    cycles touching the original path are still claimed via file overlap.
+    Bounded: only first 100 seed files inspected to keep cost reasonable.
+    """
+    expanded: set[str] = set(seed_files)
+    for f in list(seed_files)[:100]:
+        try:
+            out = _run_git(
+                ["log", "--follow", "--name-only", "--pretty=format:", "--", f],
+                repo,
+            )
+        except RuntimeError:
+            continue
+        for ln in out:
+            ln = ln.strip()
+            if ln:
+                expanded.add(ln)
+    return frozenset(expanded)
+
+
+def _score_merge(
+    files_i: frozenset[str],
+    authors_i: frozenset[str],
+    subject_i: str,
+    perimeter: frozenset[str],
+    branch_authors: frozenset[str],
+    branch_name: str,
+) -> tuple[float, dict[str, float]]:
+    """Score a merge commit against the branch perimeter.
+
+    Returns ``(score, breakdown)``. Score ∈ [0, 1].
+
+    Components:
+    - **file_score** = ``min(|perim ∩ files_i|/|files_i|, |perim ∩ files_i|/|perim|)``.
+      The ``min`` enforces reciprocal overlap : a drive-by refactor that
+      touches the perimeter dirs but only a tiny fraction of the perimeter
+      itself scores low. Both ratios must be high.
+    - **author_score** = ``|authors_i ∩ branch_authors| / |authors_i|``.
+      Branche solo : near-binary. Multi-author : graceful degrade.
+    - **subject_score** = 1.0 iff branch name appears in merge subject
+      (case-insensitive substring), else 0.0. Cheap GitHub-PR signal.
+    """
+    if not files_i or not perimeter:
+        file_score = 0.0
+    else:
+        inter = len(perimeter & files_i)
+        ratio_a = inter / len(files_i)
+        ratio_b = inter / len(perimeter)
+        file_score = min(ratio_a, ratio_b)
+
+    if not authors_i:
+        author_score = 0.0
+    else:
+        author_score = len(authors_i & branch_authors) / len(authors_i)
+
+    subject_score = (
+        1.0 if branch_name and branch_name.lower() in subject_i.lower() else 0.0
+    )
+
+    score = (
+        _PERIMETER_FILE_WEIGHT * file_score
+        + _PERIMETER_AUTHOR_WEIGHT * author_score
+        + _PERIMETER_SUBJECT_WEIGHT * subject_score
+    )
+    breakdown = {
+        "file_score": round(file_score, 3),
+        "author_score": round(author_score, 3),
+        "subject_score": round(subject_score, 3),
+    }
+    return score, breakdown
+
+
+def find_branch_merges_via_perimeter(
+    repo: Path,
+    branch: str,
+    base: str,
+    *,
+    score_threshold: float = _PERIMETER_SCORE_THRESHOLD,
+    min_commits: int = _PERIMETER_MIN_COMMITS,
+    max_iterations: int = 5,
+    rename_aware_seed: bool = True,
+) -> list[BranchMerge]:
+    """Capture all merge commits on ``base`` first-parent that absorbed
+    work sharing perimeter with ``branch``.
+
+    Handles dev-reset cycles : a branch periodically reset to ``origin/base``
+    and re-merged produces N merge commits with disjoint ``parent2`` chains,
+    none equal to current ``HEAD(branch)``. The single-tip walker
+    :func:`find_merge_commit_for_branch` only finds the most recent. This
+    walker captures all of them via multi-signal scoring (files, authors,
+    subject) with reciprocal-overlap reciprocity to suppress drive-by
+    refactors.
+
+    Algorithm :
+
+    1. **Seed** : try :func:`find_merge_commit_for_branch` first. On hit,
+       seed = files + authors of M^1..M^2. On miss, fall back to last 30
+       commits of HEAD(branch).
+    2. **Rename-aware** : optionally expand seed via ``git log --follow``
+       per file to capture dir migrations.
+    3. **Score loop** : for each merge on ``base --merges --first-parent``,
+       compute ``score``. Capture iff ``score ≥ threshold`` AND
+       ``commits ≥ min_commits``.
+    4. **Iterative widening** : after each pass, propagate captured files
+       into perimeter and rescan unclaimed merges. Repeat until fixed point
+       or ``max_iterations``.
+
+    Returns merges sorted by SHA's commit date (oldest first) so the caller
+    can produce one chronological archive per cycle.
+
+    Empty list when nothing meets the threshold (caller should fall back to
+    auto-scope-by-name or refusal).
+    """
+    # Step 1 : enumerate all merge candidates on base first-parent.
+    try:
+        merge_lines = _run_git(
+            [
+                "log",
+                base,
+                "--merges",
+                "--first-parent",
+                "--format=%H %P|%s",
+            ],
+            repo,
+        )
+    except RuntimeError:
+        return []
+
+    candidates: list[tuple[str, str, str, str]] = []  # (M, p1, p2, subject)
+    for line in merge_lines:
+        if "|" not in line:
+            continue
+        sha_parents, subject = line.split("|", 1)
+        parts = sha_parents.split()
+        if len(parts) < 3:
+            continue
+        candidates.append((parts[0], parts[1], parts[2], subject.strip()))
+
+    # Step 2 : bootstrap from subject-matching merges. These are definite
+    # cycle merges (GitHub default subject "Merge pull request #X from
+    # owner/{branch}" or "Merge branch '{branch}'"). They define the
+    # authoritative perimeter + author set for subsequent file/author
+    # propagation. Without this bootstrap, dev-reset workflows pollute
+    # branch_authors via HEAD(branch) ancestors (after reset, HEAD points
+    # at base, so the ancestor walk picks up every author who merged into
+    # base — Alice's perf-rewrite merge looks like a "branch author").
+    captured: dict[str, BranchMerge] = {}
+    perimeter: frozenset[str] = frozenset()
+    branch_authors_observed: frozenset[str] = frozenset()
+    branch_lower = branch.lower()
+
+    bootstrap = [
+        c for c in candidates if branch_lower in c[3].lower()
+    ]
+    for m_sha, p1, p2, subject in bootstrap:
+        n_commits = _commits_count_range(repo, p1, m_sha)
+        if n_commits < min_commits:
+            continue
+        files_i = _files_in_range(repo, p1, m_sha)
+        authors_i = _authors_in_range(repo, p1, m_sha)
+        # Subject match alone qualifies (score = 1.0 * subject_weight + ...
+        # ≥ 0.4 trivially when matching is exact).
+        captured[m_sha] = BranchMerge(
+            sha=m_sha, parent1=p1, parent2=p2,
+            range=f"{p1}..{m_sha}",
+            files=files_i, score=1.0,
+            breakdown={
+                "file_score": 1.0, "author_score": 1.0, "subject_score": 1.0,
+            },
+            subject=subject,
+        )
+        perimeter = perimeter | files_i
+        branch_authors_observed = branch_authors_observed | authors_i
+
+    # Step 3 : when bootstrap empty, fall back to single-tip walker + HEAD
+    # ancestor seed. Used for branches whose merge subjects don't mention
+    # the branch name (rare, but possible — e.g. squash merge subject =
+    # the squashed commit's subject).
+    if not captured:
+        initial = find_merge_commit_for_branch(repo, branch, base)
+        if initial is not None:
+            m_sha, p1, _p2 = initial
+            perimeter = _files_in_range(repo, p1, m_sha)
+            branch_authors_observed = _authors_in_range(repo, p1, m_sha)
+        else:
+            perimeter, branch_authors_observed = _seed_perimeter_from_branch(
+                repo, branch
+            )
+
+    if rename_aware_seed and perimeter:
+        perimeter = _expand_seed_with_renames(repo, perimeter)
+
+    if not perimeter:
+        return list(captured.values())
+
+    # Step 4 : iterative widening — capture additional cycles whose subject
+    # didn't match (renamed branch, squash merge, etc.) using file +
+    # author overlap with the bootstrapped perimeter.
+    for _iter_idx in range(max_iterations):
+        new_hits = 0
+        for m_sha, p1, p2, subject in candidates:
+            if m_sha in captured:
+                continue
+            n_commits = _commits_count_range(repo, p1, m_sha)
+            if n_commits < min_commits:
+                continue
+            files_i = _files_in_range(repo, p1, m_sha)
+            authors_i = _authors_in_range(repo, p1, m_sha)
+            score, breakdown = _score_merge(
+                files_i, authors_i, subject,
+                perimeter, branch_authors_observed, branch,
+            )
+            if score >= score_threshold:
+                captured[m_sha] = BranchMerge(
+                    sha=m_sha, parent1=p1, parent2=p2,
+                    range=f"{p1}..{m_sha}",
+                    files=files_i, score=round(score, 3),
+                    breakdown=breakdown, subject=subject,
+                )
+                perimeter = perimeter | files_i
+                branch_authors_observed = branch_authors_observed | authors_i
+                new_hits += 1
+        if new_hits == 0:
+            break
+
+    # Sort by commit date (chronological). Use git show on each.
+    def _commit_date(sha: str) -> str:
+        try:
+            return _run_git(["show", "-s", "--format=%aI", sha], repo)[0]
+        except (RuntimeError, IndexError):
+            return ""
+
+    return sorted(captured.values(), key=lambda bm: _commit_date(bm.sha))
+
+
+def _safe_first_commit(repo: Path, ref: str) -> str:
+    """Return the root commit reachable from ``ref`` (or ``ref`` itself on
+    failure). Used as a left endpoint for the no-merge author seed query."""
+    try:
+        return _run_git(
+            ["rev-list", "--max-parents=0", ref], repo
+        )[0]
+    except (RuntimeError, IndexError):
+        return ref
+
+
+def find_merge_commit_for_branch(
+    repo: Path, branch: str, base: str
+) -> tuple[str, str, str] | None:
+    """Find the merge commit on ``base`` first-parent that absorbed ``branch``.
+
+    Walks ``git log base --merges --first-parent`` looking for a merge commit
+    M whose **second parent** equals ``HEAD(branch)``. When found, returns
+    ``(M_sha, first_parent, second_parent)``. The deterministic Phase 3 scope
+    is then ``M^1..M^2``: the commits unique to the absorbed branch.
+
+    Returns ``None`` when:
+
+    - ``branch`` cannot be rev-parsed,
+    - the base log walk fails,
+    - no merge commit references HEAD(branch) as its second parent (e.g.
+      squash merge collapses history into a single commit; rebase + ff
+      replays commits as base first-parents — both cases lose the merge
+      commit M and force the caller to fall back to ``auto-scope-by-name``).
+
+    Doctrine: replaces the unreliable name-matching heuristic as the
+    **primary** strategy when a branch is fully merged. See
+    ``core/procedures/_archeo-architecture-v2.md`` Principe 2.
+    """
+    try:
+        branch_tip = _run_git(["rev-parse", branch], repo)[0]
+    except (RuntimeError, IndexError):
+        return None
+    try:
+        merges = _run_git(
+            [
+                "log",
+                base,
+                "--merges",
+                "--first-parent",
+                "--format=%H %P",
+            ],
+            repo,
+        )
+    except RuntimeError:
+        return None
+    for line in merges:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        m_sha, parent1, parent2 = parts[0], parts[1], parts[2]
+        if parent2 == branch_tip:
+            return (m_sha, parent1, parent2)
+    return None
 
 
 class BranchScopeUnresolvedError(RuntimeError):

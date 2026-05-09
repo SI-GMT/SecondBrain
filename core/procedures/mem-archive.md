@@ -220,6 +220,58 @@ Context updated: {context.md path}
 The /clear is safe — use /mem-recall {slug} to resume.
 ```
 
+## Manual fallback after `mem_archeo_git` failure (v0.10.x)
+
+When `mem_archeo_git` fails (timeout, missing scope, refusal on a fully merged
+branch, network) the user can still persist the session as a **manual archeo-git
+archive** by calling `mem_archive` in full mode with the `source_hint="archeo-git"`
+parameter and the `archive_extra_fm` parameter populated with the archeo-git
+MUST fields. The tool refuses to write if any MUST field is missing — no silent
+degradation to a generic archive (which is what produced the impoverished
+`gmt-user/archeo-dev-compta-branch-first` archive in 2026-05).
+
+**Required `archive_extra_fm` keys when `source_hint="archeo-git"`** (cf.
+`_frontmatter-archeo.md` MUST table, "source: archeo-git (archive)" column):
+
+| Key | Notes |
+|---|---|
+| `source` | MUST equal `archeo-git` |
+| `scope` | `personal` or `work` |
+| `collective` | bool, typically `false` |
+| `modality` | `left` for archeo |
+| `branch` | branch name in branch-first mode, `''` in standard mode |
+| `branch_base` | base ref (e.g. `master`) in branch-first, `''` standard |
+| `branch_base_sha` | base commit SHA in branch-first, `''` standard |
+| `milestone_kind` | `tag\|release\|merge\|window` |
+| `source_milestone` | tag/release/PR/window identifier |
+| `commit_sha` | anchor commit SHA, `''` for multi-commit windows |
+| `granularity` | `window\|by-author\|by-merge\|tag\|release\|merge` |
+| `friction_detected` | bool |
+| `derived_atoms` | list of `[[wikilink]]` (empty `[]` if none) |
+| `content_hash` | SHA-256 of body (LF-normalised, UTF-8 no BOM) |
+| `previous_atom` | `''` first write |
+| `topology_snapshot_hash` | `''` unless triggered from full-mode topology refresh |
+| `repo_path` | absolute repo path |
+
+`tags:` is auto-concatenated by the writer — pass any extra ones in the
+`archive_extra_fm['tags']` list (e.g. `source/archeo-git`, `category/{cat}`,
+`branch/{branch}`); they are merged with the universal tags `kind/archive`,
+`zone/episodes`, `project/{slug}`. The tool's docstring lists the same
+contract for in-line LLM reference.
+
+**Why this enforcement.** A 2026-05 case study revealed a Gemini run that
+fell back to `mem_archive` without these fields after `mem_archeo_git` timed
+out. The resulting archive parsed fine, displayed in Obsidian, but was
+invisible to the namespace-detection heuristic of `migrate v2_namespace_to_domain`
+(which keys on `branch:` + `source: archeo-git`) and to `mem_health_scan`
+category `archeo-archive-incomplete-frontmatter`. The doctrinal solution is
+fail-fast at write time, not fix-up at scan time.
+
+The MCP tool `mem_archive` raises `ArcheoFrontmatterIncompleteError` (a
+`ValueError` subclass) listing every missing key. Skill-mode callers (no MCP)
+are expected to apply the same checklist manually before writing — the
+health-scan category catches drift either way.
+
 ## Archived projects handling (v0.7.4)
 
 Per `core/procedures/_archived.md` (doctrinal block).

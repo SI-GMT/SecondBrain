@@ -189,3 +189,109 @@ async def test_orchestrator_idempotent_on_second_call(
     assert second.structured_content["git"]["archives_skipped"] == 2
     # Topology already exists from first run
     assert second.structured_content["topology_outcome"] == "skipped"
+
+
+# ---------- Branch-first cadrage gating (v0.10.x post-Gemini-drift) ----------
+
+
+def _git_init_repo_with_branch(repo: Path, branch_name: str = "ecosav") -> None:
+    """Init a repo with main + a feature branch carrying 2 commits."""
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "user@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "User"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "commit.gpgsign", "false"], check=True)
+    (repo / "README.md").write_text("# init", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", branch_name], check=True, capture_output=True)
+    (repo / "src" / "EcoSAV").mkdir(parents=True)
+    (repo / "src" / "EcoSAV" / "x.cls").write_text("Class A {}", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "feat: add x"], check=True, capture_output=True)
+
+
+async def test_orchestrator_branch_first_without_acknowledgment_returns_plan(
+    client: Client, vault_tmp: Path, tmp_path: Path
+) -> None:
+    """Branch-first invocation without acknowledged_via_plan → returns plan, no writes."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init_repo_with_branch(repo, "ecosav")
+
+    result = await client.call_tool(
+        "mem_archeo",
+        {
+            "repo_path": str(repo),
+            "branch_first": "ecosav",
+            "branch_base": "main",
+        },
+    )
+    data = result.structured_content
+
+    assert data["needs_validation"] is True
+    assert data["plan"] is not None
+    assert data["plan"]["branch"]["name"] == "ecosav"
+    assert data["stack"] is None
+    assert data["git"] is None
+    assert data["topology_outcome"] == "skipped"
+    # No vault writes happened.
+    proj_dir = vault_tmp / "10-episodes" / "projects" / "ecosav"
+    assert not proj_dir.exists()
+
+
+async def test_orchestrator_branch_first_with_acknowledgment_chains_through(
+    client: Client, vault_tmp: Path, tmp_path: Path
+) -> None:
+    """With acknowledged_via_plan=True, the chain runs through Phase 2 + 3 + topology + Phase 5."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init_repo_with_branch(repo, "ecosav")
+
+    result = await client.call_tool(
+        "mem_archeo",
+        {
+            "repo_path": str(repo),
+            "project": "ecosav",
+            "branch_first": "ecosav",
+            "branch_base": "main",
+            "acknowledged_via_plan": True,
+            "level": "commits",
+            "window": "month",
+        },
+    )
+    data = result.structured_content
+
+    assert data["needs_validation"] is False
+    assert data["plan"] is None
+    assert data["stack"] is not None
+    assert data["git"] is not None
+    # Phase 5 enforcement: project skeleton created
+    proj_dir = vault_tmp / "10-episodes" / "projects" / "ecosav"
+    assert (proj_dir / "context.md").is_file()
+    assert (proj_dir / "history.md").is_file()
+    # Topology persisted
+    topo = vault_tmp / "99-meta" / "repo-topology" / "ecosav.md"
+    assert topo.is_file()
+    # Branch frontmatter populated on archives
+    archives = list((proj_dir / "archives").glob("*.md"))
+    assert archives, "expected at least one archive"
+    fm, _ = frontmatter.read(archives[0])
+    assert fm["branch"] == "ecosav"
+    assert fm["branch_base"] == "main"
+
+
+async def test_orchestrator_standard_mode_skips_gating(
+    client: Client, vault_tmp: Path, tmp_path: Path
+) -> None:
+    """Standard mode (no branch_first) bypasses the cadrage gating entirely."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init_repo_with_tags(repo)
+
+    result = await client.call_tool(
+        "mem_archeo",
+        {"repo_path": str(repo), "project": "alpha"},
+    )
+    # No needs_validation surface in standard mode.
+    assert result.structured_content["needs_validation"] is False
+    assert result.structured_content["git"] is not None
