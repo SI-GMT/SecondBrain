@@ -28,14 +28,6 @@ mcp-server/                   ← serveur MCP Python (v0.8.0)
                                 atomic_io UTF-8/LF/hash, scanner)
   tests/                      ← pytest, 294 tests (v0.10.0) via
                                 fastmcp.Client in-memory
-desktop-app/                  ← app systray Python (V1 100% Python ; refonte
-                                Kotlin Compose Multiplatform prévue en V2)
-  pyproject.toml              ← pystray + pillow + plyer + pydantic
-  src/sb_desktop/             ← CLI + tray + dialogs Tkinter, consumer thin
-                                du moteur memory-kit-mcp via subprocess
-  tests/                      ← pytest, 47 tests, couverture 84% (UI exclue)
-  build/                      ← PyInstaller spec, Inno Setup script Windows,
-                                Info.plist + DMG sign+notarize macOS
 memory/                       ← vault Obsidian local (non versionné avec le kit)
 deploy.ps1                    ← assemble adapters + core, installe dans ~/.claude/,
                                 installe le serveur MCP via pipx, inject la
@@ -104,18 +96,6 @@ Workflow lors d'une modification core ↔ Python :
 1. Modifier `core/procedures/mem-X.md` ET `mcp-server/src/memory_kit_mcp/tools/X.py` ensemble (même commit).
 2. Lancer `python -m memory_kit_mcp.sync update --kit-repo /path/to/SecondBrain` pour recalculer les hashes.
 3. Inclure `sync.json` dans le même commit. Le scanner ne flaggera pas tant que `sync.json` est aligné.
-
-## Discipline `desktop-app/`
-
-L'app desktop est un composant **autonome** dans le repo : version `sb-desktop-vX.Y.Z` indépendante du kit (`vX.Y.Z` du moteur). Elle ne s'importe **jamais** `memory_kit_mcp` — toute interaction avec le moteur passe par subprocess (binaire `memory-kit-mcp.exe` localisé via `MEMORY_KIT_MCP_BIN` env, PATH, ou pipx fallback). Ce découplage tient les deux cadences de release séparées et permet de bumper le kit sans rebuilder l'installeur desktop.
-
-Discipline pour modifier `desktop-app/` :
-
-1. Le kit n'est **pas** un import-time dependency — `pyproject.toml` n'a pas `memory-kit-mcp` en deps. Ne pas l'ajouter.
-2. Tout protocole MCP utilisé doit transiter par `mcp_client.py` (one-shot stdio JSON-RPC) — pas de SDK `mcp` Python, ça gonflerait le bundle PyInstaller pour rien.
-3. Toute action mutante (vault repair, code update) DOIT être gated par confirmation explicite. Le pattern `confirmed=True` dans `update.run_update()` est un interlock dur.
-4. UI Tkinter only — zéro framework GUI lourd (pas de PySide/Qt/wx). Justifié par la doctrine V2 = Kotlin rewrite : on n'investit pas en V1 dans une stack qui sera jetée.
-5. Coverage cible 70% avec UI/notifications exclus (live display non-testable headless) — `.coveragerc` pilote l'omit.
 
 ## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, etc.)
 
