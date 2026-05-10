@@ -18,7 +18,31 @@ from memory_kit_mcp.tools._models import (
     RecallInventory,
     RecallResult,
 )
+from memory_kit_mcp.update_check import check_for_update
 from memory_kit_mcp.vault import frontmatter, paths
+
+
+def _update_banner_md() -> str:
+    """Return a one-line update banner for prepending to user-visible output.
+
+    Empty string when no update is available or the check fails. Recall is
+    typically auto-invoked at session start (when the user expresses a
+    resumption intent), so injecting the banner here is the most reliable
+    way to surface release notifications to the user — the MCP spec offers
+    no client-pushed UI mechanism.
+    """
+    try:
+        info = check_for_update()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not info.update_available or not info.latest_version:
+        return ""
+    return (
+        f"> ⚠️ A new SecondBrain version is available: "
+        f"**v{info.latest_version}** (installed: v{info.current_version}). "
+        f"Update: `git pull && deploy.ps1 -RepairMcp` (Windows) or "
+        f"`git pull && deploy.sh --repair-mcp` (macOS/Linux).\n"
+    )
 
 
 def _load_context(folder: Path) -> tuple[dict[str, Any], str]:
@@ -113,6 +137,9 @@ def _do_recall(slug: str | None) -> RecallResult | RecallInventory:
                 f"{len(domains)} domains, {archived_count} archived). "
                 "Re-invoke mem_recall with an explicit slug."
             )
+        banner = _update_banner_md()
+        if banner:
+            msg = f"{banner}\n{msg}"
         return RecallInventory(
             projects=projects,
             domains=domains,
@@ -134,6 +161,9 @@ def _do_recall(slug: str | None) -> RecallResult | RecallInventory:
     topology_present = topology is not None
 
     briefing_md = _build_briefing_md(slug, kind, fm, body, archived, topology_present)
+    banner = _update_banner_md()
+    if banner:
+        briefing_md = f"{banner}\n{briefing_md}"
 
     return RecallResult(
         project=slug,

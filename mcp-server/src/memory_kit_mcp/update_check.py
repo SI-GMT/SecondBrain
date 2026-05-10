@@ -28,9 +28,29 @@ from memory_kit_mcp import __version__
 log = logging.getLogger(__name__)
 
 GITHUB_LATEST_URL = "https://api.github.com/repos/SI-GMT/SecondBrain/releases/latest"
-CACHE_TTL_SECONDS = 24 * 60 * 60
+# 1 h default — reduced from 24 h (v0.10.x) so users see release notifications
+# within an hour of cache hit during active release cycles. GitHub API anonymous
+# limit is 60/h per IP, so worst-case (one CLI launch every minute) stays well
+# below. Override via MEMORY_KIT_UPDATE_TTL_SECONDS env var (e.g. set to 0 to
+# always force-refresh, or 86400 to restore the legacy 24 h behaviour).
+DEFAULT_CACHE_TTL_SECONDS = 60 * 60
 HTTP_TIMEOUT_SECONDS = 2.0
 USER_AGENT = "memory-kit-mcp"
+
+
+def _resolved_ttl_seconds() -> int:
+    raw = os.environ.get("MEMORY_KIT_UPDATE_TTL_SECONDS")
+    if raw is None:
+        return DEFAULT_CACHE_TTL_SECONDS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_CACHE_TTL_SECONDS
+
+
+# Kept as a module-level alias for backward-compat with tests / external callers
+# that imported the old constant. Reads via the env-aware resolver each access.
+CACHE_TTL_SECONDS = DEFAULT_CACHE_TTL_SECONDS
 
 
 @dataclass
@@ -129,7 +149,12 @@ def check_for_update(force_refresh: bool = False) -> UpdateInfo:
 
     if not force_refresh:
         cached = _read_cache()
-        if cached is not None and (time.time() - cached.last_checked) < CACHE_TTL_SECONDS:
+        ttl = _resolved_ttl_seconds()
+        if (
+            cached is not None
+            and ttl > 0
+            and (time.time() - cached.last_checked) < ttl
+        ):
             # Re-evaluate against the running version in case the user just upgraded.
             cached.current_version = current
             cached.update_available = bool(

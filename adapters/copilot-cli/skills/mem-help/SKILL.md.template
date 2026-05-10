@@ -1,0 +1,6 @@
+---
+name: mem-help
+description: "Display localized help for SecondBrain mem-* commands. Use this skill when the user asks 'what mem commands are available', 'help on mem-X', 'show me the syntax of /mem-archeo', 'aide mem-recall', or types /mem-help [command]. Two modes: (1) NO ARGUMENT — categorized inventory of all mem-* commands; (2) WITH a command argument — full description + triggers + arguments + examples + see-also extracted from the canonical procedure file. Wrapper labels are localized in 5 languages (en/fr/es/de/ru). Procedure body content stays in canonical English (LLM-side source of truth). Prefer the MCP tool when available."
+---
+
+{{PROCEDURE}}

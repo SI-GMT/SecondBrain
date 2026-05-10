@@ -89,6 +89,8 @@ TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
     ("mem_archeo_stack", "mem-archeo-stack.md"),
     ("mem_archeo_git", "mem-archeo-git.md"),
     ("mem_archeo_atlassian", "mem-archeo-atlassian.md"),
+    # Localized help (v0.11.x)
+    ("mem_help", "mem-help.md"),
 )
 
 

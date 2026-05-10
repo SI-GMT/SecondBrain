@@ -39,17 +39,18 @@ async def test_all_archeo_tools_appear_in_inventory(client: Client) -> None:
         assert name in tool_names, f"{name} missing from MCP inventory"
 
 
-async def test_total_tool_count_is_36(client: Client) -> None:
-    """Sanity check: the v0.10.x milestone is 36 mem_* tools registered.
+async def test_total_tool_count_is_37(client: Client) -> None:
+    """Sanity check: the v0.11.x milestone is 37 mem_* tools registered.
 
     History: 24 in v0.8.0 → 30 in v0.9.3 (mem_init_project + 5 readers) →
     31 in v0.9.4 (mem_migrate) → 32 in v0.10.0 (mem_archeo_context_finalize)
     → 33 in v0.10.x (mem_check_update) → 34 in v0.10.x
     (mem_archeo_index_files) → 35 in v0.10.x (mem_archeo_plan) → 36 in
-    v0.10.x post-2026-05-09 (mem_archeo_project_topology — Phase 1 LLM
-    round-trip finalize, paired with the now-functional mem_archeo_context
-    brief, doctrine mem-archeo-context.md workflow A).
+    v0.11.0 (mem_archeo_project_topology — Phase 1 LLM round-trip
+    finalize) → 37 in v0.11.x (mem_help — localized per-command help
+    extracted from core/procedures/mem-*.md, wrappers in 5 languages
+    via core/i18n/strings.yaml).
     """
     tools = await client.list_tools()
     mem_tools = [t for t in tools if t.name == "mem" or t.name.startswith("mem_")]
-    assert len(mem_tools) == 36, f"expected 36 mem_* tools, got {len(mem_tools)}: {[t.name for t in mem_tools]}"
+    assert len(mem_tools) == 37, f"expected 37 mem_* tools, got {len(mem_tools)}: {[t.name for t in mem_tools]}"

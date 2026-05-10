@@ -898,3 +898,78 @@ class ArcheoContextFinalizeResult(BaseModel):
     files_modified: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     summary_md: str = ""
+
+
+# ---------------------------------------------------------------------------
+# mem_help — localized help for mem-* commands
+# ---------------------------------------------------------------------------
+
+
+class _CommandEntry(BaseModel):
+    """One mem-* command surfaced in the general help index."""
+
+    command: str = Field(..., description="Kebab-case command name, e.g. 'mem-archeo'.")
+    description: str = Field(default="", description="One-line description (from procedure frontmatter).")
+    category: str = Field(
+        default="misc",
+        description="Category key : 'session' | 'capture' | 'archeo' | 'vault' | 'hygiene' | 'misc'.",
+    )
+
+
+class HelpResult(BaseModel):
+    """Result of ``mem_help`` — either general help or command-specific help.
+
+    When called without ``command``, returns the general index of all
+    ``mem-*`` commands grouped by category. When called with a specific
+    ``command``, returns its description + triggers + arguments + examples
+    + see-also extracted from ``core/procedures/{command}.md``.
+
+    All wrapper labels are localized via ``core/i18n/strings.yaml``
+    (en / fr / es / de / ru). The procedure body content remains in its
+    canonical English (the procedures are the LLM-side source of truth and
+    stay in EN for precision); only the surrounding chrome translates.
+    """
+
+    command: str | None = Field(
+        default=None,
+        description="The command this help is about. None = general help.",
+    )
+    language: str = Field(
+        default="en",
+        description="Resolved language code (en/fr/es/de/ru) used for wrapper labels.",
+    )
+    title: str = Field(default="", description="Localized title.")
+    description: str = Field(
+        default="",
+        description=(
+            "One-line description from the procedure's frontmatter "
+            "``description`` field. Empty when general help."
+        ),
+    )
+    triggers: str = Field(
+        default="",
+        description=(
+            "Markdown body of the procedure's ``## Trigger`` section "
+            "(natural-language phrases + slash invocations)."
+        ),
+    )
+    arguments: str = Field(
+        default="",
+        description="Markdown body of the procedure's ``## Arguments`` (or equivalent) section.",
+    )
+    examples: str = Field(
+        default="",
+        description="Markdown body of the procedure's ``## Examples`` section, when present.",
+    )
+    see_also: list[str] = Field(
+        default_factory=list,
+        description="Related commands surfaced for navigation.",
+    )
+    commands: list[_CommandEntry] = Field(
+        default_factory=list,
+        description="General help only : full inventory grouped by category.",
+    )
+    summary_md: str = Field(
+        default="",
+        description="Pre-formatted Markdown ready for direct display.",
+    )

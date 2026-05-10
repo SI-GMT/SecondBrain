@@ -27,6 +27,7 @@ from memory_kit_mcp.tools import (
     goal,
     health_repair,
     health_scan,
+    help as help_tool,
     historize,
     ingest,
     init_project,
@@ -99,3 +100,5 @@ def register_all(mcp: FastMCP) -> None:
     archeo_index_files.register(mcp)
     # Archeo Phase 0 interactive cadrage (v0.10.x post-Gemini-drift case study)
     archeo_plan.register(mcp)
+    # Localized help (v0.11.x — wraps procedure files + i18n)
+    help_tool.register(mcp)

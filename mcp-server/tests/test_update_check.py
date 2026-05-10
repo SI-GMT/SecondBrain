@@ -149,6 +149,34 @@ def test_cache_avoids_network_within_ttl(
     assert call_count["n"] == 1
 
 
+def test_env_ttl_zero_disables_cache(
+    monkeypatch: pytest.MonkeyPatch, vault_tmp
+) -> None:
+    """MEMORY_KIT_UPDATE_TTL_SECONDS=0 → always refetch."""
+    monkeypatch.setattr(update_check, "__version__", "0.10.0")
+    monkeypatch.setenv("MEMORY_KIT_UPDATE_TTL_SECONDS", "0")
+    call_count = {"n": 0}
+
+    def counting_urlopen(req, timeout=None):  # noqa: ARG001
+        call_count["n"] += 1
+        cm = MagicMock()
+        cm.__enter__ = lambda self: self
+        cm.__exit__ = lambda self, *a: None
+        cm.read = lambda: json.dumps({"tag_name": "v0.11.0"}).encode("utf-8")
+        return cm
+
+    monkeypatch.setattr(update_check.urllib.request, "urlopen", counting_urlopen)
+    check_for_update(force_refresh=False)
+    check_for_update(force_refresh=False)
+    check_for_update(force_refresh=False)
+    assert call_count["n"] == 3, "TTL=0 must bypass cache every call"
+
+
+def test_default_ttl_is_one_hour() -> None:
+    """v0.11.x reduces TTL from 24h to 1h for active release cycles."""
+    assert update_check.DEFAULT_CACHE_TTL_SECONDS == 60 * 60
+
+
 def test_force_refresh_bypasses_cache(
     monkeypatch: pytest.MonkeyPatch, vault_tmp
 ) -> None:

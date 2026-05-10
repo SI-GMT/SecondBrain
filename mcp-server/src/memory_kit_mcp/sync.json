@@ -136,6 +136,10 @@
     "mem_archeo_atlassian": {
       "procedure": "mem-archeo-atlassian.md",
       "last_synced_hash": "821ec8486c278799e608848da7fbc9b07c7958a8e6598013f670c04fa68db037"
+    },
+    "mem_help": {
+      "procedure": "mem-help.md",
+      "last_synced_hash": "7c02756cd6207238fc7a994e823a7be42439f4d4840acb91400dd2ad9d2285c7"
     }
   }
 }
