@@ -4,10 +4,10 @@ Goal: display localized help for SecondBrain `mem-*` commands. Two modes — cat
 
 ## Trigger
 
-The user types `/mem-help [command]` or expresses intent in natural language:
+The user types `/mem-help [command]` or `[command]:help` or expresses intent in natural language:
 
 - "what mem commands are available", "list the mem-* commands", "help"
-- "help on mem-archeo", "syntaxe de /mem-recall", "qu'est-ce que mem-doc fait ?"
+- "help on mem-archeo", "syntaxe de /mem-recall", "qu'est-ce que mem-doc fait ?", "mem-archeo:help"
 - "ayuda mem-search", "Hilfe mem-archive", "справка mem-list"
 
 Arguments:
@@ -23,7 +23,7 @@ Read `~/.memory-kit/config.json` and extract `kit_repo` (path to the SecondBrain
 
 ### General mode (no command)
 
-Walk `{kit_repo}/core/procedures/mem-*.md`. For each procedure file:
+Walk `{kit_repo}/core/procedures/mem-*.md`. Display as a table, one row per procedure file, with columns:
 
 1. Extract the command name from the filename (e.g. `mem-archeo.md` → `mem-archeo`).
 2. Extract the **first sentence of the `Goal:` paragraph** as the one-line description. If `Goal:` is absent, fall back to the first non-title paragraph.
