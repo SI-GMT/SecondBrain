@@ -12,6 +12,12 @@ Three execution modes:
 
 The tray loop is blocking; everything else returns synchronously so an
 installer can chain calls without spawning a long-lived process.
+
+Imports here are **absolute** (``from sb_desktop import …``) on purpose:
+PyInstaller uses this file as the bundle entrypoint and runs it as a
+top-level script, which strips the package context and breaks relative
+imports. Absolute imports keep both ``python -m sb_desktop`` (package
+mode) and the PyInstaller-built ``SecondBrainTray.exe`` working.
 """
 
 from __future__ import annotations
@@ -21,8 +27,8 @@ import logging
 import sys
 from typing import NoReturn
 
-from . import __version__
-from .logging_setup import configure_logging
+from sb_desktop import __version__
+from sb_desktop.logging_setup import configure_logging
 
 log = logging.getLogger(__name__)
 
@@ -64,19 +70,19 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run_headless_action(action: str) -> int:
     """Dispatch a single headless action to its module. Returns exit code."""
     if action == "status":
-        from .status import probe_status
+        from sb_desktop.status import probe_status
 
         snapshot = probe_status()
         print(snapshot.render_text())
         return 0 if snapshot.is_ok() else 1
     if action == "scan":
-        from .health import scan_vault
+        from sb_desktop.health import scan_vault
 
         report = scan_vault()
         print(report.render_text())
         return 0 if not report.has_findings() else 2
     if action == "check-update":
-        from .update import check_update
+        from sb_desktop.update import check_update
 
         result = check_update()
         print(result.render_text())
@@ -93,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("sb-desktop %s starting", __version__)
 
     if args.healthcheck:
-        from .status import probe_status
+        from sb_desktop.status import probe_status
 
         snapshot = probe_status()
         return 0 if snapshot.is_ok() else 1
@@ -105,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("--no-tray without --action is a no-op; exiting.")
         return 0
 
-    from .tray import run_tray
+    from sb_desktop.tray import run_tray
 
     return run_tray()
 
