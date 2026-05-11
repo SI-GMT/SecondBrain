@@ -6,12 +6,10 @@ re-requested):
 
 1. **Welcome** — what SecondBrain is, what the next pages will do.
 2. **Vault** — pick the folder where the Markdown vault lives.
-3. **Language** — conversational language (kit honours it across
-   archives / context / history files).
-4. **LLM CLIs** — display the detected installs so the user knows
-   which clients will see the vault after install.
-5. **Install** — runs the kit install (deploy script) in a worker
-   thread, streams progress to a Text widget.
+3. **Language** — conversational language.
+4. **LLM CLIs** — detected installs + tick which to wire.
+5. **Install** — runs the kit install **in pure Python** (V0.6+),
+   one step at a time, progress shown live.
 6. **Done** — success or failure summary + Close button.
 
 State is held in a small dataclass passed between pages; pages call
@@ -38,13 +36,14 @@ from typing import Callable
 from .. import __version__
 from ..config import save_settings
 from ..kit_installer import (
+    InstallLayout,
     InstallPlan,
     InstallReport,
     LlmCliInfo,
     default_vault_path,
     detect_llm_clis,
     ensure_vault_exists,
-    find_bundled_kit_repo,
+    find_install_layout,
     run_install,
 )
 from ._base import dialog_lifecycle, make_root
@@ -59,7 +58,8 @@ class WizardState:
     vault: Path = field(default_factory=default_vault_path)
     language: str = "en"
     detected_clis: list[LlmCliInfo] = field(default_factory=list)
-    kit_repo: Path | None = None
+    selected_cli_ids: set[str] = field(default_factory=set)
+    install_layout: InstallLayout | None = None
     install_report: InstallReport | None = None
 
 
@@ -73,13 +73,6 @@ _LANGUAGES = [
 
 
 class _PageBase(ttk.Frame):
-    """Base class for wizard pages — every page has a title + body + footer.
-
-    Subclasses override :meth:`build_body` and may override
-    :meth:`on_show` / :meth:`on_next`. Footer buttons (Back / Next /
-    Cancel) are wired through the parent controller.
-    """
-
     title: str = ""
     next_label: str = "Next"
 
@@ -93,14 +86,13 @@ class _PageBase(ttk.Frame):
         body.pack(fill="both", expand=True)
         self.build_body(body)
 
-    def build_body(self, parent: ttk.Frame) -> None:  # noqa: D401
+    def build_body(self, parent: ttk.Frame) -> None:
         raise NotImplementedError
 
     def on_show(self) -> None:
-        """Called every time the page is presented (back- or forward-nav)."""
+        pass
 
     def on_next(self) -> bool:
-        """Return True to allow forward navigation, False to stay on the page."""
         return True
 
 
@@ -115,9 +107,12 @@ class _WelcomePage(_PageBase):
             "This short setup will:\n"
             "  • pick a folder for the vault,\n"
             "  • choose a conversational language,\n"
-            "  • install the Memory Kit engine via pipx,\n"
+            "  • install the Memory Kit engine (bundled in this installer — "
+            "no Python required on your machine),\n"
             "  • wire it up to every LLM CLI we find on this machine.\n\n"
-            "You can change anything later from the tray icon's Settings menu."
+            "Everything stays inside the install directory — your dev "
+            "machine source tree is never touched. You can change anything "
+            "later from the tray icon's Settings menu."
         )
         ttk.Label(parent, text=intro, justify="left", wraplength=560).pack(
             anchor="w", fill="x", expand=True
@@ -225,8 +220,8 @@ class _LanguagePage(_PageBase):
             parent,
             text=(
                 "Your LLM will reply to you in this language. The vault file "
-                "structure stays English regardless (folder names, "
-                "frontmatter keys) — only the conversation surface adapts."
+                "structure stays English regardless — only the conversation "
+                "surface adapts."
             ),
             wraplength=560,
             justify="left",
@@ -246,15 +241,15 @@ class _LanguagePage(_PageBase):
 
 
 class _LlmClisPage(_PageBase):
-    title = "Detected LLM clients"
+    title = "LLM clients to wire"
 
     def build_body(self, parent: ttk.Frame) -> None:
         ttk.Label(
             parent,
             text=(
-                "The installer will wire SecondBrain into every LLM client "
-                "we detect locally. You can untick any you don't want "
-                "configured."
+                "The installer will configure MCP for the LLM clients you "
+                "tick below. We pre-tick the ones we detected locally; "
+                "untick any you don't want touched."
             ),
             wraplength=560,
             justify="left",
@@ -273,16 +268,12 @@ class _LlmClisPage(_PageBase):
         for cli in self.state.detected_clis:
             installed = cli.installed
             any_installed = any_installed or installed
-            var = tk.BooleanVar(value=installed)
+            default_value = installed or (cli.identifier in self.state.selected_cli_ids)
+            var = tk.BooleanVar(value=default_value)
             self.checks[cli.identifier] = var
             row = ttk.Frame(self.detect_frame)
             row.pack(fill="x", pady=2)
-            ttk.Checkbutton(
-                row,
-                text=cli.label,
-                variable=var,
-                state="normal" if installed else "disabled",
-            ).pack(side="left")
+            ttk.Checkbutton(row, text=cli.label, variable=var).pack(side="left")
             status = "detected" if installed else "not detected"
             colour = "#2d8a4f" if installed else "#999999"
             ttk.Label(row, text=f"({status})", foreground=colour).pack(
@@ -297,27 +288,35 @@ class _LlmClisPage(_PageBase):
             ttk.Label(
                 self.detect_frame,
                 text=(
-                    "\nNo LLM clients were detected. We'll still install the "
-                    "kit so you can wire one up later."
+                    "\nNo LLM clients were detected. The engine will still be "
+                    "installed so you can wire one up later from the tray."
                 ),
                 foreground="#aa6633",
             ).pack(anchor="w")
 
+    def on_next(self) -> bool:
+        self.state.selected_cli_ids = {
+            ident for ident, var in self.checks.items() if var.get()
+        }
+        return True
+
 
 class _InstallPage(_PageBase):
-    title = "Installing…"
+    title = "Installing"
     next_label = "Finish"
 
     def build_body(self, parent: ttk.Frame) -> None:
         self.status_var = tk.StringVar(value="Preparing…")
-        ttk.Label(parent, textvariable=self.status_var, font=("", 11)).pack(anchor="w")
+        ttk.Label(parent, textvariable=self.status_var, font=("", 11, "bold")).pack(
+            anchor="w"
+        )
 
         self.progress = ttk.Progressbar(parent, mode="indeterminate", length=560)
         self.progress.pack(fill="x", pady=(8, 8))
 
-        ttk.Label(parent, text="Output:").pack(anchor="w")
+        ttk.Label(parent, text="Steps:").pack(anchor="w")
         self.log_text = tk.Text(
-            parent, height=14, wrap="none", state="disabled", font=("Consolas", 9)
+            parent, height=14, wrap="word", state="disabled", font=("Consolas", 9)
         )
         yscroll = ttk.Scrollbar(parent, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=yscroll.set)
@@ -327,7 +326,7 @@ class _InstallPage(_PageBase):
     def on_show(self) -> None:
         self.controller.set_buttons(back=False, next_enabled=False, cancel_label="Cancel")
         self.progress.start(80)
-        self.status_var.set("Running deploy script — this can take a minute…")
+        self.status_var.set("Running the install in the background…")
         threading.Thread(target=self._do_install, daemon=True, name="kit-install").start()
 
     def _append(self, line: str) -> None:
@@ -337,34 +336,42 @@ class _InstallPage(_PageBase):
         self.log_text.see("end")
 
     def _do_install(self) -> None:
-        kit_repo = self.state.kit_repo or find_bundled_kit_repo()
-        if kit_repo is None:
+        layout = find_install_layout()
+        if layout is None or not layout.python_exe.is_file():
             self.controller.after(
                 0,
                 lambda: self._finish(
                     InstallReport(
                         ok=False,
                         error=(
-                            "Could not locate the bundled kit source. Re-run the "
-                            "installer or set the MEMORY_KIT_REPO env variable."
+                            "Could not locate the bundled Python runtime. "
+                            "This wizard expects to run from an installed "
+                            "SecondBrain Desktop — make sure you launched "
+                            "via the installer's shortcut, not from a "
+                            "source checkout."
                         ),
                     )
                 ),
             )
             return
-        self.state.kit_repo = kit_repo
+        self.state.install_layout = layout
 
+        selected = [
+            cli
+            for cli in self.state.detected_clis
+            if cli.identifier in self.state.selected_cli_ids
+        ]
         plan = InstallPlan(
             vault=self.state.vault,
             language=self.state.language,
-            kit_repo=kit_repo,
-            detected_clis=self.state.detected_clis,
+            install_dir=layout.install_dir,
+            selected_clis=selected,
         )
 
-        def on_line(line: str) -> None:
-            self.controller.after(0, lambda: self._append(line))
+        def on_progress(message: str) -> None:
+            self.controller.after(0, lambda: self._append(message))
 
-        report = run_install(plan, on_line=on_line)
+        report = run_install(plan, on_progress=on_progress)
         self.controller.after(0, lambda: self._finish(report))
 
     def _finish(self, report: InstallReport) -> None:
@@ -372,8 +379,19 @@ class _InstallPage(_PageBase):
         self.state.install_report = report
         if report.ok:
             self.status_var.set("Install complete.")
+            self._append("")
+            self._append(f"Steps OK: {len(report.steps)}")
+            self._append(f"CLI wirings: {len(report.wiring)}")
+            for w in report.wiring:
+                self._append(f"  {w.label}: {w.status} ({w.config_path})")
         else:
-            self.status_var.set(f"Install failed: {report.error or 'unknown error'}")
+            first_fail = report.first_failure()
+            label = first_fail.label if first_fail else "install"
+            self.status_var.set(f"Install failed at: {label}")
+            self._append("")
+            self._append(report.error or "Unknown error.")
+            if first_fail:
+                self._append(first_fail.detail)
         self.controller.set_buttons(back=False, next_enabled=True, cancel_label=None)
 
 
@@ -383,45 +401,65 @@ class _DonePage(_PageBase):
 
     def build_body(self, parent: ttk.Frame) -> None:
         self.summary_var = tk.StringVar(value="")
-        ttk.Label(parent, textvariable=self.summary_var, font=("", 11)).pack(anchor="w")
+        ttk.Label(parent, textvariable=self.summary_var, font=("", 11)).pack(
+            anchor="w", pady=(0, 8)
+        )
+
+        self.list_box = tk.Text(
+            parent, height=10, wrap="word", state="disabled", font=("Consolas", 9)
+        )
+        self.list_box.pack(fill="both", expand=True)
 
         self.hint = ttk.Label(parent, text="", wraplength=560, foreground="#666666")
         self.hint.pack(anchor="w", pady=(12, 0))
 
     def on_show(self) -> None:
         report = self.state.install_report
+        layout = self.state.install_layout
+        self.list_box.configure(state="normal")
+        self.list_box.delete("1.0", "end")
         if report is None or not report.ok:
             self.summary_var.set("Install did not complete.")
             self.hint.configure(
                 text=(
-                    "You can retry the wizard from the tray menu (Settings → "
-                    "Re-run setup), or run deploy.ps1 manually from the bundled "
-                    "kit source. Logs are available from the tray's Open logs "
-                    "menu."
+                    "You can retry the wizard from the tray menu (Re-run "
+                    "setup wizard). Logs are available via Open logs."
                 ),
                 foreground="#aa3333",
             )
+            if report:
+                for step in report.steps:
+                    self.list_box.insert(
+                        "end", f"{'OK ' if step.ok else 'FAIL'}  {step.label}\n"
+                    )
+                if report.error:
+                    self.list_box.insert("end", "\n" + report.error + "\n")
         else:
-            wired = [c.label for c in self.state.detected_clis if c.installed]
-            wired_text = ", ".join(wired) if wired else "no LLM client was detected"
+            wired_lines = [
+                f"  {w.label} → {w.status}" for w in report.wiring if w.ok
+            ]
             self.summary_var.set(
                 f"Vault: {self.state.vault}\n"
                 f"Language: {self.state.language}\n"
-                f"Wired: {wired_text}"
+                f"Install: {layout.install_dir if layout else '?'}"
             )
+            self.list_box.insert("end", "Wired clients:\n")
+            if wired_lines:
+                self.list_box.insert("end", "\n".join(wired_lines) + "\n")
+            else:
+                self.list_box.insert("end", "  (none — wire one later from the tray)\n")
             self.hint.configure(
                 text=(
-                    "The tray icon stays open in your system tray — click it any "
-                    "time to scan the vault, run a repair, or check for updates."
+                    "The tray icon stays open in your system tray — click it "
+                    "to scan, repair, or check for updates anytime."
                 ),
                 foreground="#666666",
             )
+        self.list_box.configure(state="disabled")
         self.controller.set_buttons(back=False, next_enabled=True, cancel_label=None)
 
 
 class _Controller:
-    """Owns the Tk root, page stack, and footer button wiring."""
-
     PAGES: list[type[_PageBase]] = [
         _WelcomePage,
         _VaultPage,
@@ -433,7 +471,7 @@ class _Controller:
 
     def __init__(self) -> None:
         self.state = WizardState()
-        self.root = make_root(title="SecondBrain — Setup", size=(680, 540))
+        self.root = make_root(title="SecondBrain — Setup", size=(700, 560))
         self.root.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         self.container = ttk.Frame(self.root)
@@ -452,7 +490,6 @@ class _Controller:
         self.completed = False
         self._build_current()
 
-    # -- public API --------------------------------------------------
     def after(self, ms: int, fn: Callable[[], None]) -> None:
         self.root.after(ms, fn)
 
@@ -471,7 +508,6 @@ class _Controller:
             self.cancel_btn.configure(text=cancel_label)
             self.cancel_btn.pack(side="right", padx=(8, 0))
 
-    # -- internals ---------------------------------------------------
     def _build_current(self) -> None:
         for widget in self.container.winfo_children():
             widget.destroy()
@@ -493,7 +529,8 @@ class _Controller:
             return
         if self.current_index >= len(self.PAGES) - 1:
             self.completed = (
-                self.state.install_report is not None and self.state.install_report.ok
+                self.state.install_report is not None
+                and self.state.install_report.ok
             )
             self.root.quit()
             return
@@ -513,8 +550,6 @@ class _Controller:
     def run(self) -> bool:
         with dialog_lifecycle(self.root):
             pass
-        # Persist a "wizard seen" flag so later launches don't re-run it
-        # unless the user explicitly requests via Settings.
         try:
             from ..config import load_settings
 

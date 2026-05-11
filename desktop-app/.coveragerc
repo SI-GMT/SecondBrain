@@ -7,6 +7,14 @@ omit =
     *\sb_desktop\tray.py
     *\sb_desktop\ui\*
     *\sb_desktop\notifications.py
+    # kit_installer + path_env exercise the live engine bootstrap
+    # (subprocess pip install, Windows registry edits, etc.). They have
+    # focused unit tests for the deterministic paths; the rest is
+    # integration territory and runs on real Windows/macOS machines.
+    */sb_desktop/kit_installer.py
+    *\sb_desktop\kit_installer.py
+    */sb_desktop/path_env.py
+    *\sb_desktop\path_env.py
 
 [report]
 exclude_lines =

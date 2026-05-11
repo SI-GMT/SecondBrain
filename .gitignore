@@ -38,5 +38,7 @@ desktop-app/dist/
 desktop-app/build/generated-icons/
 desktop-app/build/SecondBrainTray/
 desktop-app/build/sb-desktop/
+desktop-app/build/release-kit/
+desktop-app/build/.cache/
 desktop-app/.coverage
 desktop-app/.pytest_cache/
