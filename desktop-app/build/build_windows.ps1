@@ -78,9 +78,23 @@ Write-Host '==> Generating static icons'
 
 Write-Host '==> Running PyInstaller'
 $Spec = $Spec.Trim()
-& $Py -m PyInstaller --noconfirm --clean $Spec
-if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller failed with exit code $LASTEXITCODE"
+
+# PyInstaller writes ``build/`` and ``dist/`` relative to its current
+# working directory. Without this Push-Location they land wherever the
+# user happened to invoke the script from (typically the repo root,
+# which makes the installer step look for ``..\dist`` and miss). The
+# installer .iss is anchored at ``desktop-app/build/`` and references
+# ``..\dist\SecondBrainTray\*`` — that path is only correct when
+# PyInstaller's CWD is the desktop-app/ root.
+Push-Location $RepoRoot
+try {
+    & $Py -m PyInstaller --noconfirm --clean $Spec
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    Pop-Location
 }
 
 if (-not (Test-Path $IsccPath)) {

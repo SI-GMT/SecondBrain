@@ -73,8 +73,12 @@ for size in 16 32 64 128 256 512; do
 done
 iconutil -c icns -o "$ICONS_DIR/SecondBrain.icns" "$ICONSET_DIR"
 
-# 3. Run PyInstaller.
-pyinstaller --noconfirm --clean "$BUILD_DIR/sb-desktop.spec"
+# 3. Run PyInstaller. CWD must be desktop-app/ so dist/ + build/ land
+#    where the rest of this script and the .iss installer expect them.
+(
+    cd "$REPO_ROOT"
+    pyinstaller --noconfirm --clean "$BUILD_DIR/sb-desktop.spec"
+)
 
 # 4. Lay down the .app bundle structure.
 rm -rf "$APP_BUNDLE"
