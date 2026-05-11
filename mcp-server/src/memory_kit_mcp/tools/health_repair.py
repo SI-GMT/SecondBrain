@@ -20,9 +20,17 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from memory_kit_mcp.config import get_config
-from memory_kit_mcp.health.scan import scan_vault
 from memory_kit_mcp.tools._models import HealthRepairResult
 from memory_kit_mcp.vault import frontmatter
+
+# ``scan_vault`` is intentionally imported lazily inside the tool body. Eager
+# import at module load creates a circular dependency when the desktop app (or
+# any external in-process consumer) does ``from memory_kit_mcp.health.scan
+# import scan_vault`` first: ``health.__init__`` triggers ``scan`` load → scan
+# imports ``tools._models`` → ``tools/__init__`` eager-imports every tool
+# including this one → this module tries to re-enter ``health.scan`` which is
+# still mid-load → ImportError. Keeping it lazy is enough to break the cycle
+# for every consumer.
 
 _AUTO_FIXABLE_CATEGORIES = {"missing-display", "missing-zone-index-entry"}
 
@@ -76,6 +84,8 @@ def register(mcp: FastMCP) -> None:
 
         Dry-run by default — pass apply=True to write.
         """
+        from memory_kit_mcp.health.scan import scan_vault
+
         config = get_config()
         vault = config.vault
 

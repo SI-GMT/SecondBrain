@@ -1,0 +1,245 @@
+"""Status snapshot for the Memory Kit engine — in-process model.
+
+V2 architecture: the desktop app **bundles** ``memory_kit_mcp`` as a
+regular Python dependency, so the engine is always reachable via direct
+function call. There is no JSON-RPC stdio handshake to fail, no
+subprocess to spawn per click.
+
+What the user actually wants to know at a glance has therefore shifted.
+We surface three facts:
+
+1. **In-process engine version** — the copy bundled inside this
+   executable. Always available; failure here would mean a broken
+   install.
+2. **pipx-installed engine reachability** — whether
+   ``memory-kit-mcp`` is on PATH, because that's the binary the LLM
+   CLIs (Claude Code, Codex, Gemini, …) actually call. If the user
+   has the desktop but not the pipx install, the tray app works but
+   the LLMs won't see their vault — worth flagging.
+3. **Version alignment** — when both are present, whether the
+   pipx-installed version matches the bundled one. Drift is the
+   common cause of "the app says update available but my LLM still
+   complains about an old kit."
+
+The pipx version is read from the venv's ``dist-info/METADATA`` file —
+**no subprocess**. Spawning the binary just to read ``--version`` would
+mean a Pydantic + FastMCP cold start (≈5-15 s on Windows), which is
+unacceptable for a tray app. Parsing the metadata file is sub-ms and
+gives us the same answer the package itself would report.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import shutil
+import sys
+import time
+from enum import Enum
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+log = logging.getLogger(__name__)
+
+_VERSION_LINE = re.compile(r"^Version:\s*(.+)$", re.MULTILINE)
+
+_pipx_probe_cache: tuple[str | None, str | None] | None = None  # (path, version)
+
+
+class StatusLevel(str, Enum):
+    """Tray icon colour mapping."""
+
+    OK = "ok"
+    WARNING = "warning"
+    ERROR = "error"
+    UNKNOWN = "unknown"
+
+
+class StatusSnapshot(BaseModel):
+    """Frozen-in-time view of the engine's reachability."""
+
+    level: StatusLevel
+    summary: str
+    bundled_version: str | None = None
+    pipx_binary_path: Path | None = None
+    pipx_version: str | None = None
+    versions_match: bool | None = None
+    error: str | None = None
+    probed_at: float = Field(default_factory=time.time)
+
+    def is_ok(self) -> bool:
+        return self.level == StatusLevel.OK
+
+    def render_text(self) -> str:
+        lines = [f"Status: {self.level.value.upper()}", f"  {self.summary}"]
+        if self.bundled_version:
+            lines.append(f"  Bundled engine: v{self.bundled_version}")
+        if self.pipx_binary_path:
+            lines.append(f"  pipx binary:   {self.pipx_binary_path}")
+        if self.pipx_version:
+            lines.append(f"  pipx version:  v{self.pipx_version}")
+        if self.versions_match is False:
+            lines.append("  pipx and bundled versions differ.")
+        if self.error:
+            lines.append(f"  Error: {self.error}")
+        return "\n".join(lines)
+
+
+def _bundled_version() -> tuple[str | None, str | None]:
+    """Return (version, error). Import is cheap — already in memory."""
+    try:
+        from memory_kit_mcp import __version__ as kit_version
+    except ImportError as exc:
+        return None, f"bundled memory_kit_mcp import failed: {exc}"
+    return kit_version, None
+
+
+def _pipx_default_venv() -> Path:
+    """The canonical pipx venv path for memory-kit-mcp on this host."""
+    return Path.home() / "pipx" / "venvs" / "memory-kit-mcp"
+
+
+def _venv_root_from_binary(binary: Path) -> Path | None:
+    """Derive the venv root from the binary path, with a pipx-default fallback.
+
+    The standard layout puts the binary in ``{venv}/Scripts`` (Windows)
+    or ``{venv}/bin`` (POSIX). But pipx also drops user-facing shims in
+    ``~/.local/bin/`` that point at the real venv elsewhere — when
+    ``shutil.which`` returns that shim path, walking its grandparent
+    lands us in ``~/.local`` which is not a venv. Detect that case and
+    fall back to ``~/pipx/venvs/memory-kit-mcp/``.
+    """
+    parent = binary.parent
+    if parent.name.lower() in {"scripts", "bin"}:
+        candidate = parent.parent
+        # Sanity-check that we actually landed in a venv by looking for pyvenv.cfg.
+        if (candidate / "pyvenv.cfg").is_file():
+            return candidate
+
+    fallback = _pipx_default_venv()
+    if fallback.is_dir():
+        return fallback
+    return None
+
+
+def _read_version_from_metadata(venv_root: Path) -> str | None:
+    """Read the installed ``memory-kit-mcp`` version from its dist-info."""
+    if sys.platform == "win32":
+        site_packages = venv_root / "Lib" / "site-packages"
+    else:
+        site_packages = venv_root / "lib"
+        if site_packages.is_dir():
+            # Find python3.X subdir.
+            for child in site_packages.iterdir():
+                if child.is_dir() and child.name.startswith("python"):
+                    site_packages = child / "site-packages"
+                    break
+
+    if not site_packages.is_dir():
+        return None
+
+    candidates = list(site_packages.glob("memory_kit_mcp-*.dist-info"))
+    if not candidates:
+        return None
+    metadata = candidates[0] / "METADATA"
+    if not metadata.is_file():
+        return None
+    try:
+        text = metadata.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        log.warning("could not read pipx METADATA: %s", exc)
+        return None
+    match = _VERSION_LINE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _probe_pipx_once() -> tuple[str | None, str | None]:
+    """Locate the pipx binary and read its version from dist-info metadata.
+
+    Cached for the session. Never spawns a subprocess: a Pydantic +
+    FastMCP cold start on Windows can exceed 10 s, which is unacceptable
+    UX for an icon refresh.
+    """
+    global _pipx_probe_cache
+    if _pipx_probe_cache is not None:
+        return _pipx_probe_cache
+
+    binary_str = shutil.which("memory-kit-mcp")
+    if binary_str is None:
+        _pipx_probe_cache = (None, None)
+        return _pipx_probe_cache
+
+    binary = Path(binary_str)
+    venv_root = _venv_root_from_binary(binary)
+    if venv_root is None:
+        log.warning("could not derive venv root from %s", binary)
+        _pipx_probe_cache = (binary_str, None)
+        return _pipx_probe_cache
+
+    version = _read_version_from_metadata(venv_root)
+    _pipx_probe_cache = (binary_str, version)
+    return _pipx_probe_cache
+
+
+def invalidate_pipx_cache() -> None:
+    """Force the next probe to re-run — e.g. after an update."""
+    global _pipx_probe_cache
+    _pipx_probe_cache = None
+
+
+def probe_status() -> StatusSnapshot:
+    """Compose the current status snapshot. Always returns; never raises."""
+    bundled, bundled_err = _bundled_version()
+    if bundled is None:
+        return StatusSnapshot(
+            level=StatusLevel.ERROR,
+            summary="Bundled engine missing — broken install.",
+            error=bundled_err,
+        )
+
+    pipx_path_str, pipx_version = _probe_pipx_once()
+    pipx_path = Path(pipx_path_str) if pipx_path_str else None
+
+    if pipx_path is None:
+        return StatusSnapshot(
+            level=StatusLevel.WARNING,
+            summary=(
+                "Desktop ready — but `memory-kit-mcp` is not on PATH, "
+                "so your LLM CLIs cannot use the vault yet."
+            ),
+            bundled_version=bundled,
+        )
+
+    if pipx_version is None:
+        return StatusSnapshot(
+            level=StatusLevel.WARNING,
+            summary="pipx binary present but its --version probe failed.",
+            bundled_version=bundled,
+            pipx_binary_path=pipx_path,
+        )
+
+    versions_match = pipx_version == bundled
+    if not versions_match:
+        return StatusSnapshot(
+            level=StatusLevel.WARNING,
+            summary=(
+                f"Desktop bundles v{bundled}, but the pipx install is "
+                f"v{pipx_version}. Run an update to align them."
+            ),
+            bundled_version=bundled,
+            pipx_binary_path=pipx_path,
+            pipx_version=pipx_version,
+            versions_match=False,
+        )
+
+    return StatusSnapshot(
+        level=StatusLevel.OK,
+        summary=f"Engine v{bundled} ready (desktop and pipx aligned).",
+        bundled_version=bundled,
+        pipx_binary_path=pipx_path,
+        pipx_version=pipx_version,
+        versions_match=True,
+    )

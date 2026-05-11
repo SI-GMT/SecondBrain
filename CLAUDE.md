@@ -28,6 +28,17 @@ mcp-server/                   ← serveur MCP Python (v0.8.0)
                                 atomic_io UTF-8/LF/hash, scanner)
   tests/                      ← pytest, 294 tests (v0.10.0) via
                                 fastmcp.Client in-memory
+desktop-app/                  ← app systray Python in-process (V2 architecture ;
+                                refonte Kotlin Compose Multiplatform prévue plus tard)
+  pyproject.toml              ← pystray + pillow + plyer + pydantic + fastmcp
+                                memory-kit-mcp est installé séparément (local path,
+                                pas dep PyPI) car l'engine n'est pas publié
+  src/sb_desktop/             ← CLI + tray + dialogs Tkinter, consomme l'engine
+                                via imports Python directs (`from memory_kit_mcp.health.scan
+                                import scan_vault`), zéro subprocess stdio MCP par action
+  tests/                      ← pytest, 41 tests, couverture 76% (UI exclue)
+  build/                      ← PyInstaller spec, Inno Setup script Windows,
+                                Info.plist + DMG sign+notarize macOS
 memory/                       ← vault Obsidian local (non versionné avec le kit)
 deploy.ps1                    ← assemble adapters + core, installe dans ~/.claude/,
                                 installe le serveur MCP via pipx, inject la
@@ -96,6 +107,21 @@ Workflow lors d'une modification core ↔ Python :
 1. Modifier `core/procedures/mem-X.md` ET `mcp-server/src/memory_kit_mcp/tools/X.py` ensemble (même commit).
 2. Lancer `python -m memory_kit_mcp.sync update --kit-repo /path/to/SecondBrain` pour recalculer les hashes.
 3. Inclure `sync.json` dans le même commit. Le scanner ne flaggera pas tant que `sync.json` est aligné.
+
+## Discipline `desktop-app/` (V2 — in-process)
+
+L'app desktop est un composant **autonome** dans le repo : version `sb-desktop-vX.Y.Z` indépendante du kit (`vX.Y.Z` du moteur). Elle **bundle** son propre `memory_kit_mcp` via PyInstaller et l'utilise via imports Python directs — **plus de subprocess MCP stdio par action** (architecture V1 abandonnée le 2026-05-10 pour cause de cold-start latency Python+Pydantic+FastMCP ≈ 1-2 s + console flashes Windows).
+
+Discipline pour modifier `desktop-app/` :
+
+1. **Import direct, pas stdio** : la couche `mcp_client.py` n'existe plus. Toute opération métier passe par `from memory_kit_mcp.{module} import …` au moment du call (imports lazy à l'intérieur des fonctions pour éviter les cycles d'import au load).
+2. **Seul subprocess admis** : `deploy.ps1 -AutoUpdate` / `deploy.sh --auto-update` au moment où l'user confirme une mise à jour. Toujours avec `creationflags=CREATE_NO_WINDOW` sur Windows.
+3. **Version pipx lue via dist-info** : `_read_version_from_metadata` parse `{venv}/Lib/site-packages/memory_kit_mcp-*.dist-info/METADATA` — zéro subprocess. Spawn `memory-kit-mcp --version` cold-start ≥ 10 s, inutilisable pour un indicator.
+4. **Discipline d'import kit-side** : si tu modifies `mcp-server/src/memory_kit_mcp/tools/{health_scan,health_repair,...}.py`, les imports de `memory_kit_mcp.health.scan` doivent rester **lazy** (à l'intérieur des fonctions, pas au top-level) pour éviter le cycle d'import quand un consommateur externe (desktop, scripts) atteint directement `memory_kit_mcp.health.scan`.
+5. **Toute action mutante** (vault repair, code update) DOIT être gated par confirmation explicite. Le pattern `confirmed=True` dans `update.run_update()` est un interlock dur.
+6. **UI Tkinter only** — zéro framework GUI lourd (pas de PySide/Qt/wx). Justifié par roadmap V2 Kotlin = jeté de toute façon ; on n'investit pas en V1 dans une stack qui sera remplacée.
+7. **Coverage cible 70 %** avec UI/notifications exclus (live display non-testable headless) — `.coveragerc` pilote l'omit.
+8. **Le bundle desktop n'écrase pas la pipx-installed kit** : le desktop bundle son moteur pour son usage local in-process, mais les LLM CLI (Claude Code, Codex, Gemini, …) continuent d'utiliser la pipx-installed `memory-kit-mcp.exe`. Les deux coexistent par design.
 
 ## Ajouter un nouvel adapter (Gemini CLI, Codex, Copilot CLI, etc.)
 

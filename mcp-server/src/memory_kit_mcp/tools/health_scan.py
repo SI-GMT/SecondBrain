@@ -33,8 +33,11 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from memory_kit_mcp.config import get_config
-from memory_kit_mcp.health.scan import CATEGORIES, scan_vault
 from memory_kit_mcp.tools._models import HealthFinding, HealthScanResult
+
+# Lazy-imported inside the tool body — see the comment in health_repair.py for
+# the full rationale (circular import with ``health.__init__`` when an
+# external in-process consumer reaches into ``health.scan`` directly).
 
 
 def _format_summary_md(
@@ -43,6 +46,8 @@ def _format_summary_md(
     by_cat: dict[str, int],
     findings: list[HealthFinding],
 ) -> str:
+    from memory_kit_mcp.health.scan import CATEGORIES  # noqa: F401 — used in caller
+
     lines = [f"## Health scan — {vault}\n"]
     lines.append(f"_{files_scanned} file(s) scanned, {len(findings)} finding(s)._\n")
     if not findings:
@@ -92,6 +97,8 @@ def register(mcp: FastMCP) -> None:
         missing-zone-index-entry; stray-zone-md and empty-md-at-root are auto-fixable
         in principle but the repair tool requires opt-in for delete operations).
         """
+        from memory_kit_mcp.health.scan import scan_vault
+
         config = get_config()
         vault = config.vault
 
