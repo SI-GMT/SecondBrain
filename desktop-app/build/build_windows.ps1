@@ -222,7 +222,12 @@ finally {
 function Resolve-IsccPath {
     param([string]$Preferred)
     if ($Preferred -and (Test-Path $Preferred)) { return $Preferred }
+
+    # Per-user installs (no admin) land under %LOCALAPPDATA%\Programs\.
+    # System installs land under Program Files. Cover both.
     $candidates = @(
+        "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe",
+        "${env:LOCALAPPDATA}\Programs\Inno Setup 5\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe",
@@ -231,6 +236,24 @@ function Resolve-IsccPath {
     foreach ($c in $candidates) {
         if ($c -and (Test-Path $c)) { return $c }
     }
+
+    # Registry fallback — the Inno Setup installer (both per-user and
+    # system) writes InstallLocation here.
+    $regKeys = @(
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 5_is1',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 5_is1'
+    )
+    foreach ($k in $regKeys) {
+        $prop = Get-ItemProperty -Path $k -Name InstallLocation -ErrorAction SilentlyContinue
+        if ($prop -and $prop.InstallLocation) {
+            $candidate = Join-Path $prop.InstallLocation 'ISCC.exe'
+            if (Test-Path $candidate) { return $candidate }
+        }
+    }
+
     $fromPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
     if ($fromPath) { return $fromPath.Source }
     return $null
