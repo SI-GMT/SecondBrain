@@ -8,6 +8,7 @@
 [![CLIs](https://img.shields.io/badge/CLIs-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot-8A2BE2)](#cli-compatibles)
 [![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#sous-le-capot)
 [![i18n](https://img.shields.io/badge/conversation-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
+[![Desktop](https://img.shields.io/badge/desktop-installer%20Windows%20%7C%20DMG%20macOS-blue)](#installation)
 
 SecondBrain s'appuie sur un concept originel proposé par **Raphaël Fages** ([Fractality Studio](https://fractality.studio/)). Voir [Licence et crédits](#licence-et-crédits).
 
@@ -93,6 +94,7 @@ Le vault s'audite tout seul (`/mem-health-scan`) et se répare en un clic (`/mem
 - **Développeurs solo** qui jonglent entre plusieurs projets et LLMs.
 - **Équipes tech** qui veulent capitaliser le contexte d'un projet entre leurs membres.
 - **Consultants** qui doivent reprendre rapidement un projet client après plusieurs semaines.
+- **Utilisateurs non-tech** qui utilisent Claude Desktop / Codex / Gemini et veulent une mémoire sans toucher au terminal — installateur **`.exe` Windows** (et bientôt **DMG macOS**) à télécharger + assistant guidé au premier lancement.
 - **Toute personne** qui en a marre de réexpliquer son travail à chaque session.
 
 ---
@@ -113,15 +115,29 @@ Le script d'installation détecte automatiquement les CLI présentes sur votre p
 
 ---
 
-## Démarrer en 2 minutes
+## Installation
 
-### Prérequis
+Deux chemins selon votre profil.
 
-- **PowerShell 7+** sur Windows, **ou** **bash** sur macOS/Linux.
-- Au moins **une CLI compatible** installée (voir tableau ci-dessus).
-- **`pipx`** recommandé (pour le serveur MCP). Sans lui, le mode skills classique reste fonctionnel.
+### Option A — Installateur graphique (recommandé pour la majorité)
 
-### Installation
+Aucune ligne de commande, aucun pré-requis Python.
+
+**Windows** — télécharger [`SecondBrainDesktop-{version}-setup.exe`](https://github.com/SI-GMT/SecondBrain/releases/latest) (~75 MB, runtime Python embarqué) puis double-cliquer. L'installateur dépose tout dans un répertoire que vous choisissez (par défaut `%LOCALAPPDATA%\SecondBrain`). Au premier lancement de l'icône dans la zone de notification, un assistant guidé vous demande :
+
+1. Où placer votre vault (par défaut `~/Documents/SecondBrain`).
+2. Votre langue de conversation (EN / FR / ES / DE / RU).
+3. Quels clients LLM câbler (Claude Code, Claude Desktop, Codex, Gemini, Vibe, Copilot — auto-détectés).
+
+L'install se fait sans terminal qui flashe, sans pipx à comprendre, sans `deploy.ps1` à invoquer. La présence du noyau Memory Kit et sa version sont surveillées en permanence par l'icône (vert / orange / rouge) ; un menu clic-droit donne accès à *Scan vault*, *Repair vault*, *Check for updates* et *Settings*.
+
+**macOS** — DMG en cours de finalisation, instructions de build dans [`desktop-app/build/macos/README.md`](./desktop-app/build/macos/README.md). Apple Developer ID + notarization requis pour passer Gatekeeper.
+
+**Linux** — pas encore packagé en installateur. Utiliser l'option B.
+
+### Option B — Script de déploiement source (développeurs)
+
+Pour qui veut le repo cloné, ou un poste de dev où d'autres outils déjà installent via pipx :
 
 ```bash
 git clone https://github.com/SI-GMT/SecondBrain.git
@@ -138,7 +154,13 @@ cd SecondBrain
 ./deploy.sh
 ```
 
-C'est tout. Le script détecte vos CLI, installe le serveur MCP, configure le vault et choisit votre langue conversationnelle (modifiable plus tard).
+### Prérequis
+
+- **Option A** — aucun pré-requis utilisateur. Le Python 3.12 et le `memory-kit-mcp` voyagent dans l'installateur. Inno Setup 6 nécessaire **uniquement** côté builder.
+- **Option B** — **PowerShell 7+** (Windows) ou **bash** (macOS/Linux). **Python 3.12+** + **`pipx`** recommandé. Sans `pipx`, mode skills classique reste fonctionnel.
+- Dans tous les cas, **au moins une CLI compatible** installée (voir tableau ci-dessus).
+
+Le script (option B) comme l'assistant (option A) détecte les CLI présentes sur votre poste et ne câble que celles correspondantes. Aucune CLI n'est requise pour installer — celles dont vous vous servez suffisent.
 
 ### Vérification
 
@@ -156,6 +178,8 @@ Décris ce sur quoi tu travailles et on commence.
 ```
 
 Vous êtes prêt.
+
+Si vous avez installé l'app desktop (option A), l'icône dans la zone de notification doit être verte. Un clic-droit donne l'inventaire des actions disponibles ; survol du nom donne la version d'engine bundlée + celle installée pour vos CLI.
 
 ### Visualiser dans Obsidian (optionnel)
 
@@ -262,12 +286,13 @@ Choisie à l'installation, modifiable via `.\deploy.ps1 -Language fr` ou en édi
 
 ## Sous le capot
 
-Pour ceux que ça intéresse : SecondBrain combine deux modes complémentaires.
+Pour ceux que ça intéresse : SecondBrain combine trois couches complémentaires.
 
-- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 36 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (465 tests).
+- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 37 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (484 tests).
 - **Mode skills fallback** — quand le serveur n'est pas démarré (ou pour les CLI sans MCP), les CLI exécutent les procédures Markdown originales. Comportement identique côté utilisateur.
+- **App desktop SecondBrain Desktop** (optionnelle) — icône dans la zone de notification, runtime Python embarqué + wheels offline, assistant guidé, surveillance santé du vault, mise à jour confirm-then-run. Consomme l'engine en pur in-process, zéro subprocess MCP par action. Voir [`desktop-app/README.md`](./desktop-app/README.md).
 
-Le pattern **MCP-first / skills-fallback** est transparent : l'agent décide à l'invocation, vous ne voyez aucune différence.
+Le pattern **MCP-first / skills-fallback** est transparent : l'agent décide à l'invocation, vous ne voyez aucune différence. L'app desktop est un complément consumer-friendly — l'engine fonctionne identiquement sans elle.
 
 Documentation technique complète : [`docs/architecture/`](./docs/architecture/).
 
@@ -278,14 +303,18 @@ Documentation technique complète : [`docs/architecture/`](./docs/architecture/)
 | Phase | État | Portée |
 |---|---|---|
 | **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot |
-| **Phase 3** | ✅ Terminée | Serveur MCP natif — 36 outils, 7 cibles auto-configurées |
+| **Phase 3** | ✅ Terminée | Serveur MCP natif — 37 outils, 7 cibles auto-configurées |
+| **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit (`sb-desktop-v0.6.0`) |
 | **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |
 
 ---
 
 ## Désinstallation
 
-Le serveur MCP s'enlève via `pipx uninstall memory-kit-mcp`. Les fichiers déployés dans `~/.{cli}/` se retirent à la main (chemins listés dans `docs/uninstall.md`). **Le vault `memory/` n'est jamais touché** — vos archives, projets et domaines restent intacts.
+- **Installé via le `.exe` Windows** — Panneau de configuration → Programmes → SecondBrain Desktop → Désinstaller. L'uninstaller retire le binaire desktop, l'engine bundlé et le PATH ajouté.
+- **Installé via le script source** — le serveur MCP s'enlève via `pipx uninstall memory-kit-mcp`. Les fichiers déployés dans `~/.{cli}/` se retirent à la main (chemins listés dans `docs/uninstall.md`).
+
+Dans les deux cas, **le vault `memory/` n'est jamais touché** — vos archives, projets et domaines restent intacts.
 
 ---
 
