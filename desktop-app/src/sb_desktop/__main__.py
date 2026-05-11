@@ -64,6 +64,22 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Console + file log verbosity (default: INFO).",
     )
+    parser.add_argument(
+        "--first-run",
+        action="store_true",
+        help=(
+            "Force the first-run wizard even if the kit config is already "
+            "present (useful for re-running setup)."
+        ),
+    )
+    parser.add_argument(
+        "--skip-first-run",
+        action="store_true",
+        help=(
+            "Skip the auto-launched first-run wizard and go straight to the "
+            "tray, even if the kit is not yet installed."
+        ),
+    )
     return parser
 
 
@@ -110,6 +126,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_tray:
         log.warning("--no-tray without --action is a no-op; exiting.")
         return 0
+
+    # First-run flow: launch the wizard if the kit config is absent (i.e. a
+    # brand-new machine) OR if the user explicitly re-runs it via --first-run.
+    # ``--skip-first-run`` is the escape hatch for power users or scripted
+    # smoke tests that want the tray directly.
+    if not args.skip_first_run:
+        from sb_desktop.config import load_kit_config
+
+        kit_present = load_kit_config() is not None
+        if args.first_run or not kit_present:
+            from sb_desktop.ui import run_first_run_wizard
+
+            log.info("launching first-run wizard")
+            ok = run_first_run_wizard()
+            if not ok:
+                log.warning("first-run wizard cancelled or install failed")
+                # We still drop into the tray so the user can retry from the
+                # menu, see logs, or use the desktop without the engine.
 
     from sb_desktop.tray import run_tray
 

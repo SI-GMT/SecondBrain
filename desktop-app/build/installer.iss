@@ -2,14 +2,19 @@
 ; -----------------------------------------------------------------------------
 ; Builds an unsigned .exe installer that:
 ;   1. Lays the PyInstaller bundle under %LOCALAPPDATA%\SecondBrainDesktop.
-;   2. Optionally installs the Memory Kit engine (via the bundled kit source
-;      tree + deploy.ps1) and wires up MCP for the user's LLM CLIs (Claude
-;      Code, Claude Desktop, Codex, Gemini, Vibe, Copilot).
+;   2. Bundles the Memory Kit source tree so the in-app first-run wizard
+;      can install the engine + wire MCP into the user's LLM CLIs without
+;      requiring them to type anything in a terminal.
 ;   3. Registers an opt-in autostart key, creates Start Menu shortcuts.
 ;
-; The kit install step is opt-in via a [Tasks] checkbox so the user can
-; install the desktop alone (e.g. on a machine that already has the kit
-; deployed elsewhere) or do the full bundle.
+; The kit install + MCP wiring is **not** done by Inno itself. The
+; PyInstaller-built ``SecondBrainTray.exe`` detects on first launch
+; that ``~/.memory-kit/config.json`` is missing and runs its built-in
+; setup wizard, which collects the user's choices (vault path,
+; language, which LLM CLIs to wire) and invokes the bundled deploy
+; script in the background with the right flags. This keeps a single,
+; guided, end-to-end experience without forking the install logic
+; between two places.
 ;
 ; Compile order:
 ;   1. Build the PyInstaller bundle first (see build/build_windows.ps1).
@@ -17,7 +22,7 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.4.0"
+#define MyAppVersion     "0.5.0"
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"
@@ -57,8 +62,6 @@ Name: "autostart"; Description: "Start &SecondBrain Desktop at login"; \
     GroupDescription: "Startup options:"; Flags: unchecked
 Name: "desktopicon"; Description: "Create a desktop &shortcut"; \
     GroupDescription: "Shortcuts:"; Flags: unchecked
-Name: "installkit"; Description: "&Install the Memory Kit engine (pipx) and wire up MCP for installed LLM CLIs"; \
-    GroupDescription: "Memory Kit engine:"; Flags: checkedonce
 
 [Files]
 ; 1. The PyInstaller bundle (~80 MB).
@@ -94,24 +97,17 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
     Tasks: autostart
 
 [Run]
-; Step 1: run the Memory Kit deploy script when the user opted in via the
-;         "installkit" task. Pass -AutoUpdate to make it idempotent on
-;         re-installs (it then upgrades the pipx env in place).
-Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\kit\deploy.ps1"" -AutoUpdate"; \
-    WorkingDir: "{app}\kit"; \
-    Flags: runhidden waituntilterminated; \
-    StatusMsg: "Installing Memory Kit engine (pipx + MCP wiring)..."; \
-    Tasks: installkit
-
-; Step 2: verify the desktop bundle starts (catches missing Python runtime
-;         pieces, antivirus quarantine, etc. before the user clicks the icon).
+; Verify the bundle starts (catches missing Python runtime pieces or AV
+; quarantine before the user clicks the tray icon and hits a silent
+; failure). The actual kit install + MCP wiring runs from inside the app
+; on first launch via the setup wizard, not from this installer.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--healthcheck"; \
     Flags: runhidden waituntilterminated; StatusMsg: "Verifying SecondBrain Desktop..."
 
-; Step 3: launch the app at the end of the wizard.
+; Launch the app at the end of the wizard. The desktop will detect that
+; the kit is not yet installed and pop its built-in setup wizard.
 Filename: "{app}\{#MyAppExeName}"; \
-    Description: "Launch {#MyAppName}"; \
+    Description: "Launch {#MyAppName} (will guide you through setup)"; \
     Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -143,46 +139,22 @@ begin
     Result := False;
 end;
 
-function ShouldRunKitInstall(): Boolean;
-begin
-  Result := IsTaskSelected('installkit');
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  WantsKit: Boolean;
 begin
-  if CurStep = ssInstall then
-  begin
-    // Block the kit install step early if Python is missing so the user
-    // doesn't sit through a long ``deploy.ps1`` failure for nothing.
-    WantsKit := ShouldRunKitInstall();
-    if WantsKit and (not IsPythonAvailable()) then
-    begin
-      MsgBox(
-        'Python 3.12+ is required to install the Memory Kit engine, but it ' +
-        'was not detected on PATH.' #13#10 #13#10 +
-        'Install Python from https://www.python.org/downloads/ (or the Microsoft ' +
-        'Store), then re-run this installer.' #13#10 #13#10 +
-        'SecondBrain Desktop itself does not need Python — the bundled engine ' +
-        'is sufficient. You can finish this install and add the kit later.',
-        mbInformation, MB_OK
-      );
-    end;
-  end;
-
   if CurStep = ssPostInstall then
   begin
-    if (not ShouldRunKitInstall()) and (not IsKitInstalled()) then
+    if (not IsPythonAvailable()) and (not IsKitInstalled()) then
     begin
       MsgBox(
         'SecondBrain Desktop is installed.' #13#10 #13#10 +
-        'The Memory Kit engine (memory-kit-mcp) was not detected on PATH and ' +
-        'you opted out of installing it. The tray app still works in standalone ' +
-        'mode, but your LLM CLIs (Claude Code, Codex, Gemini, ...) will not see ' +
-        'the SecondBrain vault until the kit is installed.' #13#10 #13#10 +
-        'Re-run this installer with "Install the Memory Kit engine" ticked, or ' +
-        'follow the guide at https://github.com/SI-GMT/SecondBrain.',
+        'Python 3.12+ was not detected on PATH, so the in-app setup ' +
+        'wizard will not be able to install the Memory Kit engine on ' +
+        'first launch.' #13#10 #13#10 +
+        'Install Python from https://www.python.org/downloads/ (or the ' +
+        'Microsoft Store), then re-run the wizard from the tray menu: ' +
+        'Settings -> Re-run setup wizard.' #13#10 #13#10 +
+        'The tray itself works without Python — it just can''t install ' +
+        'the engine for the LLM CLIs to use.',
         mbInformation, MB_OK
       );
     end;

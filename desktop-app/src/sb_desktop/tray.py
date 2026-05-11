@@ -125,6 +125,7 @@ def _build_menu(icon: pystray.Icon, state: TrayState) -> pystray.Menu:
         pystray.MenuItem("Open logs", lambda *_: open_logs_viewer()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Settings…", _action_settings(icon, state)),
+        pystray.MenuItem("Re-run setup wizard…", _action_rerun_wizard(icon, state)),
         pystray.MenuItem("About", _action_about),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", lambda *_: icon.stop()),
@@ -301,6 +302,26 @@ def _action_settings(icon: pystray.Icon, state: TrayState):
 
 def _action_about(*_args) -> None:
     webbrowser.open("https://github.com/SI-GMT/SecondBrain")
+
+
+def _action_rerun_wizard(icon: pystray.Icon, state: TrayState):
+    """Re-launch the setup wizard from the tray. Useful for adding a new
+    LLM CLI after the initial install, or for changing the vault path."""
+
+    def handler(*_args) -> None:
+        from .ui import run_first_run_wizard
+
+        ok = run_first_run_wizard()
+        if ok:
+            with state.lock:
+                state.kit = None  # force re-read of ~/.memory-kit/config.json
+            from .config import load_kit_config
+
+            with state.lock:
+                state.kit = load_kit_config()
+            _do_status_probe(icon, state)
+
+    return handler
 
 
 def _do_status_probe(icon: pystray.Icon, state: TrayState) -> None:

@@ -12,6 +12,7 @@ need only one import line.
 """
 
 from .confirm_dialog import ask_confirm
+from .first_run_wizard import run_first_run_wizard
 from .logs_viewer import open_logs_viewer
 from .repair_dialog import show_repair_report
 from .scan_dialog import show_scan_report
@@ -22,6 +23,7 @@ __all__ = [
     "ask_confirm",
     "open_logs_viewer",
     "open_settings_dialog",
+    "run_first_run_wizard",
     "show_repair_report",
     "show_scan_report",
     "show_update_progress",
