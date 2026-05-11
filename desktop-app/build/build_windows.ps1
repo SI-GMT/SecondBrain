@@ -218,19 +218,67 @@ finally {
 # ---------------------------------------------------------------------------
 # 7. Inno Setup — assemble everything into a single installer .exe.
 # ---------------------------------------------------------------------------
-if (-not (Test-Path $IsccPath)) {
-    Write-Warning "ISCC.exe not found at $IsccPath — installer step skipped."
-    Write-Host "Install Inno Setup 6 from https://jrsoftware.org/isinfo.php"
-    return
+
+function Resolve-IsccPath {
+    param([string]$Preferred)
+    if ($Preferred -and (Test-Path $Preferred)) { return $Preferred }
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe",
+        "${env:ProgramFiles}\Inno Setup 5\ISCC.exe"
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path $c)) { return $c }
+    }
+    $fromPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
+    if ($fromPath) { return $fromPath.Source }
+    return $null
 }
 
-Write-Host '==> Compiling installer'
-& $IsccPath /Q $IssFile
+$ResolvedIscc = Resolve-IsccPath -Preferred $IsccPath
+
+if (-not $ResolvedIscc) {
+    Write-Host ''
+    Write-Host '====================================================================' -ForegroundColor Red
+    Write-Host '  ISCC.exe NOT FOUND — installer step CANNOT run.'                   -ForegroundColor Red
+    Write-Host '====================================================================' -ForegroundColor Red
+    Write-Host ''
+    Write-Host '  PyInstaller produced the bundle but Inno Setup 6 is not installed' -ForegroundColor Yellow
+    Write-Host '  on this machine, so no setup.exe was produced.'                    -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  To complete the build:'                                            -ForegroundColor Yellow
+    Write-Host '    1. Download Inno Setup 6 from https://jrsoftware.org/isdl.php'   -ForegroundColor Yellow
+    Write-Host '       (Stable Release — innosetup-6.x.x.exe).'                      -ForegroundColor Yellow
+    Write-Host '    2. Run the installer with default options.'                      -ForegroundColor Yellow
+    Write-Host '    3. Re-run this build script.'                                    -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  Tried these locations:'                                            -ForegroundColor DarkGray
+    Write-Host "    - $IsccPath"                                                     -ForegroundColor DarkGray
+    Write-Host "    - ${env:ProgramFiles}\Inno Setup 6\ISCC.exe"                     -ForegroundColor DarkGray
+    Write-Host '    - %PATH% (iscc.exe)'                                             -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Bundle still available at:'                                        -ForegroundColor DarkGray
+    Write-Host "    $DistDir\SecondBrainTray\"                                       -ForegroundColor DarkGray
+    Write-Host ''
+    throw 'Inno Setup 6 (ISCC.exe) is required to build the installer.'
+}
+
+Write-Host "==> Compiling installer (ISCC: $ResolvedIscc)"
+& $ResolvedIscc /Q $IssFile
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC failed with exit code $LASTEXITCODE"
 }
 
-Write-Host '==> Done.'
-Get-ChildItem $DistDir -Filter 'SecondBrain*Setup*.exe', 'SecondBrainDesktop*setup.exe' -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "Artifact: $($_.FullName)"
+Write-Host ''
+Write-Host '==> Build complete.' -ForegroundColor Green
+$artifacts = @(
+    Get-ChildItem $DistDir -Filter 'SecondBrainDesktop*setup.exe' -ErrorAction SilentlyContinue
+    Get-ChildItem $DistDir -Filter 'SecondBrain*Setup*.exe' -ErrorAction SilentlyContinue
+) | Sort-Object -Property FullName -Unique
+foreach ($a in $artifacts) {
+    Write-Host "    $($a.FullName)" -ForegroundColor Green
+}
+if (-not $artifacts) {
+    Write-Warning "No setup.exe found in $DistDir after ISCC compile. Check the [Setup] OutputDir / OutputBaseFilename in installer.iss."
 }
