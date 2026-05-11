@@ -17,7 +17,7 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.3.0"
+#define MyAppVersion     "0.4.0"
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"

@@ -118,6 +118,21 @@ def show_repair_report(report: HealthRepairReport) -> None:
         )
         hint.pack(anchor="w", pady=(0, 8))
 
+    if report.workflow_hints:
+        hints_frame = ttk.LabelFrame(
+            container, text="Recommended workflow", padding=8
+        )
+        hints_frame.pack(fill="x", pady=(0, 8))
+        for category, hint_text in report.workflow_hints.items():
+            row = ttk.Frame(hints_frame)
+            row.pack(fill="x", pady=(0, 6))
+            ttk.Label(row, text=f"{category}:", font=("", 9, "bold")).pack(
+                anchor="w"
+            )
+            ttk.Label(
+                row, text=hint_text, wraplength=640, foreground="#555555"
+            ).pack(anchor="w", padx=(12, 0))
+
     _close_button(root)
 
     with dialog_lifecycle(root):

@@ -41,12 +41,16 @@ log = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = ("error", "warn", "warning", "info")
 
-# Categories the desktop auto-fixes. Kept aligned with the kit's
-# ``auto_fixable=True`` annotations in ``memory_kit_mcp.health.scan``.
+# Categories the desktop auto-fixes. The first three mirror the kit's
+# ``auto_fixable=True`` annotations. The next two are kit-conservative
+# (``auto_fixable=False`` upstream) but deterministic enough that we
+# wire them here — see the per-category helper docstrings below.
 SAFE_CATEGORIES = frozenset({
     "missing-display",
     "missing-zone-index-entry",
     "missing-zone-index",
+    "missing-universal-frontmatter",
+    "topology-archives-out-of-sync",
 })
 
 DESTRUCTIVE_CATEGORIES = frozenset({
@@ -55,6 +59,19 @@ DESTRUCTIVE_CATEGORIES = frozenset({
 })
 
 ALL_AUTO_FIXABLE = SAFE_CATEGORIES | DESTRUCTIVE_CATEGORIES
+
+# ``archeo-archive-incomplete-frontmatter`` requires re-running
+# ``mem-archeo-git`` to repopulate the MUST keys from git history, so
+# we surface it as manual-review with a recommended workflow rather
+# than attempting a half-correct in-place rewrite.
+WORKFLOW_HINTS: dict[str, str] = {
+    "archeo-archive-incomplete-frontmatter": (
+        "Re-run `mem-archeo-git` against the source project to repopulate the "
+        "archeo MUST keys (branch / branch_base / commit_sha / milestone_kind / …). "
+        "Editing the frontmatter by hand is error-prone and the archeo planner "
+        "is the authoritative source of those values."
+    ),
+}
 
 
 class HealthFinding(BaseModel):
@@ -105,6 +122,7 @@ class HealthRepairReport(BaseModel):
     files_deleted: list[str] = Field(default_factory=list)
     counts_before: dict[str, int] = Field(default_factory=dict)
     counts_after: dict[str, int] = Field(default_factory=dict)
+    workflow_hints: dict[str, str] = Field(default_factory=dict)
     summary: str = ""
     error: str | None = None
 
@@ -233,6 +251,216 @@ def _create_zone_hub(vault: Path, zone_dir: str) -> Path | None:
     return target
 
 
+# ---------------------------------------------------------------------------
+# missing-universal-frontmatter helpers
+# ---------------------------------------------------------------------------
+#
+# The kit's scanner flags any atom outside ``00-inbox`` / ``99-meta`` that
+# lacks one of the three universal MUST fields: ``scope``, ``collective``,
+# ``modality``. Upstream the category is ``auto_fixable=False`` because the
+# semantic fields are nominally editorial.
+#
+# In practice, two of the three are mechanically derivable from the file
+# path and the kit's ``default_scope`` setting, and the third has a safe
+# default. The heuristics below fill *only* the missing keys (never
+# overwrite a value the user already chose).
+
+_MODALITY_BY_PATH_SEGMENT: dict[str, str] = {
+    "20-knowledge": "knowledge",
+    "40-principles": "principle",
+    "50-goals": "goal",
+    "60-people": "person",
+    "70-resources": "resource",
+    "99-meta": "meta",
+}
+
+
+def _modality_from_path(rel: str) -> str | None:
+    """Best-effort modality inference from the vault-relative POSIX path."""
+    parts = rel.split("/")
+    if not parts:
+        return None
+    first = parts[0]
+    if first in _MODALITY_BY_PATH_SEGMENT:
+        return _MODALITY_BY_PATH_SEGMENT[first]
+    if first == "10-episodes":
+        # 10-episodes/projects/{slug}/{archives|context.md|history.md|topology.md}
+        # 10-episodes/domains/{slug}/{archives|context.md|history.md}
+        if len(parts) >= 4 and parts[3] == "archives":
+            return "archive"
+        if len(parts) >= 4 and parts[3].startswith("context"):
+            return "context"
+        if len(parts) >= 4 and parts[3].startswith("history"):
+            return "history"
+        if len(parts) >= 4 and parts[3].startswith("topology"):
+            return "topology"
+        return "episode"
+    return None
+
+
+def _scope_from_path(rel: str, default_scope: str) -> str:
+    """Detect ``/work/`` / ``/perso/`` markers, fall back to default_scope."""
+    segments = set(rel.split("/"))
+    if "work" in segments:
+        return "work"
+    if "perso" in segments:
+        return "perso"
+    if default_scope in {"work", "perso", "mixed"}:
+        return default_scope
+    return "work"  # the kit's own default
+
+
+def _kit_default_scope() -> str:
+    """Read ``default_scope`` from the kit config; safe fallback."""
+    kit = load_kit_config()
+    if kit is None:
+        return "work"
+    return str(kit.extras.get("default_scope", "work"))
+
+
+def _fix_universal_frontmatter(
+    vault: Path, rel: str, default_scope: str
+) -> tuple[bool, str | None]:
+    """Fill the missing universal MUST fields in place.
+
+    Returns ``(ok, path_str)``. ``ok=False`` means the file disappeared,
+    was unreadable, or already had all three fields (shouldn't happen
+    given the scanner reports it, but defensive).
+    """
+    try:
+        from memory_kit_mcp.vault import frontmatter
+    except ImportError:
+        return False, None
+
+    target = vault / rel
+    if not target.is_file():
+        return False, None
+    try:
+        fm, body = frontmatter.read(target)
+    except Exception as exc:
+        log.warning("universal-frontmatter read failed for %s: %s", rel, exc)
+        return False, None
+
+    changed = False
+    if "modality" not in fm:
+        modality = _modality_from_path(rel)
+        if modality:
+            fm["modality"] = modality
+            changed = True
+    if "scope" not in fm:
+        fm["scope"] = _scope_from_path(rel, default_scope)
+        changed = True
+    if "collective" not in fm:
+        # Safe default: personal until promoted. Promoting later is a
+        # cheap manual flip (or a future bulk action in this UI).
+        fm["collective"] = False
+        changed = True
+
+    if not changed:
+        return False, None
+
+    try:
+        frontmatter.write(target, fm, body)
+    except Exception as exc:
+        log.warning("universal-frontmatter write failed for %s: %s", rel, exc)
+        return False, None
+    return True, rel
+
+
+# ---------------------------------------------------------------------------
+# topology-archives-out-of-sync helper
+# ---------------------------------------------------------------------------
+#
+# The scanner flags ``99-meta/repo-topology/{slug}.md`` topology atoms that
+# don't reference every archive in ``10-episodes/projects/{slug}/archives/``
+# via wikilink. The fix is deterministic: list the archives, append the
+# missing wikilinks to the body's "Atomes dérivés des phases archeo"
+# section (creating it if absent).
+
+_ARCHEO_SECTION_TITLES = (
+    "## Atomes dérivés des phases archeo",
+    "## Atomes dérivés",
+    "## Archives",
+)
+
+
+def _fix_topology_archives(vault: Path, rel: str) -> tuple[bool, str | None]:
+    """Append the missing archive wikilinks to the topology body."""
+    try:
+        from memory_kit_mcp.vault import frontmatter
+        from memory_kit_mcp.vault.wikilinks import WIKILINK_RE, strip_code
+    except ImportError:
+        return False, None
+
+    target = vault / rel
+    if not target.is_file():
+        return False, None
+    try:
+        fm, body = frontmatter.read(target)
+    except Exception as exc:
+        log.warning("topology read failed for %s: %s", rel, exc)
+        return False, None
+    if fm.get("type") != "repo-topology":
+        return False, None
+    slug = fm.get("project")
+    if not slug:
+        return False, None
+
+    arch_dir = vault / "10-episodes" / "projects" / slug / "archives"
+    if not arch_dir.is_dir():
+        return False, None
+
+    archives = sorted(p.stem for p in arch_dir.glob("*.md") if p.is_file())
+    if not archives:
+        return False, None
+
+    existing_targets: set[str] = set()
+    for m in WIKILINK_RE.finditer(strip_code(body)):
+        existing_targets.add(m.group(1).strip().split("/")[-1])
+
+    missing = [a for a in archives if a not in existing_targets]
+    if not missing:
+        return False, None
+
+    # Insert at the existing "Atomes dérivés…" section if present;
+    # otherwise append a fresh section at the end.
+    section_index = -1
+    for title in _ARCHEO_SECTION_TITLES:
+        idx = body.find(title)
+        if idx >= 0:
+            section_index = idx
+            break
+
+    addition = "\n".join(f"- [[{a}]]" for a in missing)
+
+    if section_index >= 0:
+        # Insert after the section header line.
+        line_end = body.find("\n", section_index)
+        if line_end < 0:
+            new_body = body + "\n" + addition + "\n"
+        else:
+            new_body = (
+                body[: line_end + 1]
+                + addition
+                + "\n"
+                + body[line_end + 1 :]
+            )
+    else:
+        new_body = (
+            body.rstrip("\n")
+            + "\n\n## Atomes dérivés des phases archeo\n\n"
+            + addition
+            + "\n"
+        )
+
+    try:
+        frontmatter.write(target, fm, new_body)
+    except Exception as exc:
+        log.warning("topology write failed for %s: %s", rel, exc)
+        return False, None
+    return True, rel
+
+
 def repair_vault(
     *,
     apply: bool = False,
@@ -351,6 +579,39 @@ def repair_vault(
             else:
                 skipped += 1
 
+        # 4. missing-universal-frontmatter — fill scope/collective/modality.
+        default_scope = _kit_default_scope()
+        for f in safe_fixable:
+            if f.category != "missing-universal-frontmatter" or not f.path:
+                continue
+            try:
+                ok, rel = _fix_universal_frontmatter(vault, f.path, default_scope)
+            except Exception as exc:
+                log.warning("universal-frontmatter fix raised for %s: %s", f.path, exc)
+                skipped += 1
+                continue
+            if ok and rel:
+                fixed_by_cat["missing-universal-frontmatter"] += 1
+                modified.append(str(vault / rel))
+            else:
+                skipped += 1
+
+        # 5. topology-archives-out-of-sync — append missing wikilinks.
+        for f in safe_fixable:
+            if f.category != "topology-archives-out-of-sync" or not f.path:
+                continue
+            try:
+                ok, rel = _fix_topology_archives(vault, f.path)
+            except Exception as exc:
+                log.warning("topology fix raised for %s: %s", f.path, exc)
+                skipped += 1
+                continue
+            if ok and rel:
+                fixed_by_cat["topology-archives-out-of-sync"] += 1
+                modified.append(str(vault / rel))
+            else:
+                skipped += 1
+
         # 4. Destructive: stray-zone-md + empty-md-at-root.
         if apply_destructive and destructive_fixable:
             destructive_applied = True
@@ -409,6 +670,14 @@ def repair_vault(
         )
         summary_lines.append(f"Manual review still required — {cats}")
 
+    # Attach workflow hints for any manual-review category we know about.
+    manual_categories = {f.category for f in manual_review}
+    hints = {
+        cat: WORKFLOW_HINTS[cat]
+        for cat in manual_categories
+        if cat in WORKFLOW_HINTS
+    }
+
     return HealthRepairReport(
         ok=True,
         applied=apply,
@@ -423,5 +692,6 @@ def repair_vault(
         files_deleted=deleted,
         counts_before=counts_before,
         counts_after=counts_after,
+        workflow_hints=hints,
         summary="\n".join(summary_lines),
     )
