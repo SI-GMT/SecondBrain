@@ -41,7 +41,11 @@ done
 
 VERSION="$(grep -E '^version\s*=\s*' "$REPO_ROOT/pyproject.toml" | head -1 | cut -d'"' -f2)"
 BUILD_NUMBER="$(git -C "$REPO_ROOT/.." rev-parse --short HEAD 2>/dev/null || echo 0)"
-MIN_OS="11.0"
+MIN_OS="${MIN_OS:-11.0}"
+
+# The DMG filename matches the Windows setup.exe pattern so the two
+# release-artifacts read consistently on the GitHub release page.
+DMG_BASENAME="SecondBrainDesktop-$VERSION"
 
 echo "==> Building $APP_NAME $VERSION (build $BUILD_NUMBER)"
 
@@ -105,7 +109,7 @@ if [[ $DO_SIGN -eq 1 ]]; then
 fi
 
 # 6. Build DMG via hdiutil.
-DMG_PATH="$DIST_DIR/SecondBrainDesktop-$VERSION.dmg"
+DMG_PATH="$DIST_DIR/${DMG_BASENAME}.dmg"
 rm -f "$DMG_PATH"
 hdiutil create -volname "$APP_NAME $VERSION" \
     -srcfolder "$APP_BUNDLE" \
@@ -125,4 +129,8 @@ if [[ $DO_NOTARIZE -eq 1 && $DO_SIGN -eq 1 ]]; then
     xcrun stapler staple "$DMG_PATH"
 fi
 
-echo "==> Artifact: $DMG_PATH"
+echo "==> Build complete."
+echo "    Artifact: $DMG_PATH"
+echo ""
+echo "    Publish with:"
+echo "      gh release upload sb-desktop-v$VERSION \"$DMG_PATH\" --clobber"
