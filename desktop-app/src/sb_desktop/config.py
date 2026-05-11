@@ -55,9 +55,23 @@ class AppSettings(BaseModel):
     language_override: str | None = None
     confirm_repair: bool = True
     confirm_update: bool = True
+    confirm_destructive_repair: bool = True
     notify_on_scan_findings: bool = True
     notify_on_update_available: bool = True
+    notify_level: str = Field(default="all", pattern="^(silent|errors|all)$")
     poll_interval_seconds: int = Field(default=900, ge=60, le=3600)
+    # Stable identifiers — match the keys ``deploy.ps1`` knows how to wire.
+    mcp_targets: list[str] = Field(
+        default_factory=lambda: [
+            "claude-code",
+            "claude-desktop",
+            "codex",
+            "gemini-cli",
+            "mistral-vibe",
+            "copilot-cli",
+        ]
+    )
+    vault_override_path: str | None = None
 
 
 def load_kit_config(path: Path | None = None) -> KitConfig | None:

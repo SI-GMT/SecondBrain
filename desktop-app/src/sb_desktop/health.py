@@ -4,17 +4,26 @@ Direct function calls into ``memory_kit_mcp`` (no MCP stdio, no
 subprocess). Latency is ~10-50 ms for a typical vault scan instead of
 the 1-2 s cold-start handshake the V1 stdio bridge used to pay.
 
-We deliberately depend on internal kit symbols
-(``memory_kit_mcp.health.scan.scan_vault`` and the private
-``_fix_missing_display`` from the repair tool) because the kit version
-is **bundled** with the desktop app — we ship both together, so there
-is no API stability boundary to respect between them. When the kit
-later promotes a public ``memory_kit_mcp.health.repair.repair_vault``
-function, switch to that without changing this module's external shape.
+Auto-fix coverage (desktop-side, mirrors the kit's ``auto_fixable``
+flags):
 
-Failure modes are surfaced as Pydantic models, not exceptions: the UI
-expects every call to return a structured report it can render
-verbatim.
+* ``missing-display``         — add the ``display:`` frontmatter key.
+* ``missing-zone-index-entry`` — regenerate the affected zone index.
+* ``missing-zone-index``      — create the empty zone hub file.
+* ``stray-zone-md``           — delete the empty zone-named file at root.
+* ``empty-md-at-root``        — delete the empty root file.
+
+The last two operations delete files and are gated behind an explicit
+``apply_destructive=True`` flag so the UI can require a second
+confirmation before invoking them.
+
+Other categories the scanner reports (``missing-universal-frontmatter``,
+``archeo-archive-incomplete-frontmatter``, ``topology-archives-out-of-sync``,
+``orphan-atoms``, ``dangling-wikilinks``, …) require editorial judgment
+or non-trivial content edits — they are reported but not auto-fixed.
+The :class:`HealthRepairReport` surfaces them as
+``manual_review_count`` so the user understands why ``Repair`` didn't
+fix everything the ``Scan`` flagged.
 """
 
 from __future__ import annotations
@@ -31,6 +40,21 @@ from .config import load_kit_config
 log = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = ("error", "warn", "warning", "info")
+
+# Categories the desktop auto-fixes. Kept aligned with the kit's
+# ``auto_fixable=True`` annotations in ``memory_kit_mcp.health.scan``.
+SAFE_CATEGORIES = frozenset({
+    "missing-display",
+    "missing-zone-index-entry",
+    "missing-zone-index",
+})
+
+DESTRUCTIVE_CATEGORIES = frozenset({
+    "stray-zone-md",
+    "empty-md-at-root",
+})
+
+ALL_AUTO_FIXABLE = SAFE_CATEGORIES | DESTRUCTIVE_CATEGORIES
 
 
 class HealthFinding(BaseModel):
@@ -70,21 +94,37 @@ class HealthReport(BaseModel):
 class HealthRepairReport(BaseModel):
     ok: bool
     applied: bool
+    destructive_applied: bool = False
+    findings_before: int = 0
+    findings_after: int = 0
     fixed_count: int = 0
     skipped_count: int = 0
-    remaining_count: int = 0
+    manual_review_count: int = 0
+    fixed_by_category: dict[str, int] = Field(default_factory=dict)
     files_modified: list[str] = Field(default_factory=list)
+    files_deleted: list[str] = Field(default_factory=list)
+    counts_before: dict[str, int] = Field(default_factory=dict)
+    counts_after: dict[str, int] = Field(default_factory=dict)
     summary: str = ""
     error: str | None = None
+
+    def fixed_total(self) -> int:
+        return self.fixed_count
 
     def render_text(self) -> str:
         if not self.ok:
             return f"Repair failed: {self.error or 'unknown error'}"
         mode = "applied" if self.applied else "dry-run"
-        return (
+        lines = [
             f"Repair {mode}: {self.fixed_count} fixed, "
-            f"{self.skipped_count} skipped, {self.remaining_count} remaining."
-        )
+            f"{self.skipped_count} skipped, "
+            f"{self.manual_review_count} manual review."
+        ]
+        if self.applied:
+            lines.append(
+                f"Findings: {self.findings_before} → {self.findings_after}."
+            )
+        return "\n".join(lines)
 
 
 def _resolve_vault(vault_override: Path | None = None) -> tuple[Path | None, str | None]:
@@ -113,8 +153,22 @@ def _summarise(findings: list[HealthFinding]) -> tuple[dict[str, int], dict[str,
     return dict(by_cat), dict(by_sev), summary
 
 
+def _engine_findings_to_models(raw_findings) -> list[HealthFinding]:
+    out: list[HealthFinding] = []
+    for f in raw_findings:
+        out.append(
+            HealthFinding(
+                category=getattr(f, "category", "unknown"),
+                severity=getattr(f, "severity", "info"),
+                path=getattr(f, "path", None),
+                message=getattr(f, "message", ""),
+                auto_fixable=bool(getattr(f, "auto_fixable", False)),
+            )
+        )
+    return out
+
+
 def scan_vault(vault_override: Path | None = None) -> HealthReport:
-    """Run the full vault audit. Direct call into the bundled engine."""
     vault, err = _resolve_vault(vault_override)
     if vault is None:
         return HealthReport(ok=False, error=err)
@@ -130,17 +184,7 @@ def scan_vault(vault_override: Path | None = None) -> HealthReport:
         log.exception("engine scan_vault raised: %s", exc)
         return HealthReport(ok=False, error=f"engine raised: {exc}")
 
-    findings: list[HealthFinding] = []
-    for f in engine_findings:
-        finding_dict = {
-            "category": getattr(f, "category", "unknown"),
-            "severity": getattr(f, "severity", "info"),
-            "path": getattr(f, "path", None),
-            "message": getattr(f, "message", ""),
-            "auto_fixable": bool(getattr(f, "auto_fixable", False)),
-        }
-        findings.append(HealthFinding(**finding_dict))
-
+    findings = _engine_findings_to_models(engine_findings)
     by_cat, by_sev, summary = _summarise(findings)
     return HealthReport(
         ok=True,
@@ -153,12 +197,58 @@ def scan_vault(vault_override: Path | None = None) -> HealthReport:
     )
 
 
-def repair_vault(*, apply: bool = False, vault_override: Path | None = None) -> HealthRepairReport:
-    """Apply auto-fixes to the findings. Default is dry-run.
+def _safe_unlink(path: Path) -> bool:
+    try:
+        path.unlink()
+        return True
+    except OSError as exc:
+        log.warning("failed to delete %s: %s", path, exc)
+        return False
 
-    Currently auto-fixes only ``missing-display`` and
-    ``missing-zone-index-entry`` — matches the engine's policy. Other
-    categories require manual review.
+
+_EMPTY_ZONE_INDEX_TEMPLATE = """---
+display: {zone} — index
+kind: zone-index
+zone: {zone}
+---
+
+# {zone}
+
+(empty hub — populated on demand by atom additions)
+"""
+
+
+def _create_zone_hub(vault: Path, zone_dir: str) -> Path | None:
+    """Create a minimal ``{zone}/index.md`` if missing."""
+    zone = zone_dir.rstrip("/").split("/")[-1]
+    target = vault / zone / "index.md"
+    if target.exists():
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        _EMPTY_ZONE_INDEX_TEMPLATE.format(zone=zone),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return target
+
+
+def repair_vault(
+    *,
+    apply: bool = False,
+    apply_destructive: bool = False,
+    vault_override: Path | None = None,
+) -> HealthRepairReport:
+    """Apply auto-fixes to the findings.
+
+    Args:
+        apply: when False (default) just enumerate what would be fixed
+            without writing anything.
+        apply_destructive: even with ``apply=True``, destructive
+            operations (file deletion) only run if this is also True.
+            Requires a second confirmation in the UI.
+        vault_override: optional vault path; defaults to the configured
+            one.
     """
     vault, err = _resolve_vault(vault_override)
     if vault is None:
@@ -167,7 +257,6 @@ def repair_vault(*, apply: bool = False, vault_override: Path | None = None) -> 
     try:
         from memory_kit_mcp.health.scan import scan_vault as engine_scan
         from memory_kit_mcp.tools.health_repair import (  # type: ignore[attr-defined]
-            _AUTO_FIXABLE_CATEGORIES,
             _fix_missing_display,
         )
     except ImportError as exc:
@@ -176,36 +265,45 @@ def repair_vault(*, apply: bool = False, vault_override: Path | None = None) -> 
         )
 
     try:
-        all_findings, _errors, _files_scanned = engine_scan(vault)
+        before_engine, _errors, _files_scanned = engine_scan(vault)
     except Exception as exc:
-        log.exception("engine scan_vault during repair raised: %s", exc)
+        log.exception("engine scan during repair raised: %s", exc)
         return HealthRepairReport(
             ok=False, applied=apply, error=f"scan raised: {exc}"
         )
 
-    fixable = [f for f in all_findings if f.category in _AUTO_FIXABLE_CATEGORIES]
-    applied_count = 0
-    skipped_count = 0
+    before = _engine_findings_to_models(before_engine)
+    counts_before, _, _ = _summarise(before)
+    findings_before = len(before)
+
+    fixed_by_cat: Counter[str] = Counter()
+    skipped = 0
     modified: list[str] = []
+    deleted: list[str] = []
+    destructive_applied = False
+
+    safe_fixable = [f for f in before if f.category in SAFE_CATEGORIES]
+    destructive_fixable = [f for f in before if f.category in DESTRUCTIVE_CATEGORIES]
+    manual_review = [f for f in before if f.category not in ALL_AUTO_FIXABLE]
 
     if apply:
-        # missing-display — one fix per finding
-        for f in fixable:
-            if f.category != "missing-display":
+        # 1. missing-display — one rewrite per file.
+        for f in safe_fixable:
+            if f.category != "missing-display" or not f.path:
                 continue
             try:
                 ok, path = _fix_missing_display(vault, f.path)
             except Exception as exc:
                 log.warning("missing-display fix raised for %s: %s", f.path, exc)
-                skipped_count += 1
+                skipped += 1
                 continue
             if ok:
-                applied_count += 1
+                fixed_by_cat["missing-display"] += 1
                 modified.append(str(vault / path))
             else:
-                skipped_count += 1
+                skipped += 1
 
-        # missing-zone-index-entry — regenerate per affected zone, once
+        # 2. missing-zone-index-entry — regen affected zones once each.
         try:
             from memory_kit_mcp.vault.zone_index import (
                 ATOM_ZONES,
@@ -217,7 +315,8 @@ def repair_vault(*, apply: bool = False, vault_override: Path | None = None) -> 
 
         if regenerate_zone_index is not None:
             zone_findings = [
-                f for f in fixable if f.category == "missing-zone-index-entry"
+                f for f in safe_fixable
+                if f.category == "missing-zone-index-entry" and f.path
             ]
             zones_to_regen: set[str] = set()
             for f in zone_findings:
@@ -231,31 +330,98 @@ def repair_vault(*, apply: bool = False, vault_override: Path | None = None) -> 
                     log.warning("regen zone %s raised: %s", zone, exc)
                     continue
                 modified.append(str(index_path))
-                applied_count += sum(
-                    1 for f in zone_findings if (f.path or "").startswith(f"{zone}/")
+                fixed_by_cat["missing-zone-index-entry"] += sum(
+                    1 for f in zone_findings
+                    if (f.path or "").startswith(f"{zone}/")
                 )
 
-    remaining = (
-        len([f for f in all_findings if f.category not in _AUTO_FIXABLE_CATEGORIES])
-        + (len(fixable) - applied_count if apply else len(fixable))
-    )
+        # 3. missing-zone-index — create empty hubs.
+        for f in safe_fixable:
+            if f.category != "missing-zone-index" or not f.path:
+                continue
+            try:
+                created = _create_zone_hub(vault, f.path)
+            except Exception as exc:
+                log.warning("zone-hub creation raised for %s: %s", f.path, exc)
+                skipped += 1
+                continue
+            if created is not None:
+                fixed_by_cat["missing-zone-index"] += 1
+                modified.append(str(created))
+            else:
+                skipped += 1
 
+        # 4. Destructive: stray-zone-md + empty-md-at-root.
+        if apply_destructive and destructive_fixable:
+            destructive_applied = True
+            for f in destructive_fixable:
+                if not f.path:
+                    skipped += 1
+                    continue
+                target = vault / f.path
+                if not target.is_file():
+                    skipped += 1
+                    continue
+                if _safe_unlink(target):
+                    fixed_by_cat[f.category] += 1
+                    deleted.append(str(target))
+                else:
+                    skipped += 1
+
+    # Re-scan after apply (or compute the planned-fix count for dry-run).
     if apply:
-        summary = f"Applied {applied_count} fix(es); {remaining} remaining (manual review)."
-    elif fixable:
-        summary = (
-            f"Dry-run: {len(fixable)} fix(es) ready. "
+        try:
+            after_engine, _e2, _f2 = engine_scan(vault)
+        except Exception as exc:
+            log.warning("post-apply scan raised: %s", exc)
+            after_engine = before_engine
+        after = _engine_findings_to_models(after_engine)
+    else:
+        after = before  # dry-run leaves the vault as-is
+
+    counts_after, _, _ = _summarise(after)
+    fixed_count = sum(fixed_by_cat.values())
+    if not apply:
+        # Dry-run report: enumerate what *would* be fixed.
+        fixed_count = len([f for f in safe_fixable]) + (
+            len(destructive_fixable) if apply_destructive else 0
+        )
+
+    summary_lines = []
+    if apply:
+        delta = findings_before - len(after)
+        summary_lines.append(
+            f"Applied {fixed_count} fix(es). Findings went from "
+            f"{findings_before} to {len(after)} (Δ {delta:+d})."
+        )
+    elif safe_fixable or (apply_destructive and destructive_fixable):
+        summary_lines.append(
+            f"Dry-run: {fixed_count} fix(es) ready. "
             "Re-invoke with apply=True to write."
         )
     else:
-        summary = "No auto-fixable findings."
+        summary_lines.append("No auto-fixable findings.")
+
+    if manual_review:
+        cats = ", ".join(
+            f"{c}: {n}"
+            for c, n in Counter(f.category for f in manual_review).most_common()
+        )
+        summary_lines.append(f"Manual review still required — {cats}")
 
     return HealthRepairReport(
         ok=True,
         applied=apply,
-        fixed_count=applied_count if apply else len(fixable),
-        skipped_count=skipped_count,
-        remaining_count=remaining,
+        destructive_applied=destructive_applied,
+        findings_before=findings_before,
+        findings_after=len(after),
+        fixed_count=fixed_count,
+        skipped_count=skipped,
+        manual_review_count=len(manual_review),
+        fixed_by_category=dict(fixed_by_cat),
         files_modified=modified,
-        summary=summary,
+        files_deleted=deleted,
+        counts_before=counts_before,
+        counts_after=counts_after,
+        summary="\n".join(summary_lines),
     )

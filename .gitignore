@@ -37,5 +37,6 @@ desktop-app/.venv-build/
 desktop-app/dist/
 desktop-app/build/generated-icons/
 desktop-app/build/SecondBrainTray/
+desktop-app/build/sb-desktop/
 desktop-app/.coverage
 desktop-app/.pytest_cache/

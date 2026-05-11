@@ -145,3 +145,53 @@ def test_repair_skip_on_fix_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     report = health.repair_vault(apply=True)
     assert report.skipped_count == 1
     assert report.fixed_count == 0
+
+
+def test_repair_reports_manual_review(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Categories not in ALL_AUTO_FIXABLE land in manual_review_count."""
+    _patch_kit_config(monkeypatch, tmp_path / "vault")
+    findings = [
+        FakeFinding(category="missing-universal-frontmatter", path="a.md"),
+        FakeFinding(category="orphan-atoms", path="b.md"),
+        FakeFinding(category="missing-display", path="c.md"),
+    ]
+    _install_fake_engine(monkeypatch, scan_result=(findings, [], 3))
+    report = health.repair_vault()
+    assert report.manual_review_count == 2
+    assert report.findings_before == 3
+
+
+def test_repair_destructive_gated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Stray-zone-md is only deleted when apply_destructive is True."""
+    _patch_kit_config(monkeypatch, tmp_path / "vault")
+    vault = tmp_path / "vault"
+    target = vault / "20-knowledge.md"
+    target.write_text("", encoding="utf-8")
+    findings = [FakeFinding(category="stray-zone-md", path="20-knowledge.md")]
+    _install_fake_engine(monkeypatch, scan_result=(findings, [], 1))
+
+    # apply without destructive: file still exists, nothing deleted.
+    r1 = health.repair_vault(apply=True, apply_destructive=False)
+    assert r1.applied is True
+    assert r1.destructive_applied is False
+    assert target.exists()
+    assert "stray-zone-md" not in r1.fixed_by_category
+
+    # apply destructive: file is deleted.
+    r2 = health.repair_vault(apply=True, apply_destructive=True)
+    assert r2.destructive_applied is True
+    assert not target.exists()
+    assert r2.fixed_by_category.get("stray-zone-md", 0) == 1
+
+
+def test_repair_creates_zone_hub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """missing-zone-index should create the hub file in place."""
+    _patch_kit_config(monkeypatch, tmp_path / "vault")
+    findings = [FakeFinding(category="missing-zone-index", path="20-knowledge/")]
+    _install_fake_engine(monkeypatch, scan_result=(findings, [], 1))
+
+    report = health.repair_vault(apply=True)
+    assert report.applied is True
+    hub = tmp_path / "vault" / "20-knowledge" / "index.md"
+    assert hub.is_file()
+    assert "20-knowledge" in hub.read_text(encoding="utf-8")

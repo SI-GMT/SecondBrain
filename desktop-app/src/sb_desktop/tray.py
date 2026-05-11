@@ -45,6 +45,7 @@ from .ui import (
     ask_confirm,
     open_logs_viewer,
     open_settings_dialog,
+    show_repair_report,
     show_scan_report,
     show_update_progress,
 )
@@ -186,6 +187,12 @@ def _run_repair_from_dialog(state: TrayState, apply: bool) -> str:
         ):
             return "Cancelled."
     report = repair_vault(apply=apply)
+    if apply:
+        # Surface the full diff dialog so the user sees what changed.
+        try:
+            show_repair_report(report)
+        except Exception as exc:
+            log.warning("show_repair_report raised: %s", exc)
     return _format_repair(report)
 
 
@@ -195,19 +202,27 @@ def _run_repair_with_review(state: TrayState) -> None:
         notify("SecondBrain — repair failed", dry.error or "Unknown error")
         return
     if dry.fixed_count == 0:
-        notify("SecondBrain — repair", "Nothing to repair.")
+        # Honest UX: distinguish "nothing to fix" from "we ignored stuff that
+        # needs manual review". Surface the full report so the user sees the
+        # manual-review remainder and which categories require attention.
+        show_repair_report(dry)
         return
-    apply = ask_confirm(
+    proceed = ask_confirm(
         title="Apply repair",
         message=(
-            f"Dry-run shows {dry.fixed_count} fix(es) ready to apply.\n"
-            "Apply now?"
+            f"Dry-run shows {dry.fixed_count} fix(es) ready to apply"
+            + (
+                f" plus {dry.manual_review_count} requiring manual review.\n"
+                if dry.manual_review_count else ".\n"
+            )
+            + "Apply the auto-fixes now?"
         ),
         confirm_label="Apply",
     )
-    if not apply:
+    if not proceed:
         return
     final = repair_vault(apply=True)
+    show_repair_report(final)
     notify("SecondBrain — repair", _format_repair(final))
 
 
