@@ -100,6 +100,24 @@ class _WelcomePage(_PageBase):
     title = "Welcome to SecondBrain"
 
     def build_body(self, parent: ttk.Frame) -> None:
+        layout = find_install_layout()
+        system_install = (
+            layout is not None
+            and layout.is_system_install
+            and layout.engine_already_bootstrapped
+        )
+
+        if system_install:
+            engine_line = (
+                "  • use the shared Memory Kit engine already installed on this "
+                "machine (no admin rights needed for this user setup),\n"
+            )
+        else:
+            engine_line = (
+                "  • install the Memory Kit engine (bundled in this installer "
+                "— no Python required on your machine),\n"
+            )
+
         intro = (
             "SecondBrain gives your AI assistants a persistent memory: a "
             "Markdown vault that survives across sessions, viewable in "
@@ -107,12 +125,11 @@ class _WelcomePage(_PageBase):
             "This short setup will:\n"
             "  • pick a folder for the vault,\n"
             "  • choose a conversational language,\n"
-            "  • install the Memory Kit engine (bundled in this installer — "
-            "no Python required on your machine),\n"
+            f"{engine_line}"
             "  • wire it up to every LLM CLI we find on this machine.\n\n"
-            "Everything stays inside the install directory — your dev "
-            "machine source tree is never touched. You can change anything "
-            "later from the tray icon's Settings menu."
+            "Everything that's specific to you (vault, settings, MCP wiring) "
+            "lives in your user profile — on a shared / RDP machine each user "
+            "gets their own setup without touching the shared engine."
         )
         ttk.Label(parent, text=intro, justify="left", wraplength=560).pack(
             anchor="w", fill="x", expand=True
@@ -326,7 +343,13 @@ class _InstallPage(_PageBase):
     def on_show(self) -> None:
         self.controller.set_buttons(back=False, next_enabled=False, cancel_label="Cancel")
         self.progress.start(80)
-        self.status_var.set("Running the install in the background…")
+        layout = find_install_layout()
+        if layout is not None and layout.is_system_install and layout.engine_already_bootstrapped:
+            self.status_var.set(
+                "System engine already installed — running per-user setup only…"
+            )
+        else:
+            self.status_var.set("Running the install in the background…")
         threading.Thread(target=self._do_install, daemon=True, name="kit-install").start()
 
     def _append(self, line: str) -> None:

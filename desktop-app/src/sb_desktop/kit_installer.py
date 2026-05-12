@@ -1,11 +1,23 @@
-"""Kit installer — pure Python orchestrator.
+"""Kit installer — pure Python orchestrator (V0.7 multi-user).
 
 The end-to-end install flow lives here. No PowerShell, no
 ``deploy.ps1`` invocation: each step is a Python function the wizard
-calls in order. This is the V0.6 Rolls-Royce architecture — every
-artifact the user needs (bundled Python runtime, kit wheels, source
-resources) ships inside the installer and lands under the chosen
-install directory:
+calls in order. The V0.6 single-user architecture is preserved as a
+special case; V0.7 adds detection of system-wide installs so RDP
+multi-user setups can share one engine.
+
+Two install modes are supported, distinguished by where the running
+Tray executable lives:
+
+* **System install** — engine + binaries under ``%ProgramFiles%\\
+  SecondBrain\\``, read-only for non-admin users. Engine bootstrap
+  (Python embeddable extract + pip install) is run **once at install
+  time by Inno Setup**, not by each user's wizard. Every per-user
+  wizard run skips those steps and only does the per-user setup
+  (vault picker + ``~/.memory-kit/config.json`` + MCP wiring).
+* **User install** — engine + binaries under ``%LOCALAPPDATA%\\
+  SecondBrain\\``. The wizard does the bootstrap because the user
+  owns the install location.
 
 ```
 {install_dir}\\
@@ -54,9 +66,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import mcp_injector
+from . import mcp_injector, paths
 from .mcp_injector import InjectResult
-from .path_env import add_to_user_path
+from .path_env import (
+    add_to_system_path,
+    add_to_user_path,
+    is_admin_windows,
+)
+from .paths import InstallMode
 
 log = logging.getLogger(__name__)
 
@@ -223,9 +240,12 @@ class InstallLayout:
     scripts_dir: Path
     site_packages_dir: Path
     resources_dir: Path
+    mode: InstallMode = InstallMode.USER
 
     @classmethod
-    def from_install_dir(cls, install_dir: Path) -> "InstallLayout":
+    def from_install_dir(
+        cls, install_dir: Path, mode: InstallMode = InstallMode.USER
+    ) -> "InstallLayout":
         install_dir = install_dir.resolve()
         engine = install_dir / ENGINE_BASENAME
         return cls(
@@ -237,6 +257,7 @@ class InstallLayout:
             scripts_dir=engine / "Scripts",
             site_packages_dir=engine / "Lib" / "site-packages",
             resources_dir=install_dir / KIT_RESOURCES_BASENAME,
+            mode=mode,
         )
 
     @property
@@ -251,19 +272,30 @@ class InstallLayout:
             return self.python_dir / "python.exe"
         return self.python_dir / "bin" / "python"
 
+    @property
+    def engine_already_bootstrapped(self) -> bool:
+        """True if the engine binary is already in place — skip pip install."""
+        return self.kit_binary_path.is_file()
+
+    @property
+    def is_system_install(self) -> bool:
+        return self.mode == InstallMode.SYSTEM
+
 
 def find_install_layout() -> InstallLayout | None:
     """Locate the install layout for a running ``SecondBrainTray.exe``.
 
     The PyInstaller bundle launcher lives at ``{install}/app/SecondBrainTray.exe``,
-    so ``sys.executable``'s grandparent is the install root.
+    so ``sys.executable``'s grandparent is the install root. The
+    install mode is inferred from the path (system / user / dev).
     """
+    mode = paths.detect_install_mode()
     exe = Path(sys.executable).resolve()
     if exe.parent.name == APP_BASENAME:
-        return InstallLayout.from_install_dir(exe.parent.parent)
+        return InstallLayout.from_install_dir(exe.parent.parent, mode=mode)
     # Source checkout fallback for dev — return the desktop-app/ for tests.
     here = Path(__file__).resolve()
-    return InstallLayout.from_install_dir(here.parents[3])
+    return InstallLayout.from_install_dir(here.parents[3], mode=InstallMode.DEV)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +349,21 @@ def _patch_pth_file(python_dir: Path) -> None:
 def bootstrap_python_embeddable(
     layout: InstallLayout, on_progress: ProgressCallback = None
 ) -> StepResult:
-    """Prepare the embedded Python so pip can install into Lib/site-packages."""
+    """Prepare the embedded Python so pip can install into Lib/site-packages.
+
+    On a system-wide install the engine is already in place — laid out
+    by Inno Setup or whoever ran the elevated install. Skip the
+    bootstrap entirely so per-user wizard runs don't fail trying to
+    write under Program Files.
+    """
+    if layout.is_system_install and layout.engine_already_bootstrapped:
+        if on_progress:
+            on_progress("System engine already bootstrapped (skip).")
+        return StepResult(
+            ok=True,
+            label="Bootstrap Python runtime",
+            detail="skipped (system install, engine already present)",
+        )
     if not layout.python_exe.is_file():
         return StepResult(
             ok=False,
@@ -375,6 +421,14 @@ def bootstrap_python_embeddable(
 def install_kit_wheels(
     layout: InstallLayout, on_progress: ProgressCallback = None
 ) -> StepResult:
+    if layout.is_system_install and layout.engine_already_bootstrapped:
+        if on_progress:
+            on_progress("System wheels already installed (skip).")
+        return StepResult(
+            ok=True,
+            label="Install kit wheels",
+            detail="skipped (system install, engine already present)",
+        )
     if not layout.wheels_dir.is_dir():
         return StepResult(
             ok=False,
@@ -435,8 +489,43 @@ def install_kit_wheels(
 def register_path(
     layout: InstallLayout, on_progress: ProgressCallback = None
 ) -> StepResult:
+    """Ensure the engine's Scripts dir is reachable on PATH.
+
+    System install: the system PATH already carries the entry (written
+    by the elevated installer). If not — fall back to adding it to the
+    current user's PATH so this user at least can spawn the engine,
+    and log a warning so the admin knows to re-run.
+
+    User install: write to HKCU PATH.
+    """
     if on_progress:
         on_progress("Registering the engine on your PATH…")
+
+    if layout.is_system_install:
+        # On a system install the elevated installer should already
+        # have put the Scripts dir on the machine PATH. Verify and
+        # patch HKLM only if we're admin; otherwise add to HKCU as a
+        # safety net so this user at least has access.
+        if is_admin_windows():
+            try:
+                changed = add_to_system_path(layout.scripts_dir)
+                detail = "appended to system PATH" if changed else "already on system PATH"
+                return StepResult(ok=True, label="Register PATH", detail=detail)
+            except PermissionError:
+                pass  # Fall through to HKCU.
+        try:
+            changed = add_to_user_path(layout.scripts_dir)
+        except Exception as exc:
+            return StepResult(
+                ok=False,
+                label="Register PATH",
+                detail=f"PATH update failed: {exc}",
+            )
+        detail = "appended to user PATH (admin needed to update system PATH)"
+        if not changed:
+            detail = "already on user PATH"
+        return StepResult(ok=True, label="Register PATH", detail=detail)
+
     try:
         changed = add_to_user_path(layout.scripts_dir)
     except Exception as exc:

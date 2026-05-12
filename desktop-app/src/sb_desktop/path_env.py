@@ -1,17 +1,27 @@
-"""User PATH management — append / remove install directories.
+"""PATH management — per-user (HKCU) or system-wide (HKLM).
 
-Windows uses ``HKCU\\Environment\\PATH`` as the per-user PATH store
-(no admin needed). After editing it we broadcast ``WM_SETTINGCHANGE``
-so any new process (and the Explorer shell) picks up the new value
-without requiring a logout.
+V0.7 multi-user: the engine binary location depends on the install
+mode. A system-wide install (``%ProgramFiles%\\SecondBrain``) means
+the engine's ``Scripts`` directory should be on the **system** PATH
+(``HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\
+Environment\\Path``) so every user on the machine sees it. A
+per-user install (``%LOCALAPPDATA%\\SecondBrain``) means the user's
+PATH (``HKCU\\Environment\\PATH``).
 
-POSIX side: append a single ``# SecondBrain managed`` block to the
-user's shell rc file. We touch ``~/.bashrc`` and ``~/.zshrc`` when
-present — covers macOS (zsh default) and most Linux setups. The block
-is delimited with markers so a later uninstall can remove it cleanly.
+The system path edit requires admin privileges — without them, the
+function returns False and the caller (kit_installer) falls back to
+the per-user PATH for this user only. On RDP the admin runs the
+installer once for everyone; per-user invocations of the wizard
+never need to touch HKLM.
 
-All operations are idempotent: re-running them leaves the file the
-same as if it had been run once.
+After any registry edit we broadcast ``WM_SETTINGCHANGE`` so new
+processes (and the Explorer shell) pick up the new value without
+logout.
+
+POSIX side: same managed block as v0.6 in ``~/.bashrc`` /
+``~/.zshrc``. For system installs there is no good cross-distro
+equivalent of HKLM PATH; we still write the per-user rc file but
+note the system path in ``/etc/profile.d`` is a separate concern.
 """
 
 from __future__ import annotations
@@ -33,6 +43,9 @@ def _normalize(path: str) -> str:
     if sys.platform == "win32":
         return os.path.normpath(path).lower().rstrip("\\")
     return os.path.normpath(path).rstrip("/")
+
+
+_SYSTEM_ENV_SUBKEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 
 
 def _read_user_path_windows() -> tuple[str, int]:
@@ -57,6 +70,41 @@ def _write_user_path_windows(new_value: str, value_type: int) -> None:
         winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE
     ) as key:
         winreg.SetValueEx(key, "PATH", 0, value_type, new_value)
+
+
+def _read_system_path_windows() -> tuple[str, int]:
+    import winreg
+
+    with winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE, _SYSTEM_ENV_SUBKEY, 0, winreg.KEY_READ
+    ) as key:
+        try:
+            value, value_type = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            return "", winreg.REG_EXPAND_SZ
+    return value or "", value_type
+
+
+def _write_system_path_windows(new_value: str, value_type: int) -> None:
+    import winreg
+
+    # KEY_WOW64_64KEY ensures we read the same 64-bit hive an installer
+    # would write. Without admin this open raises PermissionError.
+    flags = winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
+    with winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE, _SYSTEM_ENV_SUBKEY, 0, flags
+    ) as key:
+        winreg.SetValueEx(key, "Path", 0, value_type, new_value)
+
+
+def is_admin_windows() -> bool:
+    """Return True if the current process has admin privileges."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 
 
 def _broadcast_environment_change() -> None:
@@ -104,6 +152,40 @@ def remove_from_user_path_windows(directory: Path) -> bool:
         return False
     new_value = ";".join(filtered)
     _write_user_path_windows(new_value, value_type)
+    _broadcast_environment_change()
+    return True
+
+
+def add_to_system_path_windows(directory: Path) -> bool:
+    """Append ``directory`` to the HKLM system PATH. Requires admin.
+
+    Returns True if the value was changed, False if it was already
+    present. Raises ``PermissionError`` if the current process does
+    not have admin privileges — let the caller fall back to the
+    per-user path.
+    """
+    directory = directory.resolve()
+    target = _normalize(str(directory))
+    current, value_type = _read_system_path_windows()
+    parts = [p for p in current.split(";") if p]
+    if any(_normalize(p) == target for p in parts):
+        return False
+    new_value = (current.rstrip(";") + ";" + str(directory)) if current else str(directory)
+    _write_system_path_windows(new_value, value_type)
+    _broadcast_environment_change()
+    return True
+
+
+def remove_from_system_path_windows(directory: Path) -> bool:
+    directory = directory.resolve()
+    target = _normalize(str(directory))
+    current, value_type = _read_system_path_windows()
+    parts = [p for p in current.split(";") if p]
+    filtered = [p for p in parts if _normalize(p) != target]
+    if len(filtered) == len(parts):
+        return False
+    new_value = ";".join(filtered)
+    _write_system_path_windows(new_value, value_type)
     _broadcast_environment_change()
     return True
 
@@ -190,4 +272,23 @@ def add_to_user_path(directory: Path) -> bool:
 def remove_from_user_path(directory: Path) -> bool:
     if sys.platform == "win32":
         return remove_from_user_path_windows(directory)
+    return remove_from_user_path_posix(directory)
+
+
+def add_to_system_path(directory: Path) -> bool:
+    """Cross-platform shim for system-wide PATH (admin only on Windows).
+
+    On POSIX falls back to ``add_to_user_path`` — distros vary on how
+    to inject a system-wide PATH entry safely (``/etc/profile.d`` vs
+    ``/etc/environment`` vs systemd), so we leave that to the
+    distribution package and only manage per-user rc files here.
+    """
+    if sys.platform == "win32":
+        return add_to_system_path_windows(directory)
+    return add_to_user_path_posix(directory)
+
+
+def remove_from_system_path(directory: Path) -> bool:
+    if sys.platform == "win32":
+        return remove_from_system_path_windows(directory)
     return remove_from_user_path_posix(directory)

@@ -73,12 +73,47 @@ behind an explicit confirmation dialog — a hard project rule.
 ## Versioning
 
 `sb-desktop` ships on its own cadence. Tags follow the pattern
-`sb-desktop-vX.Y.Z` (e.g. `sb-desktop-v0.1.0`). The kit (`memory-kit-mcp`)
+`sb-desktop-vX.Y.Z` (e.g. `sb-desktop-v0.7.0`). The kit (`memory-kit-mcp`)
 keeps its own `vX.Y.Z` tag scheme.
 
 The desktop app talks to **any** kit version compatible with the MCP
 protocol contract it expects (`2024-11-05`). When the kit ships a
 breaking protocol change, the desktop app gets a corresponding bump.
+
+## Multi-user / RDP (v0.7+)
+
+The installer is dual-mode at launch:
+
+* **System install (admin)** — `%ProgramFiles%\SecondBrain`. The
+  engine bootstrap (pip install into `engine\Lib\site-packages`,
+  HKLM PATH update) happens once, elevated, at install time. Every
+  user on the host shares the binaries. Each user's first launch of
+  the tray pops the in-app wizard which only does per-user setup
+  (vault picker → `~\Documents\SecondBrain`, language,
+  `~\.memory-kit\config.json`, MCP wiring into the user's
+  `~\.claude.json` / `~\.codex\config.toml` / etc.). No admin
+  needed for per-user runs.
+* **Per-user install** — `%LOCALAPPDATA%\Programs\SecondBrain`. The
+  wizard does the engine bootstrap inline at first launch. Single-
+  user laptops, no admin friction.
+
+Per-user state lives in the user profile in both modes:
+
+| Resource | Path |
+|---|---|
+| Settings (autostart, language, MCP targets) | `%APPDATA%\SecondBrain\settings.json` (roaming) |
+| Cache (update-check, last engine probe) | `%LOCALAPPDATA%\SecondBrain\cache\` |
+| Logs (one file per user) | `%LOCALAPPDATA%\SecondBrain\logs\sb-desktop.log` |
+| Kit config (vault path, language) | `~\.memory-kit\config.json` |
+| Vault | `~\Documents\SecondBrain\` (default, user-pickable) |
+| MCP wiring | `~\.claude.json`, `~\.codex\config.toml`, `~\.gemini\settings.json`, … |
+
+Process isolation: each user's tray spawns its own
+`memory-kit-mcp.exe` instances. Engine processes inherit the user's
+``USERPROFILE`` / ``APPDATA`` env vars, so they read each user's own
+`~/.memory-kit/config.json` without any coordination. There is no
+shared mutable state at engine level; concurrent users on the same
+RDP host never block each other.
 
 ## Layout
 
