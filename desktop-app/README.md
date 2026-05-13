@@ -114,7 +114,7 @@ LLM CLIs, so file locks never block the cleanup.
 ## Versioning
 
 `sb-desktop` ships on its own cadence. Tags follow the pattern
-`sb-desktop-vX.Y.Z` (e.g. `sb-desktop-v0.10.4`). The kit
+`sb-desktop-vX.Y.Z` (e.g. `sb-desktop-v0.10.5`). The kit
 (`memory-kit-mcp`) keeps its own `vX.Y.Z` tag scheme.
 
 Since v0.9 the tray polls both channels independently; since v0.10

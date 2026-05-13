@@ -306,7 +306,7 @@ Documentation technique complète : [`docs/architecture/`](./docs/architecture/)
 |---|---|---|
 | **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot |
 | **Phase 3** | ✅ Terminée | Serveur MCP natif — 37 outils, 7 cibles auto-configurées |
-| **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit, bootstrap engine fiable + PATH cross-OS, multi-user RDP, désinstallation propre, auto-update dual-canal (moteur + desktop), détection CLI étendue (npm globals + alt dirs), wiring MCP avec champs requis Copilot CLI, i18n EN/FR/ES/DE/RU, vault scaffold complet (`sb-desktop-v0.10.4`) |
+| **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit, bootstrap engine fiable + PATH cross-OS, multi-user RDP, désinstallation propre, auto-update dual-canal (moteur + desktop), détection CLI étendue (npm globals + alt dirs), wiring MCP avec path absolu (immune au PATH cache RDP), i18n EN/FR/ES/DE/RU, vault scaffold complet (`sb-desktop-v0.10.5`) |
 | **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |
 
 ---

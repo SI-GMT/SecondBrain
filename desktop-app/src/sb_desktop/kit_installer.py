@@ -881,12 +881,32 @@ class WiringReport:
         return self.status != "skipped"
 
 
+def _engine_command(layout: InstallLayout) -> str:
+    """Return the command string we inject into every MCP target.
+
+    Prefer the **absolute** path of the engine binary so spawning
+    succeeds regardless of the consuming process's PATH cache. On RDP
+    or any session that pre-dated the install, the bare
+    ``memory-kit-mcp`` lookup fails with "Connection closed" because
+    the new PATH entry only reaches processes started AFTER the
+    install's WM_SETTINGCHANGE broadcast.
+
+    Falls back to the bare command name when the absolute path is
+    unavailable (DEV layout, missing binary) so dev runs still work.
+    """
+    binary = layout.kit_binary_path
+    if binary.is_file():
+        return str(binary)
+    return mcp_injector.DEFAULT_COMMAND
+
+
 def wire_llm_clis(
     layout: InstallLayout,
     selected: list[LlmCliInfo],
     on_progress: ProgressCallback = None,
 ) -> list[WiringReport]:
     """Run the right injector for each selected target."""
+    command = _engine_command(layout)
     results: list[WiringReport] = []
     for cli in selected:
         if on_progress:
@@ -912,15 +932,16 @@ def wire_llm_clis(
             result = mcp_injector.inject_json_mcp_server(
                 target,
                 target_label=cli.label,
+                command=command,
                 extra_entry_fields=extras,
             )
         elif cli.config_writer == "codex-toml":
             result = mcp_injector.inject_codex_mcp_server(
-                target, target_label=cli.label
+                target, target_label=cli.label, command=command
             )
         elif cli.config_writer == "vibe-toml":
             result = mcp_injector.inject_vibe_mcp_server(
-                target, target_label=cli.label
+                target, target_label=cli.label, command=command
             )
         else:
             results.append(

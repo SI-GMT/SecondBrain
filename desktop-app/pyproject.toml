@@ -1,6 +1,6 @@
 [project]
 name = "sb-desktop"
-version = "0.10.4"
+version = "0.10.5"
 description = "SecondBrain Desktop — systray companion for the Memory Kit engine (in-process)"
 readme = "README.md"
 requires-python = ">=3.12"

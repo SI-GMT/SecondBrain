@@ -76,6 +76,23 @@ def _atomic_write_text(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
+def _toml_quote(value: str) -> str:
+    """Render ``value`` as a TOML string safe for arbitrary paths.
+
+    Windows absolute paths contain backslashes that TOML's basic
+    strings (``"..."``) treat as escape characters; embedding
+    ``C:\\Program Files\\…`` verbatim produces an invalid TOML file
+    that Codex / Vibe refuse to parse. TOML literal strings (single
+    quotes) preserve backslashes byte-for-byte — exactly what we want.
+    A path that happens to carry a literal single quote falls back to
+    a basic string with both quote and backslash escaped.
+    """
+    if "'" not in value:
+        return f"'{value}'"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 # ---------------------------------------------------------------------------
 # JSON-style config: Claude Code, Claude Desktop, Copilot CLI, Gemini CLI.
 # ---------------------------------------------------------------------------
@@ -211,7 +228,7 @@ def inject_codex_mcp_server(
     block = (
         f"{START_MARKER}\n"
         f"[mcp_servers.{section_name}]\n"
-        f'command = "{command}"\n'
+        f"command = {_toml_quote(command)}\n"
         f"args = []\n"
         f"{END_MARKER}"
     )
@@ -315,7 +332,7 @@ def inject_vibe_mcp_server(
         f"[[mcp_servers]]\n"
         f'name = "{server_name}"\n'
         f'transport = "stdio"\n'
-        f'command = "{command}"\n'
+        f"command = {_toml_quote(command)}\n"
         f"args = []\n"
         f"{END_MARKER}"
     )

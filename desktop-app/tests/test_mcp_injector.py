@@ -92,7 +92,7 @@ def test_inject_codex_updates_in_place(tmp_path: Path):
     result = mcp_injector.inject_codex_mcp_server(target)
     assert result.status == InjectStatus.UPDATED
     content = target.read_text(encoding="utf-8")
-    assert 'command = "memory-kit-mcp"' in content
+    assert "command = 'memory-kit-mcp'" in content
     assert "[other]" in content  # unrelated content preserved
 
 
@@ -109,7 +109,7 @@ def test_inject_codex_purges_orphan(tmp_path: Path):
     content = target.read_text(encoding="utf-8")
     # Only one [mcp_servers.secondbrain-memory-kit] section.
     assert content.count("[mcp_servers.secondbrain-memory-kit]") == 1
-    assert 'command = "memory-kit-mcp"' in content
+    assert "command = 'memory-kit-mcp'" in content
 
 
 def test_inject_vibe_creates_array_entry(tmp_path: Path):
