@@ -26,6 +26,11 @@ def _make_obsidian_style_adapter(root: Path) -> Path:
     return root
 
 
+# Expected base-structure file count: vault/index.md + 3 zone readmes
+# (archives, projets, inbox — perso has no readme by design).
+BASE_SCAFFOLD_FILES = 4
+
+
 def test_scaffold_creates_vault_and_copies_files(tmp_path: Path):
     adapter = _make_obsidian_style_adapter(tmp_path / "adapter")
     vault = tmp_path / "vault"
@@ -33,12 +38,18 @@ def test_scaffold_creates_vault_and_copies_files(tmp_path: Path):
     result = vault_setup.scaffold_vault(vault, obsidian_style_dir=adapter)
 
     assert vault.is_dir()
+    assert (vault / "index.md").is_file()
+    assert (vault / "archives" / "index.md").is_file()
+    assert (vault / "projets" / "index.md").is_file()
+    assert (vault / "inbox" / "index.md").is_file()
+    assert (vault / "perso").is_dir()
     assert (vault / ".obsidian" / "graph.json").is_file()
     plugin = vault / ".obsidian" / "plugins" / "obsidian-front-matter-title-plugin" / "data.json"
     assert plugin.is_file()
     assert not (vault / ".obsidian" / "README.md").exists()  # docs filtered
     assert result.action == "scaffolded"
-    assert result.scaffold_files == 2
+    # 2 Obsidian files + base structure.
+    assert result.scaffold_files == 2 + BASE_SCAFFOLD_FILES
 
 
 def test_scaffold_idempotent(tmp_path: Path):
@@ -48,8 +59,8 @@ def test_scaffold_idempotent(tmp_path: Path):
     first = vault_setup.scaffold_vault(vault, obsidian_style_dir=adapter)
     second = vault_setup.scaffold_vault(vault, obsidian_style_dir=adapter)
 
-    assert first.scaffold_files == 2
-    assert second.scaffold_files == 0  # identical content already in place
+    assert first.scaffold_files == 2 + BASE_SCAFFOLD_FILES
+    assert second.scaffold_files == 0  # everything already in place
 
 
 def test_scaffold_preserves_user_customisation(tmp_path: Path):
@@ -64,12 +75,13 @@ def test_scaffold_preserves_user_customisation(tmp_path: Path):
 
     result = vault_setup.scaffold_vault(vault, obsidian_style_dir=adapter)
 
-    # User file untouched, no backup, second file still written.
+    # User file untouched, no backup; the other Obsidian file plus the
+    # base structure are still written.
     assert json.loads(custom_path.read_text(encoding="utf-8")) == {
         "colorGroups": ["user-customised"]
     }
     assert result.skipped_files == 1
-    assert result.scaffold_files == 1
+    assert result.scaffold_files == 1 + BASE_SCAFFOLD_FILES
     assert not any(custom_path.parent.glob("graph.json.bak-*"))
 
 
@@ -106,12 +118,17 @@ def test_migrate_moves_content_then_scaffolds(tmp_path: Path):
     )
 
     assert (new / "archives" / "session-1.md").read_text(encoding="utf-8") == "hello"
+    # Migrated index.md must be preserved as-is (idempotent base scaffold
+    # never overwrites an existing file).
     assert (new / "index.md").read_text(encoding="utf-8") == "# Index"
     assert (new / ".obsidian" / "graph.json").is_file()
     assert not old.exists()  # old folder cleaned up
     assert result.action == "migrated"
     assert result.moved_entries == 2
-    assert result.scaffold_files == 2
+    # Migration moved index.md + archives/ over. Subsequent scaffold then
+    # creates the missing zone readmes (archives/index.md, projets/index.md,
+    # inbox/index.md) and the 2 Obsidian files — vault index.md is preserved.
+    assert result.scaffold_files == 2 + 3
 
 
 def test_migrate_noop_when_paths_equal(tmp_path: Path):

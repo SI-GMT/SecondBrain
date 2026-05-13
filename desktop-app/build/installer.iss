@@ -27,7 +27,7 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.8.8"
+#define MyAppVersion     "0.10.0"
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"
@@ -92,15 +92,82 @@ UninstallDisplayName={#MyAppName}
 UsePreviousTasks=yes
 
 [Languages]
+; Inno Setup ships translation files in the compiler's Languages/
+; directory. We expose every locale the kit itself supports so the
+; installer UI matches the LLM conversational language the user
+; picked. Locale auto-detection from the OS happens automatically;
+; the user can override via the language picker on the first
+; installer page (or pass /LANG=fr on the CLI).
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "french";  MessagesFile: "compiler:Languages\French.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+Name: "german";  MessagesFile: "compiler:Languages\German.isl"
+Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+[CustomMessages]
+; Per-language overrides for the SecondBrain-specific strings. Inno
+; falls back to the English line for any locale without an override.
+english.TaskAutostart=Start &SecondBrain Desktop at login (current user)
+french.TaskAutostart=Démarrer &SecondBrain Desktop à l'ouverture de session (utilisateur courant)
+spanish.TaskAutostart=Iniciar &SecondBrain Desktop al iniciar sesión (usuario actual)
+german.TaskAutostart=&SecondBrain Desktop bei der Anmeldung starten (aktueller Benutzer)
+russian.TaskAutostart=Запускать &SecondBrain Desktop при входе в систему
+
+english.TaskDesktopIcon=Create a desktop &shortcut
+french.TaskDesktopIcon=Créer un &raccourci sur le Bureau
+spanish.TaskDesktopIcon=Crear un &acceso directo en el escritorio
+german.TaskDesktopIcon=Verknüpfung auf dem &Desktop erstellen
+russian.TaskDesktopIcon=Создать &ярлык на рабочем столе
+
+english.GroupStartup=Startup options:
+french.GroupStartup=Options de démarrage :
+spanish.GroupStartup=Opciones de inicio:
+german.GroupStartup=Startoptionen:
+russian.GroupStartup=Параметры запуска:
+
+english.GroupShortcuts=Shortcuts:
+french.GroupShortcuts=Raccourcis :
+spanish.GroupShortcuts=Accesos directos:
+german.GroupShortcuts=Verknüpfungen:
+russian.GroupShortcuts=Ярлыки:
+
+english.LaunchDescription=Launch SecondBrain Desktop (we'll guide you through setup)
+french.LaunchDescription=Lancer SecondBrain Desktop (un assistant vous guidera)
+spanish.LaunchDescription=Iniciar SecondBrain Desktop (un asistente le guiará)
+german.LaunchDescription=SecondBrain Desktop starten (ein Assistent führt Sie durch die Einrichtung)
+russian.LaunchDescription=Запустить SecondBrain Desktop (мастер настройки поможет завершить установку)
+
+english.StatusBootstrap=Installing the engine (this can take a minute)…
+french.StatusBootstrap=Installation du moteur (cela peut prendre une minute)…
+spanish.StatusBootstrap=Instalando el motor (puede tardar un minuto)…
+german.StatusBootstrap=Engine wird installiert (kann eine Minute dauern)…
+russian.StatusBootstrap=Установка движка (это может занять минуту)…
+
+english.MsgEngineMissing=The SecondBrain engine could not be installed.%n%nExpected file is missing:%n%1%n%nThis usually means the embedded Python bootstrap failed.%nPlease rerun the installer as administrator.
+french.MsgEngineMissing=Le moteur SecondBrain n'a pas pu être installé.%n%nFichier attendu manquant :%n%1%n%nGénéralement, le bootstrap Python embarqué a échoué.%nVeuillez relancer l'installateur en tant qu'administrateur.
+spanish.MsgEngineMissing=No se ha podido instalar el motor SecondBrain.%n%nFalta el archivo esperado:%n%1%n%nNormalmente significa que el arranque de Python integrado falló.%nVuelva a ejecutar el instalador como administrador.
+german.MsgEngineMissing=Die SecondBrain-Engine konnte nicht installiert werden.%n%nErwartete Datei fehlt:%n%1%n%nÜblicherweise schlug die eingebettete Python-Initialisierung fehl.%nBitte führen Sie das Installationsprogramm als Administrator erneut aus.
+russian.MsgEngineMissing=Не удалось установить движок SecondBrain.%n%nОжидаемый файл отсутствует:%n%1%n%nОбычно это означает сбой инициализации встроенного Python.%nЗапустите установщик от имени администратора.
+
+english.MsgAlreadyInstalledSame=SecondBrain Desktop %1 is already installed.%n%nReinstall the same version?
+french.MsgAlreadyInstalledSame=SecondBrain Desktop %1 est déjà installé.%n%nRéinstaller la même version ?
+spanish.MsgAlreadyInstalledSame=SecondBrain Desktop %1 ya está instalado.%n%n¿Reinstalar la misma versión?
+german.MsgAlreadyInstalledSame=SecondBrain Desktop %1 ist bereits installiert.%n%nDieselbe Version erneut installieren?
+russian.MsgAlreadyInstalledSame=SecondBrain Desktop %1 уже установлен.%n%nПереустановить ту же версию?
+
+english.MsgUpgrade=SecondBrain Desktop %1 is currently installed.%n%nUpdate to version %2?%n%nThe tray application and any running engine sessions will be closed automatically. Your vault, settings and MCP wirings are preserved.
+french.MsgUpgrade=SecondBrain Desktop %1 est actuellement installé.%n%nMettre à jour vers la version %2 ?%n%nL'application et les sessions du moteur seront fermées automatiquement. Votre vault, vos paramètres et vos câblages MCP sont préservés.
+spanish.MsgUpgrade=SecondBrain Desktop %1 está instalado actualmente.%n%n¿Actualizar a la versión %2?%n%nLa aplicación de bandeja y las sesiones en curso del motor se cerrarán automáticamente. Su vault, su configuración y los enlaces MCP se conservan.
+german.MsgUpgrade=SecondBrain Desktop %1 ist derzeit installiert.%n%nAuf Version %2 aktualisieren?%n%nDie Tray-App und laufende Engine-Sitzungen werden automatisch geschlossen. Vault, Einstellungen und MCP-Verkabelung bleiben erhalten.
+russian.MsgUpgrade=SecondBrain Desktop %1 уже установлен.%n%nОбновить до версии %2?%n%nПриложение и запущенные сессии движка будут закрыты автоматически. Ваше хранилище, настройки и подключения MCP сохраняются.
 
 [Tasks]
 ; Autostart writes to HKCU\Run regardless of install mode — autostart is
 ; always a per-user choice.
-Name: "autostart"; Description: "Start &SecondBrain Desktop at login (current user)"; \
-    GroupDescription: "Startup options:"; Flags: unchecked
-Name: "desktopicon"; Description: "Create a desktop &shortcut"; \
-    GroupDescription: "Shortcuts:"; Flags: unchecked
+Name: "autostart"; Description: "{cm:TaskAutostart}"; \
+    GroupDescription: "{cm:GroupStartup}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:TaskDesktopIcon}"; \
+    GroupDescription: "{cm:GroupShortcuts}"; Flags: unchecked
 
 [Files]
 ; 1. PyInstaller bundle (the tray app).
@@ -153,7 +220,7 @@ Filename: "{app}\engine\python\python.exe"; \
     Parameters: """{app}\engine\bootstrap_engine.py"""; \
     WorkingDir: "{app}\engine"; \
     Flags: runhidden waituntilterminated; \
-    StatusMsg: "Installing the engine (this can take a minute)…"; \
+    StatusMsg: "{cm:StatusBootstrap}"; \
     Check: IsAdminInstallMode and NeedsBootstrap
 
 ; Hard verification — [Code] CurStepChanged at ssPostInstall asserts
@@ -167,7 +234,7 @@ Filename: "{app}\engine\python\python.exe"; \
 ; ``unchecked`` is intentionally omitted — the checkbox defaults to
 ; checked, so a one-click Finish auto-launches the wizard.
 Filename: "{app}\app\{#MyAppExeName}"; \
-    Description: "Launch {#MyAppName} (we'll guide you through setup)"; \
+    Description: "{cm:LaunchDescription}"; \
     Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
@@ -235,17 +302,9 @@ begin
     Exit;  // Fresh install — proceed normally.
 
   if CompareText(PrevVersion, '{#MyAppVersion}') = 0 then
-    Msg := 'SecondBrain Desktop ' + PrevVersion + ' is already installed.'
-         + #13#10 + #13#10
-         + 'Reinstall the same version?'
+    Msg := FmtMessage(CustomMessage('MsgAlreadyInstalledSame'), [PrevVersion])
   else
-    Msg := 'SecondBrain Desktop ' + PrevVersion + ' is currently installed.'
-         + #13#10 + #13#10
-         + 'Do you want to update it to version ' + '{#MyAppVersion}' + '?'
-         + #13#10 + #13#10
-         + 'The tray application and any running engine sessions will be '
-         + 'closed automatically. Your vault, settings and MCP wirings '
-         + 'are preserved.';
+    Msg := FmtMessage(CustomMessage('MsgUpgrade'), [PrevVersion, '{#MyAppVersion}']);
 
   if MsgBox(Msg, mbConfirmation, MB_YESNO) = IDNO then
   begin
@@ -287,13 +346,7 @@ begin
   begin
     if not FileExists(_KitBinaryPath()) then
     begin
-      ErrMsg :=
-        'The SecondBrain engine could not be installed.' + #13#10 + #13#10 +
-        'Expected file is missing:' + #13#10 +
-        _KitBinaryPath() + #13#10 + #13#10 +
-        'This usually means the embedded Python bootstrap failed.' + #13#10 +
-        'Please rerun the installer as administrator. If the issue ' +
-        'persists, send the log under %TEMP%\Setup Log*.txt to support.';
+      ErrMsg := FmtMessage(CustomMessage('MsgEngineMissing'), [_KitBinaryPath()]);
       MsgBox(ErrMsg, mbCriticalError, MB_OK);
       // Abort the install — the wizard would be stuck on first launch.
       WizardForm.Close;

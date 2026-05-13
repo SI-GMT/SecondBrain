@@ -133,30 +133,150 @@ def _backup_path(target: Path) -> Path:
     return target.with_name(f"{target.name}.bak-pre-style-{stamp}")
 
 
+VAULT_BASE_FOLDERS = ("archives", "projets", "perso", "inbox")
+
+VAULT_INDEX_BODY = """---
+title: SecondBrain — Vault index
+type: index
+display: SecondBrain — Vault
+---
+
+# SecondBrain — your second brain vault
+
+This folder is your **persistent memory** for every LLM agent connected
+to SecondBrain (Claude Code, Codex, Gemini CLI, Mistral Vibe, GitHub
+Copilot CLI, Claude Desktop, …). Anything the agents archive lands here
+in plain Markdown — open it in Obsidian, in your favourite text editor,
+or `grep` through it; it's just files.
+
+## Layout
+
+| Folder       | Purpose                                                                 |
+|--------------|-------------------------------------------------------------------------|
+| `archives/`  | Timestamped, immutable session archives. One per `/mem-archive` call.   |
+| `projets/`   | Project-specific living context (`{slug}/context.md`, `history.md`).   |
+| `perso/`     | Personal notes / personae / principles outside any single project.      |
+| `inbox/`     | Catch-all for ingested documents (`/mem-doc`) before classification.    |
+
+## First steps
+
+1. Talk to your LLM agent normally — it can already write here.
+2. Trigger `/mem-archive` at the end of a session to capture the state.
+3. Run `/mem-recall` at the start of the next session to reload context.
+4. Browse this folder in Obsidian to visualise the knowledge graph.
+
+The desktop tray monitors this vault and surfaces health findings in the
+notification icon. You never need to edit files here by hand.
+"""
+
+VAULT_INBOX_README = """---
+title: Inbox
+type: zone
+display: Inbox
+---
+
+# Inbox
+
+Catch-all zone for documents ingested via `/mem-doc` and atoms that
+haven't been classified into a project or domain yet. The kit will
+either auto-classify them or surface them in `/mem-list` so you can
+reclass them with `/mem-reclass`.
+"""
+
+VAULT_ARCHIVES_README = """---
+title: Archives
+type: zone
+display: Archives
+---
+
+# Archives
+
+Timestamped, immutable archives — one per `/mem-archive` call. Each
+file documents a single session: what was decided, what shipped, what's
+next. Never edit by hand; the kit treats them as ground truth.
+"""
+
+VAULT_PROJETS_README = """---
+title: Projects
+type: zone
+display: Projects
+---
+
+# Projects
+
+Living per-project state. Each project lives under `{slug}/` and holds:
+
+* `context.md` — mutable snapshot of the project's current state.
+* `history.md` — chronological timeline of archived sessions.
+* `index.md` — entry point linked from this folder's index.
+
+Create new projects implicitly by archiving a session under a project
+name; the kit scaffolds the folder automatically.
+"""
+
+
+def _scaffold_base_structure(vault: Path) -> int:
+    """Lay out the canonical SecondBrain folder structure under ``vault``.
+
+    Idempotent — never overwrites existing content. Returns the number
+    of fresh files written so the caller can report a summary.
+    """
+    written = 0
+    index = vault / "index.md"
+    if not index.exists():
+        index.write_text(VAULT_INDEX_BODY, encoding="utf-8", newline="\n")
+        written += 1
+
+    zone_readmes: dict[str, str] = {
+        "archives": VAULT_ARCHIVES_README,
+        "projets": VAULT_PROJETS_README,
+        "inbox": VAULT_INBOX_README,
+    }
+    for folder in VAULT_BASE_FOLDERS:
+        target_dir = vault / folder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        readme_body = zone_readmes.get(folder)
+        if readme_body is None:
+            continue
+        readme = target_dir / "index.md"
+        if not readme.exists():
+            readme.write_text(readme_body, encoding="utf-8", newline="\n")
+            written += 1
+    return written
+
+
 def scaffold_vault(
     vault: Path, obsidian_style_dir: Path | None = None
 ) -> VaultSetupResult:
-    """Lay out the Obsidian-style adapter into ``vault/.obsidian/``.
+    """Lay out the SecondBrain vault scaffold under ``vault``.
 
-    Mirrors the directory tree under ``obsidian_style_dir`` (recursive)
-    into ``vault/.obsidian/`` with the same canonical-marker
-    discipline as the kit's ``Deploy-ObsidianStyle`` bridge:
+    Two layers:
 
-    * Missing target → write the canonical copy.
-    * Existing canonical target (marker present) → back up + replace.
-    * Existing customised target (marker absent) → skip silently.
+    1. **Base structure** — ``index.md`` welcome page + the standard
+       zone folders (``archives/``, ``projets/``, ``perso/``, ``inbox/``)
+       each with their own ``index.md`` describing their purpose.
+       Idempotent: never overwrites a file the user already has.
+    2. **Obsidian config** — mirrors ``obsidian_style_dir`` (the kit's
+       ``adapters/obsidian-style/``) into ``vault/.obsidian/`` with
+       the same canonical-marker discipline as ``deploy.ps1``'s
+       ``Deploy-ObsidianStyle`` bridge.
 
-    If ``obsidian_style_dir`` is ``None`` or missing we still create
-    the vault directory (empty) — the kit will still work, the user
-    just won't get the recommended graph palette out of the box.
+    If ``obsidian_style_dir`` is missing the vault is still scaffolded
+    — the kit works fine without the graph palette, the user just
+    doesn't get the recommended colour groups out of the box.
     """
     vault.mkdir(parents=True, exist_ok=True)
+    base_written = _scaffold_base_structure(vault)
 
     if obsidian_style_dir is None or not obsidian_style_dir.is_dir():
         return VaultSetupResult(
             target=vault,
             action="scaffolded",
-            detail="vault directory created (no Obsidian style adapter bundled)",
+            scaffold_files=base_written,
+            detail=(
+                f"laid out SecondBrain base structure "
+                f"({base_written} files written; no Obsidian style adapter bundled)"
+            ),
         )
 
     obsidian_dir = vault / ".obsidian"
@@ -205,11 +325,11 @@ def scaffold_vault(
     return VaultSetupResult(
         target=vault,
         action="scaffolded",
-        scaffold_files=written,
+        scaffold_files=written + base_written,
         skipped_files=skipped,
         backed_up_files=backed_up,
         detail=(
-            f"wrote {written} Obsidian config files"
+            f"wrote {base_written} base files + {written} Obsidian config files"
             + (f" ({skipped} user-customised skipped)" if skipped else "")
             + (f", {backed_up} backed up" if backed_up else "")
         ),

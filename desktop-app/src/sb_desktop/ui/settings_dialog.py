@@ -22,7 +22,14 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from .. import __version__
+from ..autostart import (
+    disable_autostart,
+    enable_autostart,
+    is_autostart_enabled,
+)
 from ..config import AppSettings, KitConfig, save_settings
+from ..i18n import t
+from ..kit_installer import detect_llm_clis
 from ..paths import log_file_path, settings_file_path
 from ._base import dialog_lifecycle, make_root
 
@@ -41,27 +48,33 @@ _NOTIFY_LEVELS = [
     ("Silent", "silent"),
 ]
 
-# (identifier, label, description) — keep aligned with deploy.ps1 wiring.
-_MCP_TARGETS: list[tuple[str, str, str]] = [
-    ("claude-code", "Claude Code CLI", "Anthropic's terminal LLM"),
-    ("claude-desktop", "Claude Desktop", "Mac / Windows desktop app"),
-    ("codex", "Codex CLI", "OpenAI's terminal LLM"),
-    ("gemini-cli", "Gemini CLI", "Google's terminal LLM"),
-    ("mistral-vibe", "Mistral Vibe", "Mistral's terminal LLM"),
-    ("copilot-cli", "GitHub Copilot CLI", "Microsoft's terminal LLM"),
-]
+def _detect_installed_clis() -> dict[str, bool]:
+    """Return {identifier: installed} via the kit installer detector."""
+    return {cli.identifier: cli.installed for cli in detect_llm_clis()}
+
+
+def _build_mcp_targets() -> list[tuple[str, str, str]]:
+    """Source of truth for the MCP target list — pulled from
+    :func:`detect_llm_clis` so labels stay aligned with the wizard."""
+    return [
+        (cli.identifier, cli.label, cli.description) for cli in detect_llm_clis()
+    ]
 
 
 def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSettings:
     """Run the dialog. Returns the (possibly mutated) settings instance."""
-    root = make_root(title="SecondBrain — Settings", size=(640, 540))
+    root = make_root(title=t("settings.title"), size=(640, 540))
     result: dict = {"settings": settings, "saved": False}
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill="both", expand=True, padx=12, pady=(12, 0))
 
     # ---------- variables shared across tabs ----------
-    v_autostart = tk.BooleanVar(value=settings.autostart)
+    # Autostart UI mirrors the OS-level entry as ground truth, not the
+    # cached AppSettings.autostart bit (which can drift if the user toggled
+    # the registry value outside the app, or if the installer wrote the
+    # entry on first install but the settings file still reads False).
+    v_autostart = tk.BooleanVar(value=is_autostart_enabled())
     v_confirm_repair = tk.BooleanVar(value=settings.confirm_repair)
     v_confirm_update = tk.BooleanVar(value=settings.confirm_update)
     v_confirm_destructive = tk.BooleanVar(value=settings.confirm_destructive_repair)
@@ -71,20 +84,42 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
     v_poll = tk.IntVar(value=settings.poll_interval_seconds)
     v_lang = tk.StringVar(value=settings.language_override or "")
     v_vault_override = tk.StringVar(value=settings.vault_override_path or "")
+    mcp_targets = _build_mcp_targets()
+    installed_map = _detect_installed_clis()
+    # On first open (no explicit selection saved) default to detected CLIs;
+    # otherwise preserve the user's saved selection AND visibly mark which
+    # rows correspond to detected installs.
+    has_saved_selection = bool(settings.mcp_targets)
     target_vars: dict[str, tk.BooleanVar] = {
-        ident: tk.BooleanVar(value=ident in (settings.mcp_targets or []))
-        for ident, _, _ in _MCP_TARGETS
+        ident: tk.BooleanVar(
+            value=(
+                ident in (settings.mcp_targets or [])
+                if has_saved_selection
+                else installed_map.get(ident, False)
+            )
+        )
+        for ident, _, _ in mcp_targets
+    }
+    target_status_vars: dict[str, tk.StringVar] = {
+        ident: tk.StringVar(
+            value=(
+                t("settings.detected")
+                if installed_map.get(ident)
+                else t("settings.not_detected")
+            )
+        )
+        for ident, _, _ in mcp_targets
     }
 
     # ---------- Tab 1: General ----------
     tab_general = ttk.Frame(notebook, padding=12)
-    notebook.add(tab_general, text="General")
+    notebook.add(tab_general, text=t("settings.tab.general"))
 
-    ttk.Checkbutton(tab_general, text="Start at login", variable=v_autostart).grid(
-        row=0, column=0, columnspan=2, sticky="w", pady=4
-    )
+    ttk.Checkbutton(
+        tab_general, text=t("settings.autostart"), variable=v_autostart
+    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
 
-    ttk.Label(tab_general, text="Language override:").grid(
+    ttk.Label(tab_general, text=t("settings.language")).grid(
         row=1, column=0, sticky="w", pady=4
     )
     lang_combo = ttk.Combobox(
@@ -101,7 +136,7 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
         foreground="#666666",
     ).grid(row=2, column=0, columnspan=2, sticky="w", padx=(0, 0))
 
-    ttk.Label(tab_general, text="Poll interval (s):").grid(
+    ttk.Label(tab_general, text=t("settings.poll_interval")).grid(
         row=3, column=0, sticky="w", pady=(12, 4)
     )
     ttk.Spinbox(
@@ -115,7 +150,7 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
 
     # ---------- Tab 2: Behaviour ----------
     tab_behaviour = ttk.Frame(notebook, padding=12)
-    notebook.add(tab_behaviour, text="Behaviour")
+    notebook.add(tab_behaviour, text=t("settings.tab.behaviour"))
 
     section = ttk.LabelFrame(tab_behaviour, text="Confirmations", padding=8)
     section.pack(fill="x", pady=(0, 8))
@@ -152,7 +187,7 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
 
     # ---------- Tab 3: Vault & MCP ----------
     tab_vault = ttk.Frame(notebook, padding=12)
-    notebook.add(tab_vault, text="Vault & MCP")
+    notebook.add(tab_vault, text=t("settings.tab.vault"))
 
     kit_box = ttk.LabelFrame(tab_vault, text="Memory Kit configuration (read-only)", padding=8)
     kit_box.pack(fill="x")
@@ -165,8 +200,8 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
     else:
         for label, value in (
             ("Vault:", str(kit.vault)),
-            ("Kit repo:", str(kit.kit_repo) if kit.kit_repo else "(not set)"),
-            ("Kit language:", kit.language),
+            ("Engine:", str(kit.kit_repo) if kit.kit_repo else "(not set)"),
+            ("Language:", kit.language),
         ):
             row = ttk.Frame(kit_box)
             row.pack(fill="x", pady=1)
@@ -210,22 +245,57 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
     ttk.Label(
         targets_box,
         text=(
-            "Untick a CLI to keep deploy.ps1 from touching its MCP config. "
-            "Useful if you want SecondBrain in some LLMs but not others."
+            "Only detected CLIs are pre-ticked. Re-detect after you install "
+            "a new client to refresh the list. Tick a row to ask the next "
+            "Update / installer run to wire it; untick to leave it alone."
         ),
         foreground="#666666",
         wraplength=560,
     ).pack(anchor="w")
-    for ident, label, descr in _MCP_TARGETS:
-        ttk.Checkbutton(
-            targets_box,
-            text=f"{label} — {descr}",
-            variable=target_vars[ident],
-        ).pack(anchor="w")
+
+    target_row_widgets: dict[str, tuple[tk.Widget, tk.Widget]] = {}
+
+    def _render_target_rows() -> None:
+        for ident, label, descr in mcp_targets:
+            row = ttk.Frame(targets_box)
+            row.pack(anchor="w", fill="x", pady=1)
+            ttk.Checkbutton(
+                row, text=f"{label} — {descr}", variable=target_vars[ident]
+            ).pack(side="left")
+            status_lbl = ttk.Label(
+                row,
+                textvariable=target_status_vars[ident],
+                foreground=(
+                    "#2d8a3e" if installed_map.get(ident) else "#999999"
+                ),
+            )
+            status_lbl.pack(side="right", padx=(8, 0))
+            target_row_widgets[ident] = (row, status_lbl)
+
+    _render_target_rows()
+
+    def _redetect_clis() -> None:
+        fresh = _detect_installed_clis()
+        for ident, _ in installed_map.items():
+            now_installed = fresh.get(ident, False)
+            installed_map[ident] = now_installed
+            target_status_vars[ident].set(
+                t("settings.detected") if now_installed else t("settings.not_detected")
+            )
+            _, status_lbl = target_row_widgets[ident]
+            status_lbl.configure(
+                foreground="#2d8a3e" if now_installed else "#999999"
+            )
+            if now_installed and not target_vars[ident].get():
+                target_vars[ident].set(True)
+
+    ttk.Button(
+        targets_box, text=t("settings.redetect"), command=_redetect_clis
+    ).pack(anchor="e", pady=(6, 0))
 
     # ---------- Tab 4: About ----------
     tab_about = ttk.Frame(notebook, padding=12)
-    notebook.add(tab_about, text="About")
+    notebook.add(tab_about, text=t("settings.tab.about"))
 
     ttk.Label(
         tab_about, text="SecondBrain Desktop", font=("", 14, "bold")
@@ -311,7 +381,27 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
                 )
                 return
 
+        # Apply the OS-level autostart entry so the registry / launchd /
+        # XDG state matches what the user just ticked. Failure is logged
+        # but doesn't block the save — the settings file is still
+        # authoritative for the in-app preference.
+        if new_settings.autostart:
+            if not enable_autostart():
+                error_label.configure(
+                    text="Saved, but the OS autostart entry could not be written."
+                )
+        else:
+            disable_autostart()
+
         save_settings(new_settings)
+        # Drop the i18n cache so the next dialog opens in the freshly
+        # picked language without an app restart.
+        try:
+            from ..i18n import reset_active_language
+
+            reset_active_language()
+        except ImportError:
+            pass
         result["settings"] = new_settings
         result["saved"] = True
         root.quit()
@@ -319,8 +409,10 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
     def _cancel() -> None:
         root.quit()
 
-    ttk.Button(button_row, text="Cancel", command=_cancel).pack(side="right", padx=(8, 0))
-    ttk.Button(button_row, text="Save", command=_save).pack(side="right")
+    ttk.Button(button_row, text=t("settings.cancel"), command=_cancel).pack(
+        side="right", padx=(8, 0)
+    )
+    ttk.Button(button_row, text=t("settings.save"), command=_save).pack(side="right")
 
     root.bind("<Escape>", lambda _e: _cancel())
     root.protocol("WM_DELETE_WINDOW", _cancel)

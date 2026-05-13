@@ -17,13 +17,14 @@ from .logs_viewer import open_logs_viewer
 from .repair_dialog import show_repair_report
 from .scan_dialog import show_scan_report
 from .settings_dialog import open_settings_dialog
-from .update_dialog import show_update_progress
+from .update_dialog import show_combined_update_dialog, show_update_progress
 
 __all__ = [
     "ask_confirm",
     "open_logs_viewer",
     "open_settings_dialog",
     "run_first_run_wizard",
+    "show_combined_update_dialog",
     "show_repair_report",
     "show_scan_report",
     "show_update_progress",

@@ -28,6 +28,13 @@ from memory_kit_mcp import __version__
 log = logging.getLogger(__name__)
 
 GITHUB_LATEST_URL = "https://api.github.com/repos/SI-GMT/SecondBrain/releases/latest"
+# Engine releases use the bare ``vX.Y.Z`` tag pattern; desktop releases
+# use ``sb-desktop-vX.Y.Z`` and must be filtered out when probing for
+# engine updates (since v0.8.x the desktop tag can be marked Latest and
+# would otherwise mask the canonical engine release).
+GITHUB_RELEASES_URL = "https://api.github.com/repos/SI-GMT/SecondBrain/releases?per_page=30"
+import re as _re
+_ENGINE_TAG_RE = _re.compile(r"^v\d+\.\d+\.\d+$")
 # 1 h default — reduced from 24 h (v0.10.x) so users see release notifications
 # within an hour of cache hit during active release cycles. GitHub API anonymous
 # limit is 60/h per IP, so worst-case (one CLI launch every minute) stays well
@@ -118,11 +125,33 @@ def _is_newer(remote: str, local: str) -> bool:
 
 
 def _fetch_latest_tag(timeout: float = HTTP_TIMEOUT_SECONDS) -> str:
+    """Return the most recent engine release tag (``vX.Y.Z``).
+
+    Walks the paginated /releases list and picks the first entry whose
+    ``tag_name`` matches the engine pattern. Falls back to /releases/
+    latest only if no engine tag is found in the first page (typically
+    when all recent releases are desktop builds — unlikely but safe).
+    """
     req = urllib.request.Request(
-        GITHUB_LATEST_URL,
+        GITHUB_RELEASES_URL,
         headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (https URL hardcoded)
+        releases = json.loads(resp.read())
+    if not isinstance(releases, list):
+        raise ValueError("GitHub releases API returned non-list payload")
+    for entry in releases:
+        tag = entry.get("tag_name")
+        if isinstance(tag, str) and _ENGINE_TAG_RE.match(tag):
+            return tag
+    # Fallback to the /latest endpoint — if it also returns a non-engine
+    # tag we surface that to the caller, who will see update_available
+    # = False via the version-parser guard rather than crash.
+    fallback_req = urllib.request.Request(
+        GITHUB_LATEST_URL,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"},
+    )
+    with urllib.request.urlopen(fallback_req, timeout=timeout) as resp:  # noqa: S310
         data = json.loads(resp.read())
     tag = data.get("tag_name")
     if not isinstance(tag, str) or not tag:
