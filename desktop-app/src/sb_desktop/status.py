@@ -100,21 +100,45 @@ def _pipx_default_venv() -> Path:
     return Path.home() / "pipx" / "venvs" / "memory-kit-mcp"
 
 
+def _looks_like_install_root(candidate: Path) -> bool:
+    """True if ``candidate`` looks like a Python install layout that
+    holds ``memory_kit_mcp`` site-packages.
+
+    Accepts both:
+    * Standard pipx venvs (``pyvenv.cfg`` at the root).
+    * SecondBrain Desktop bundled engines (``Lib/site-packages``
+      under ``{install}/engine/`` with no ``pyvenv.cfg`` because the
+      embeddable Python doesn't ship one).
+    """
+    if (candidate / "pyvenv.cfg").is_file():
+        return True
+    if (candidate / "Lib" / "site-packages").is_dir():
+        return True
+    if (candidate / "lib").is_dir():
+        # POSIX shape: lib/pythonX.Y/site-packages somewhere underneath.
+        return any(
+            child.is_dir() and child.name.startswith("python")
+            for child in (candidate / "lib").iterdir()
+        )
+    return False
+
+
 def _venv_root_from_binary(binary: Path) -> Path | None:
     """Derive the venv root from the binary path, with a pipx-default fallback.
 
-    The standard layout puts the binary in ``{venv}/Scripts`` (Windows)
-    or ``{venv}/bin`` (POSIX). But pipx also drops user-facing shims in
-    ``~/.local/bin/`` that point at the real venv elsewhere — when
-    ``shutil.which`` returns that shim path, walking its grandparent
-    lands us in ``~/.local`` which is not a venv. Detect that case and
-    fall back to ``~/pipx/venvs/memory-kit-mcp/``.
+    Standard pipx layout puts the binary in ``{venv}/Scripts`` (Windows)
+    or ``{venv}/bin`` (POSIX). SecondBrain Desktop bundles its engine
+    under ``{install}/engine/Scripts/`` with site-packages directly at
+    ``{install}/engine/Lib/site-packages/`` (no ``pyvenv.cfg`` because
+    embedded Python distributions don't ship one). Both are accepted.
+
+    For ``~/.local/bin/`` shims (where ``shutil.which`` may land), we
+    fall back to the canonical ``~/pipx/venvs/memory-kit-mcp/`` venv.
     """
     parent = binary.parent
     if parent.name.lower() in {"scripts", "bin"}:
         candidate = parent.parent
-        # Sanity-check that we actually landed in a venv by looking for pyvenv.cfg.
-        if (candidate / "pyvenv.cfg").is_file():
+        if _looks_like_install_root(candidate):
             return candidate
 
     fallback = _pipx_default_venv()

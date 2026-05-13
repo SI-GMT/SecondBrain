@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 656 110" width="656" height="110" role="img" aria-label="SecondBrain lockup">
+  <g transform="translate(0 7)">
+    <svg x="0" y="0" width="96" height="96" viewBox="0 0 64 64" fill="none" stroke="#5B4FE9" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+      <g opacity="0.30" transform="translate(-5 -3) rotate(-3 32 32)">
+      <path d="M20 14 C27 13, 37 13, 44 14 C50 18, 53 26, 54 32 C53 38, 50 46, 44 50 C37 51, 27 51, 20 50 C14 46, 11 38, 10 32 C11 26, 14 18, 20 14 Z"></path>
+      <path d="M32 14 C29 22, 35 26, 32 32 C29 38, 35 46, 32 50"></path>
+    </g>
+    <path d="M20 14 C27 13, 37 13, 44 14 C50 18, 53 26, 54 32 C53 38, 50 46, 44 50 C37 51, 27 51, 20 50 C14 46, 11 38, 10 32 C11 26, 14 18, 20 14 Z"></path>
+    <path d="M32 14 C29 22, 35 26, 32 32 C29 38, 35 46, 32 50"></path>
+    <circle cx="31.5" cy="32" r="2.6" fill="currentColor" stroke="none"></circle>
+    </svg>
+  </g>
+  <text x="124" y="81" fill="#0e0e10" textLength="532" lengthAdjust="spacingAndGlyphs" font-family="&#39;Space Grotesk&#39;, &#39;Geist&#39;, &#39;Inter&#39;, sans-serif" font-weight="600" font-size="88" letter-spacing="-2.4">SecondBrain</text>
+</svg>

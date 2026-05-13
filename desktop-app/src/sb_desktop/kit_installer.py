@@ -66,7 +66,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import mcp_injector, paths
+from . import config as _config
+from . import mcp_injector, paths, vault_setup
 from .mcp_injector import InjectResult
 from .path_env import (
     add_to_system_path,
@@ -244,9 +245,21 @@ class InstallLayout:
 
     @classmethod
     def from_install_dir(
-        cls, install_dir: Path, mode: InstallMode = InstallMode.USER
+        cls, install_dir: Path, mode: InstallMode | None = None
     ) -> "InstallLayout":
+        """Build a layout, auto-detecting ``mode`` from ``install_dir`` if omitted.
+
+        Auto-detection probes the canonical install roots
+        (``%ProgramFiles%[\\ SecondBrain]``, ``%LOCALAPPDATA%[\\ SecondBrain]``)
+        and falls back to a writability check on the engine directory
+        for unknown layouts (read-only → SYSTEM). This keeps callers
+        from passing the wrong mode and tripping the wizard's safety
+        rails — a real bug we hit when the wizard ran a USER-default
+        install flow against a Program Files install.
+        """
         install_dir = install_dir.resolve()
+        if mode is None:
+            mode = paths.detect_install_mode(install_dir / APP_BASENAME / "ignored.exe")
         engine = install_dir / ENGINE_BASENAME
         return cls(
             install_dir=install_dir,
@@ -318,6 +331,26 @@ def _silent_subprocess_kwargs() -> dict[str, object]:
     }
 
 
+def _python_dir_writable(python_dir: Path) -> bool:
+    """True if the current process can create a file inside ``python_dir``.
+
+    Probes by writing a temp file. We can't trust ``os.access`` on
+    Windows — ACL inheritance lies — so we actually try the write.
+    """
+    if not python_dir.is_dir():
+        return False
+    probe = python_dir / ".secondbrain_write_probe.tmp"
+    try:
+        probe.write_text("", encoding="ascii")
+    except (OSError, PermissionError):
+        return False
+    try:
+        probe.unlink()
+    except OSError:
+        pass
+    return True
+
+
 def _patch_pth_file(python_dir: Path) -> None:
     """Make the embedded Python find ``Lib/site-packages``.
 
@@ -351,24 +384,54 @@ def bootstrap_python_embeddable(
 ) -> StepResult:
     """Prepare the embedded Python so pip can install into Lib/site-packages.
 
-    On a system-wide install the engine is already in place — laid out
-    by Inno Setup or whoever ran the elevated install. Skip the
-    bootstrap entirely so per-user wizard runs don't fail trying to
-    write under Program Files.
+    System install: the elevated installer owns the engine. The
+    per-user wizard NEVER touches anything under ``engine_dir``,
+    regardless of whether the engine looks ready. If the engine is
+    actually missing we surface a clean actionable error instead of
+    crashing on a PermissionError.
+
+    User install: we own the engine. Patch the ``_pth`` file and run
+    ``get-pip`` if needed.
     """
-    if layout.is_system_install and layout.engine_already_bootstrapped:
-        if on_progress:
-            on_progress("System engine already bootstrapped (skip).")
+    if layout.is_system_install:
+        if layout.engine_already_bootstrapped:
+            if on_progress:
+                on_progress("System engine already bootstrapped (skip).")
+            return StepResult(
+                ok=True,
+                label="Bootstrap Python runtime",
+                detail="skipped (system install, engine ready)",
+            )
         return StepResult(
-            ok=True,
+            ok=False,
             label="Bootstrap Python runtime",
-            detail="skipped (system install, engine already present)",
+            detail=(
+                "engine not installed under "
+                f"{layout.engine_dir} — re-run the SecondBrain installer "
+                "as administrator to deploy the engine, then relaunch this "
+                "wizard."
+            ),
         )
+
+    # ----- User install only past this point -----
     if not layout.python_exe.is_file():
         return StepResult(
             ok=False,
             label="Bootstrap Python runtime",
             detail=f"python executable not found at {layout.python_exe}",
+        )
+
+    if not _python_dir_writable(layout.python_dir):
+        # Defensive: if detection mis-classified a Program Files-style
+        # install as USER, refuse to attempt writes that will fail.
+        return StepResult(
+            ok=False,
+            label="Bootstrap Python runtime",
+            detail=(
+                f"engine directory {layout.python_dir} is read-only for "
+                "the current user — re-run the installer as administrator "
+                "(system install) or pick a user-writable install location."
+            ),
         )
 
     if on_progress:
@@ -421,13 +484,35 @@ def bootstrap_python_embeddable(
 def install_kit_wheels(
     layout: InstallLayout, on_progress: ProgressCallback = None
 ) -> StepResult:
-    if layout.is_system_install and layout.engine_already_bootstrapped:
-        if on_progress:
-            on_progress("System wheels already installed (skip).")
+    if layout.is_system_install:
+        # Wheels were installed by the elevated installer (or by an admin
+        # re-run of the installer). The per-user wizard NEVER attempts to
+        # pip-install under Program Files.
+        if layout.engine_already_bootstrapped:
+            if on_progress:
+                on_progress("System wheels already installed (skip).")
+            return StepResult(
+                ok=True,
+                label="Install kit wheels",
+                detail="skipped (system install, engine ready)",
+            )
         return StepResult(
-            ok=True,
+            ok=False,
             label="Install kit wheels",
-            detail="skipped (system install, engine already present)",
+            detail=(
+                f"engine binary missing at {layout.kit_binary_path} — "
+                "the elevated installer did not finish bootstrapping the "
+                "engine. Re-run setup as administrator."
+            ),
+        )
+    if not _python_dir_writable(layout.engine_dir):
+        return StepResult(
+            ok=False,
+            label="Install kit wheels",
+            detail=(
+                f"engine directory {layout.engine_dir} is read-only for "
+                "the current user — re-run the installer as administrator."
+            ),
         )
     if not layout.wheels_dir.is_dir():
         return StepResult(
@@ -489,45 +574,50 @@ def install_kit_wheels(
 def register_path(
     layout: InstallLayout, on_progress: ProgressCallback = None
 ) -> StepResult:
-    """Ensure the engine's Scripts dir is reachable on PATH.
+    """Ensure the engine binary is reachable from PATH on every OS.
 
-    System install: the system PATH already carries the entry (written
-    by the elevated installer). If not — fall back to adding it to the
-    current user's PATH so this user at least can spawn the engine,
-    and log a warning so the admin knows to re-run.
+    Windows
+        System install + admin → HKLM PATH.
+        System install non-admin → HKCU fallback (safety net).
+        User install → HKCU.
 
-    User install: write to HKCU PATH.
+    POSIX
+        System install with root → symlink ``memory-kit-mcp`` into
+        ``/usr/local/bin/``. Falls back to per-user ``~/.local/bin``
+        + rc-file block if root is refused.
+        User install → ``~/.local/bin`` symlink + rc-file block.
+
+    The POSIX symlink layer is what makes the engine visible to GUI
+    apps (Claude Desktop, etc.) that don't source shell rc files.
     """
     if on_progress:
         on_progress("Registering the engine on your PATH…")
 
+    binary = layout.kit_binary_path if layout.kit_binary_path.is_file() else None
+
     if layout.is_system_install:
-        # On a system install the elevated installer should already
-        # have put the Scripts dir on the machine PATH. Verify and
-        # patch HKLM only if we're admin; otherwise add to HKCU as a
-        # safety net so this user at least has access.
-        if is_admin_windows():
+        if is_admin_windows() or sys.platform != "win32":
             try:
-                changed = add_to_system_path(layout.scripts_dir)
+                changed = add_to_system_path(layout.scripts_dir, binary=binary)
                 detail = "appended to system PATH" if changed else "already on system PATH"
                 return StepResult(ok=True, label="Register PATH", detail=detail)
             except PermissionError:
-                pass  # Fall through to HKCU.
+                pass  # Fall through to per-user.
         try:
-            changed = add_to_user_path(layout.scripts_dir)
+            changed = add_to_user_path(layout.scripts_dir, binary=binary)
         except Exception as exc:
             return StepResult(
                 ok=False,
                 label="Register PATH",
                 detail=f"PATH update failed: {exc}",
             )
-        detail = "appended to user PATH (admin needed to update system PATH)"
+        detail = "appended to user PATH (no admin/root for system PATH)"
         if not changed:
             detail = "already on user PATH"
         return StepResult(ok=True, label="Register PATH", detail=detail)
 
     try:
-        changed = add_to_user_path(layout.scripts_dir)
+        changed = add_to_user_path(layout.scripts_dir, binary=binary)
     except Exception as exc:
         return StepResult(
             ok=False, label="Register PATH", detail=f"PATH update failed: {exc}"
@@ -671,6 +761,48 @@ def ensure_vault_exists(path: Path) -> None:
     path.expanduser().mkdir(parents=True, exist_ok=True)
 
 
+def prepare_vault(
+    layout: InstallLayout,
+    new_vault: Path,
+    *,
+    on_progress: ProgressCallback = None,
+) -> StepResult:
+    """Migrate the existing vault if any, then scaffold ``new_vault``.
+
+    Reads the canonical vault path from ``~/.memory-kit/config.json``.
+    If it points at a non-empty directory **different** from
+    ``new_vault``, every entry is moved into the new location before
+    the Obsidian scaffold is laid out. Otherwise we just scaffold the
+    target directory (creates it if missing).
+    """
+    if on_progress:
+        on_progress("Preparing vault contents…")
+
+    existing = _config.load_kit_config()
+    old_vault = existing.vault.expanduser() if existing else None
+
+    obsidian_style = layout.resources_dir / "adapters" / "obsidian-style"
+    obsidian_style_dir = obsidian_style if obsidian_style.is_dir() else None
+
+    try:
+        result = vault_setup.setup_vault(
+            new_vault.expanduser(),
+            old_vault=old_vault,
+            obsidian_style_dir=obsidian_style_dir,
+        )
+    except OSError as exc:
+        return StepResult(
+            ok=False,
+            label="Prepare vault",
+            detail=f"vault setup failed: {exc}",
+        )
+    return StepResult(
+        ok=True,
+        label="Prepare vault",
+        detail=result.detail or result.action,
+    )
+
+
 def run_install(
     plan: InstallPlan, on_progress: ProgressCallback = None
 ) -> InstallReport:
@@ -678,12 +810,11 @@ def run_install(
     layout = InstallLayout.from_install_dir(plan.install_dir)
     report = InstallReport(ok=True)
 
-    ensure_vault_exists(plan.vault)
-
     for step in (
         bootstrap_python_embeddable(layout, on_progress),
         install_kit_wheels(layout, on_progress),
         register_path(layout, on_progress),
+        prepare_vault(layout, plan.vault, on_progress=on_progress),
         finalise_kit_config(layout, plan.vault, plan.language, on_progress),
     ):
         report.steps.append(step)

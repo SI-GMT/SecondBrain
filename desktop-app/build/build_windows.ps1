@@ -123,6 +123,16 @@ if (-not (Test-Path $GetPip)) {
 }
 Copy-Item -Path $GetPip -Destination (Join-Path $EngineDir 'get-pip.py') -Force
 
+# Ship the bootstrap orchestrator alongside get-pip.py so Inno can run
+# it as a single elevated step (patches _pth, runs get-pip, pip install,
+# verifies the entry point). This replaces the brittle two-step
+# get-pip → pip-install chain that silently skipped wheels when the
+# _pth file was not patched yet.
+Copy-Item `
+    -Path (Join-Path $BuildDir 'bootstrap_engine.py') `
+    -Destination (Join-Path $EngineDir 'bootstrap_engine.py') `
+    -Force
+
 # ---------------------------------------------------------------------------
 # 3. Build memory-kit-mcp wheel + pull every transitive dep wheel.
 # ---------------------------------------------------------------------------

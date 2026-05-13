@@ -27,7 +27,7 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.7.0"
+#define MyAppVersion     "0.8.7"
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"
@@ -50,9 +50,19 @@ AppUpdatesURL={#MyAppURL}/releases
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog commandline
 
+; Force the 64-bit install hive even when ISCC is x86. Without this
+; {autopf} = {pf32} = "Program Files (x86)", which the Python runtime
+; detect_install_mode() probe does NOT recognise as a system root
+; (it reads %ProgramFiles% which always resolves to the 64-bit path
+; for a 64-bit Tray.exe). The mismatch flipped detection back to DEV,
+; the wizard tried to re-bootstrap, and pip-extract crashed with
+; ERROR 13 because Program Files is read-only for non-admin users.
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+
 ; {autopf} resolves to:
-;   * %ProgramFiles% if running elevated (admin install)
-;   * %LOCALAPPDATA%\Programs if running non-elevated (user install)
+;   * %ProgramFiles%   (64-bit) if running elevated under 64-bit mode
+;   * %LOCALAPPDATA%\Programs   if running non-elevated (user install)
 DefaultDirName={autopf}\SecondBrain
 DirExistsWarning=auto
 DisableDirPage=no
@@ -96,6 +106,8 @@ Source: "release-kit\engine\wheels\*"; DestDir: "{app}\engine\wheels"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "release-kit\engine\get-pip.py"; DestDir: "{app}\engine"; \
     Flags: ignoreversion
+Source: "release-kit\engine\bootstrap_engine.py"; DestDir: "{app}\engine"; \
+    Flags: ignoreversion
 
 ; 3. Kit resources (procedures + adapters + i18n) — release subset.
 Source: "release-kit\resources\*"; DestDir: "{app}\resources"; \
@@ -124,42 +136,57 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 
 [Run]
 ; System install: bootstrap the engine once at install time (admin
-; context, can write under Program Files). Per-user install: skip —
-; the wizard will handle it on first launch.
+; context, can write under Program Files). One single Python script
+; orchestrates everything (patch _pth → get-pip → pip install →
+; verify) so a partial state never leaks to the per-user wizard.
+; Per-user install: skip — the wizard handles it on first launch.
 Filename: "{app}\engine\python\python.exe"; \
-    Parameters: """{app}\engine\get-pip.py"" --no-warn-script-location"; \
+    Parameters: """{app}\engine\bootstrap_engine.py"""; \
     WorkingDir: "{app}\engine"; \
     Flags: runhidden waituntilterminated; \
-    StatusMsg: "Bootstrapping pip…"; \
+    StatusMsg: "Installing the engine (this can take a minute)…"; \
     Check: IsAdminInstallMode and NeedsBootstrap
 
-Filename: "{app}\engine\python\python.exe"; \
-    Parameters: "-m pip install --no-index --find-links ""{app}\engine\wheels"" --no-warn-script-location memory-kit-mcp"; \
-    WorkingDir: "{app}\engine"; \
-    Flags: runhidden waituntilterminated; \
-    StatusMsg: "Installing the engine into the shared site-packages…"; \
-    Check: IsAdminInstallMode and NeedsBootstrap
+; Hard verification — [Code] CurStepChanged at ssPostInstall asserts
+; that memory-kit-mcp.exe is present on a system install. If absent,
+; the installer shows a clear error dialog before exiting so the user
+; isn't left with a half-broken state.
 
-; Smoke-test the tray bundle.
-Filename: "{app}\app\{#MyAppExeName}"; Parameters: "--healthcheck"; \
-    Flags: runhidden waituntilterminated; StatusMsg: "Verifying SecondBrain Desktop..."
-
-; Launch — first launch per user pops the in-app wizard which does
-; per-user MCP wiring + vault setup. On a system install the wizard
-; skips the engine-install steps because they're already done.
+; Auto-launch the tray on the Finished page. ``runasoriginaluser`` is
+; mandatory on elevated installs so the wizard runs as the human
+; user (writes to their per-user state) instead of the admin token.
+; ``unchecked`` is intentionally omitted — the checkbox defaults to
+; checked, so a one-click Finish auto-launches the wizard.
 Filename: "{app}\app\{#MyAppExeName}"; \
     Description: "Launch {#MyAppName} (we'll guide you through setup)"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/IM {#MyAppExeName} /F"; \
     Flags: runhidden; RunOnceId: "kill-tray"
+; LLM CLIs may have spawned memory-kit-mcp.exe sessions that hold a
+; lock on engine files — kill them so the file deletes succeed.
+Filename: "taskkill.exe"; Parameters: "/IM memory-kit-mcp.exe /F /T"; \
+    Flags: runhidden; RunOnceId: "kill-engine"
 
 [UninstallDelete]
-; Wipe the engine site-packages produced at install time so an
-; uninstall leaves no orphans.
+; Wipe every artefact produced at runtime by the bootstrap +
+; subsequent engine usage. Inno only tracks files copied via [Files];
+; anything created post-install (site-packages, byte-cache,
+; pywin32 DLLs copied next to python.exe, ad-hoc .pth edits) is
+; invisible to its default uninstall pass and must be deleted
+; explicitly to avoid orphan directories under Program Files.
 Type: filesandordirs; Name: "{app}\engine\Lib"
 Type: filesandordirs; Name: "{app}\engine\Scripts"
+Type: filesandordirs; Name: "{app}\engine\python"
+Type: filesandordirs; Name: "{app}\engine\wheels"
+Type: filesandordirs; Name: "{app}\engine\__pycache__"
+Type: files;          Name: "{app}\engine\bootstrap_engine.py"
+Type: files;          Name: "{app}\engine\get-pip.py"
+Type: dirifempty;     Name: "{app}\engine"
+Type: filesandordirs; Name: "{app}\resources\__pycache__"
+Type: filesandordirs; Name: "{app}\app\__pycache__"
+Type: dirifempty;     Name: "{app}"
 
 [Code]
 function _PythonExePath(): String;
@@ -180,6 +207,33 @@ begin
   Result := not FileExists(_KitBinaryPath());
 end;
 
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ErrMsg: String;
+begin
+  // Post-install assertion: on a system install the engine bootstrap
+  // MUST have deposited memory-kit-mcp.exe. If it didn't, the wizard
+  // at first launch can't recover (Program Files is read-only for the
+  // per-user run), so we tell the user immediately instead of letting
+  // them hit a confusing error later.
+  if (CurStep = ssPostInstall) and IsAdminInstallMode then
+  begin
+    if not FileExists(_KitBinaryPath()) then
+    begin
+      ErrMsg :=
+        'The SecondBrain engine could not be installed.' + #13#10 + #13#10 +
+        'Expected file is missing:' + #13#10 +
+        _KitBinaryPath() + #13#10 + #13#10 +
+        'This usually means the embedded Python bootstrap failed.' + #13#10 +
+        'Please rerun the installer as administrator. If the issue ' +
+        'persists, send the log under %TEMP%\Setup Log*.txt to support.';
+      MsgBox(ErrMsg, mbCriticalError, MB_OK);
+      // Abort the install — the wizard would be stuck on first launch.
+      WizardForm.Close;
+    end;
+  end;
+end;
+
 function PathNotAlreadyOnSystem(): Boolean;
 var
   CurrentPath: String;
@@ -196,4 +250,78 @@ begin
     Exit;
   end;
   Result := Pos(LowerCase(TargetDir), LowerCase(CurrentPath)) = 0;
+end;
+
+function _RemoveFromSystemPath(): Boolean;
+var
+  CurrentPath, NewPath, TargetDir, TargetLower, Lower: String;
+  Parts: TArrayOfString;
+  I, Count: Integer;
+begin
+  // Strip {app}\engine\Scripts from HKLM PATH at uninstall time.
+  // Inno's [Registry] entry used ``preservestringtype noerror`` and
+  // therefore did NOT mark the value for ``uninsdeletevalue``, so the
+  // entry would otherwise remain after uninstall. Walk the value,
+  // drop our segment, write back.
+  Result := False;
+  TargetDir := ExpandConstant('{app}\engine\Scripts');
+  TargetLower := LowerCase(TargetDir);
+
+  if not RegQueryStringValue(
+      HKEY_LOCAL_MACHINE,
+      'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+      'Path',
+      CurrentPath) then
+    Exit;
+
+  NewPath := '';
+  Count := 0;
+  while Length(CurrentPath) > 0 do
+  begin
+    I := Pos(';', CurrentPath);
+    if I = 0 then
+    begin
+      Lower := LowerCase(CurrentPath);
+      if Lower <> TargetLower then
+      begin
+        if NewPath <> '' then NewPath := NewPath + ';';
+        NewPath := NewPath + CurrentPath;
+      end;
+      CurrentPath := '';
+    end
+    else
+    begin
+      Lower := LowerCase(Copy(CurrentPath, 1, I - 1));
+      if Lower <> TargetLower then
+      begin
+        if NewPath <> '' then NewPath := NewPath + ';';
+        NewPath := NewPath + Copy(CurrentPath, 1, I - 1);
+      end
+      else
+        Inc(Count);
+      CurrentPath := Copy(CurrentPath, I + 1, Length(CurrentPath));
+    end;
+  end;
+
+  if Count > 0 then
+  begin
+    RegWriteExpandStringValue(
+      HKEY_LOCAL_MACHINE,
+      'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+      'Path',
+      NewPath);
+    Result := True;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  // Strip the engine PATH entry once, before Inno deletes the
+  // [Files] payload. Best-effort — broadcasting is handled by Inno's
+  // own ChangesEnvironment=yes hook a few moments later.
+  if CurUninstallStep = usUninstall then
+  begin
+    if IsAdminInstallMode then
+      _RemoveFromSystemPath();
+  end;
 end;

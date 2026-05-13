@@ -1,27 +1,46 @@
-"""PATH management — per-user (HKCU) or system-wide (HKLM).
+"""PATH management — cross-OS automatic.
 
-V0.7 multi-user: the engine binary location depends on the install
-mode. A system-wide install (``%ProgramFiles%\\SecondBrain``) means
-the engine's ``Scripts`` directory should be on the **system** PATH
-(``HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\
-Environment\\Path``) so every user on the machine sees it. A
-per-user install (``%LOCALAPPDATA%\\SecondBrain``) means the user's
-PATH (``HKCU\\Environment\\PATH``).
+Windows
+=======
 
-The system path edit requires admin privileges — without them, the
-function returns False and the caller (kit_installer) falls back to
-the per-user PATH for this user only. On RDP the admin runs the
-installer once for everyone; per-user invocations of the wizard
-never need to touch HKLM.
+* User install → ``HKCU\\Environment\\PATH`` (no admin).
+* System install → ``HKLM\\System\\CurrentControlSet\\Control\\
+  Session Manager\\Environment\\Path`` (admin only). Without admin
+  we fall back to HKCU so at least the current user can reach the
+  engine.
 
 After any registry edit we broadcast ``WM_SETTINGCHANGE`` so new
 processes (and the Explorer shell) pick up the new value without
 logout.
 
-POSIX side: same managed block as v0.6 in ``~/.bashrc`` /
-``~/.zshrc``. For system installs there is no good cross-distro
-equivalent of HKLM PATH; we still write the per-user rc file but
-note the system path in ``/etc/profile.d`` is a separate concern.
+POSIX (macOS / Linux)
+=====================
+
+Two layers, both applied so GUI apps **and** terminal shells see
+the binary:
+
+1. **Symlink** the engine binary into a directory that's already on
+   the default PATH for every process — including GUI apps spawned
+   by launchd / systemd-user that never source shell rc files:
+
+   * System install → ``/usr/local/bin/`` (admin/sudo).
+     ``path_helper`` on macOS and most Linux distros put this dir
+     on PATH before login.
+   * User install → ``~/.local/bin/``.
+     Auto-added on most distros via ``~/.profile``; on macOS
+     ``~/.zprofile`` ships with a snippet that does the same on
+     fresh installs. We also write a managed rc-file block as a
+     safety net.
+
+2. **rc-file block** in ``~/.bashrc`` / ``~/.zshrc`` so shells that
+   skip the login chain (``bash --norc`` etc., embedded terminals)
+   still see the entry. The block is fenced by markers so we can
+   update it idempotently.
+
+The two layers cover the gap: a Claude Desktop app launched from
+Spotlight reads the symlink (no shell init at all), while an open
+terminal that pre-existed the install gets the rc-file update on
+its next ``source ~/.zshrc``.
 """
 
 from __future__ import annotations
@@ -190,13 +209,66 @@ def remove_from_system_path_windows(directory: Path) -> bool:
     return True
 
 
+def user_local_bin() -> Path:
+    """Per-user binary directory — on PATH by default on most distros."""
+    return Path.home() / ".local" / "bin"
+
+
+def system_local_bin() -> Path:
+    """System binary directory — on PATH for every process on POSIX."""
+    return Path("/usr/local/bin")
+
+
 def _posix_rc_files() -> list[Path]:
     home = Path.home()
     return [home / ".bashrc", home / ".zshrc"]
 
 
-def add_to_user_path_posix(directory: Path) -> bool:
-    """Append a managed block to each present rc file."""
+def ensure_symlink(source: Path, link: Path) -> bool:
+    """Idempotently point ``link`` at ``source``.
+
+    Returns True if the symlink was created or re-pointed, False if it
+    was already correct. Raises ``PermissionError`` if the parent dir
+    can't be written (caller is expected to fall back).
+    """
+    source = source.resolve()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        try:
+            if link.resolve() == source:
+                return False
+        except OSError:
+            pass
+        link.unlink()
+    elif link.exists():
+        # Existing non-symlink (real file) — refuse to clobber.
+        raise FileExistsError(
+            f"{link} exists and is not a symlink; refusing to overwrite"
+        )
+    link.symlink_to(source)
+    return True
+
+
+def remove_symlink_if_ours(link: Path, source: Path) -> bool:
+    """Remove ``link`` only if it points at ``source``."""
+    if not link.is_symlink():
+        return False
+    try:
+        resolved = link.resolve()
+    except OSError:
+        return False
+    if resolved != source.resolve():
+        return False
+    link.unlink()
+    return True
+
+
+def _write_rc_block(directory: Path) -> bool:
+    """Append/update a managed PATH block in every present rc file.
+
+    Returns True if any rc file was modified. Missing rc files are
+    skipped silently — most users only have one.
+    """
     directory = directory.resolve()
     block = (
         f"\n{POSIX_MARKER_START}\n"
@@ -215,7 +287,6 @@ def add_to_user_path_posix(directory: Path) -> bool:
         if POSIX_MARKER_START in current and str(directory) in current:
             continue
         if POSIX_MARKER_START in current:
-            # Update the existing block in place.
             import re
 
             pattern = re.compile(
@@ -235,7 +306,8 @@ def add_to_user_path_posix(directory: Path) -> bool:
     return changed
 
 
-def remove_from_user_path_posix(directory: Path) -> bool:  # noqa: ARG001 — kept for symmetry
+def _strip_rc_block() -> bool:
+    """Remove the managed PATH block from any present rc file."""
     import re
 
     changed = False
@@ -262,33 +334,110 @@ def remove_from_user_path_posix(directory: Path) -> bool:  # noqa: ARG001 — ke
     return changed
 
 
-def add_to_user_path(directory: Path) -> bool:
-    """Cross-platform shim — dispatches to the OS-specific implementation."""
+def add_to_user_path_posix(directory: Path, *, binary: Path | None = None) -> bool:
+    """Make the engine reachable from PATH for the current user.
+
+    Strategy:
+    * If ``binary`` is given, symlink it into ``~/.local/bin``. This
+      reaches GUI apps (launchd / systemd-user) that never source
+      shell rc files.
+    * Always write the rc-file block as well — covers shells that
+      pre-existed the install or run with ``--norc``.
+    * Missing ``~/.local/bin`` is created automatically.
+
+    Returns True if anything actually changed on disk.
+    """
+    changed = False
+    if binary is not None:
+        link = user_local_bin() / binary.name
+        try:
+            if ensure_symlink(binary, link):
+                changed = True
+        except (OSError, FileExistsError) as exc:
+            log.warning("could not symlink %s -> %s: %s", binary, link, exc)
+    rc_dir = user_local_bin() if binary is not None else directory
+    if _write_rc_block(rc_dir):
+        changed = True
+    return changed
+
+
+def remove_from_user_path_posix(
+    directory: Path, *, binary: Path | None = None
+) -> bool:
+    """Reverse of ``add_to_user_path_posix``."""
+    changed = False
+    if binary is not None:
+        link = user_local_bin() / binary.name
+        if remove_symlink_if_ours(link, binary):
+            changed = True
+    if _strip_rc_block():
+        changed = True
+    return changed
+
+
+def add_to_system_path_posix(
+    directory: Path, *, binary: Path | None = None
+) -> bool:
+    """Make the engine reachable from PATH for every user on this host.
+
+    On POSIX the standard way is a symlink in ``/usr/local/bin/``
+    (writable by root, already on the default PATH of every process,
+    including GUI apps). Without a binary to symlink we fall back to
+    the per-user rc file — there is no portable system-wide rc file.
+
+    Raises ``PermissionError`` if root is required and the current
+    process can't write to ``/usr/local/bin``; let the caller decide
+    whether to fall back to the per-user path.
+    """
+    if binary is None:
+        return add_to_user_path_posix(directory)
+    link = system_local_bin() / binary.name
+    return ensure_symlink(binary, link)
+
+
+def remove_from_system_path_posix(
+    directory: Path, *, binary: Path | None = None
+) -> bool:
+    if binary is None:
+        return remove_from_user_path_posix(directory)
+    link = system_local_bin() / binary.name
+    return remove_symlink_if_ours(link, binary)
+
+
+def add_to_user_path(directory: Path, *, binary: Path | None = None) -> bool:
+    """Cross-platform: append ``directory`` to the current user's PATH.
+
+    ``binary`` is honoured on POSIX only (drives the symlink layer).
+    Windows callers can leave it None — the registry edit already
+    exposes every executable in ``directory``.
+    """
     if sys.platform == "win32":
         return add_to_user_path_windows(directory)
-    return add_to_user_path_posix(directory)
+    return add_to_user_path_posix(directory, binary=binary)
 
 
-def remove_from_user_path(directory: Path) -> bool:
+def remove_from_user_path(directory: Path, *, binary: Path | None = None) -> bool:
     if sys.platform == "win32":
         return remove_from_user_path_windows(directory)
-    return remove_from_user_path_posix(directory)
+    return remove_from_user_path_posix(directory, binary=binary)
 
 
-def add_to_system_path(directory: Path) -> bool:
-    """Cross-platform shim for system-wide PATH (admin only on Windows).
+def add_to_system_path(directory: Path, *, binary: Path | None = None) -> bool:
+    """Cross-platform: append ``directory`` to the machine-wide PATH.
 
-    On POSIX falls back to ``add_to_user_path`` — distros vary on how
-    to inject a system-wide PATH entry safely (``/etc/profile.d`` vs
-    ``/etc/environment`` vs systemd), so we leave that to the
-    distribution package and only manage per-user rc files here.
+    Windows: writes ``HKLM`` (raises ``PermissionError`` without admin).
+    POSIX: symlinks ``binary`` into ``/usr/local/bin`` (raises
+    ``PermissionError`` without root). If ``binary`` is None on POSIX
+    we fall back to the per-user rc file.
     """
     if sys.platform == "win32":
         return add_to_system_path_windows(directory)
-    return add_to_user_path_posix(directory)
+    return add_to_system_path_posix(directory, binary=binary)
 
 
-def remove_from_system_path(directory: Path) -> bool:
+def remove_from_system_path(
+    directory: Path, *, binary: Path | None = None
+) -> bool:
     if sys.platform == "win32":
         return remove_from_system_path_windows(directory)
-    return remove_from_user_path_posix(directory)
+    return remove_from_system_path_posix(directory, binary=binary)

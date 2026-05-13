@@ -33,6 +33,27 @@ def test_pipx_absent_yields_warning(monkeypatch: pytest.MonkeyPatch):
     assert snap.bundled_version == "0.12.1"
 
 
+def test_venv_root_accepts_secondbrain_engine_layout(tmp_path: Path):
+    """SecondBrain bundled engine has Lib/site-packages but no pyvenv.cfg."""
+    engine = tmp_path / "engine"
+    scripts = engine / "Scripts"
+    sp = engine / "Lib" / "site-packages"
+    scripts.mkdir(parents=True)
+    sp.mkdir(parents=True)
+    binary = scripts / "memory-kit-mcp.exe"
+    binary.write_text("")
+    assert status._venv_root_from_binary(binary) == engine
+
+
+def test_venv_root_accepts_classic_pipx_layout(tmp_path: Path):
+    venv = tmp_path / "venvs" / "memory-kit-mcp"
+    (venv / "Scripts").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = ...", encoding="utf-8")
+    binary = venv / "Scripts" / "memory-kit-mcp.exe"
+    binary.write_text("")
+    assert status._venv_root_from_binary(binary) == venv
+
+
 def test_versions_aligned_yields_ok(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(status, "_bundled_version", lambda: ("0.12.1", None))
     monkeypatch.setattr(

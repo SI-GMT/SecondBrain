@@ -50,6 +50,98 @@ def test_posix_remove_strips_block(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert path_env.POSIX_MARKER_START not in bashrc.read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+def test_posix_symlink_into_user_local_bin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(path_env.Path, "home", classmethod(lambda cls: tmp_path))
+    # Real binary on disk.
+    scripts = tmp_path / "engine" / "Scripts"
+    scripts.mkdir(parents=True)
+    binary = scripts / "memory-kit-mcp"
+    binary.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    changed = path_env.add_to_user_path_posix(scripts, binary=binary)
+    link = tmp_path / ".local" / "bin" / "memory-kit-mcp"
+    assert changed is True
+    assert link.is_symlink()
+    assert link.resolve() == binary.resolve()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+def test_posix_symlink_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(path_env.Path, "home", classmethod(lambda cls: tmp_path))
+    scripts = tmp_path / "engine" / "Scripts"
+    scripts.mkdir(parents=True)
+    binary = scripts / "memory-kit-mcp"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    first = path_env.add_to_user_path_posix(scripts, binary=binary)
+    second = path_env.add_to_user_path_posix(scripts, binary=binary)
+    assert first is True
+    # Second call: symlink unchanged AND rc block already up-to-date.
+    assert second is False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+def test_posix_symlink_repoints_when_source_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(path_env.Path, "home", classmethod(lambda cls: tmp_path))
+    old = tmp_path / "old" / "memory-kit-mcp"
+    new = tmp_path / "new" / "memory-kit-mcp"
+    old.parent.mkdir(parents=True)
+    new.parent.mkdir(parents=True)
+    old.write_text("#!/bin/sh\n")
+    new.write_text("#!/bin/sh\n")
+
+    link = tmp_path / ".local" / "bin" / "memory-kit-mcp"
+    assert path_env.ensure_symlink(old, link) is True
+    assert path_env.ensure_symlink(new, link) is True
+    assert link.resolve() == new.resolve()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+def test_posix_remove_symlink_only_when_ours(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(path_env.Path, "home", classmethod(lambda cls: tmp_path))
+    ours = tmp_path / "ours" / "memory-kit-mcp"
+    theirs = tmp_path / "theirs" / "memory-kit-mcp"
+    ours.parent.mkdir(parents=True)
+    theirs.parent.mkdir(parents=True)
+    ours.write_text("#!/bin/sh\n")
+    theirs.write_text("#!/bin/sh\n")
+
+    link = tmp_path / ".local" / "bin" / "memory-kit-mcp"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(theirs)
+    # Trying to remove "ours" when the link points to theirs → no-op.
+    assert path_env.remove_symlink_if_ours(link, ours) is False
+    assert link.is_symlink()
+    # Pointing the right source removes the link.
+    assert path_env.remove_symlink_if_ours(link, theirs) is True
+    assert not link.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+def test_posix_ensure_symlink_refuses_real_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(path_env.Path, "home", classmethod(lambda cls: tmp_path))
+    source = tmp_path / "engine" / "memory-kit-mcp"
+    source.parent.mkdir(parents=True)
+    source.write_text("#!/bin/sh\n")
+    link = tmp_path / ".local" / "bin" / "memory-kit-mcp"
+    link.parent.mkdir(parents=True)
+    link.write_text("real file content")  # not a symlink
+    with pytest.raises(FileExistsError):
+        path_env.ensure_symlink(source, link)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only test")
 def test_windows_add_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     state = {"value": "", "type": 1}

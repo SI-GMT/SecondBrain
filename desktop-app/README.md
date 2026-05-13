@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../docs/assets/secondbrain-lockup.svg" alt="SecondBrain Desktop" width="360">
+</p>
+
 # SecondBrain Desktop
 
 Systray companion for the [SecondBrain Memory Kit](../README.md) engine.
@@ -21,10 +25,15 @@ open a terminal.
 
 Tray icon colour mapping:
 
-- **green** — bundled engine ready, pipx kit on PATH, versions aligned.
-- **amber** — pipx kit missing, version drift, or update available.
+- **green** — bundled engine ready, installed kit on PATH, versions aligned.
+- **amber** — installed kit missing, version drift, or update available.
 - **red** — bundled engine import failed (broken install).
 - **grey** — first probe in flight.
+
+Brand glyph rasterised from the canonical SecondBrain SVG masters
+under `src/sb_desktop/icons/` (commit-time bundled PNG variants under
+`png/` + multi-size ICO for Windows). The runtime composes the brand
+glyph + a coloured status disc per snapshot.
 
 ## Architecture (V2 — in-process)
 
@@ -70,15 +79,69 @@ Why in-process instead of the V1 stdio MCP client:
 Everything that mutates state (vault repair, code update) stays gated
 behind an explicit confirmation dialog — a hard project rule.
 
+## Reliable engine bootstrap (v0.8.3+)
+
+The installer ships a self-contained engine bootstrap orchestrated by
+`build/bootstrap_engine.py` (run once elevated at install time):
+
+1. Patch `python*._pth` so `Lib/site-packages` + `Scripts` join
+   `sys.path` and `import site` is enabled.
+2. Run `get-pip.py --prefix={engine}` so pip lands at
+   `engine/Lib/site-packages/` and entry points at `engine/Scripts/`
+   (not at the embeddable's default `engine/python/...`).
+3. `pip install --no-index --find-links wheels --prefix={engine}
+   memory-kit-mcp` — fully offline.
+4. Copy `pywin32_system32/*.dll` next to `python.exe` so
+   `import pywintypes` resolves under the embeddable interpreter.
+5. Merge every `Lib/site-packages/*.pth` into the main
+   `python*._pth` because the embeddable's isolated mode bypasses
+   `.pth` scanning (pywin32 needs `win32`, `win32/lib`, `Pythonwin`).
+6. Verify `engine/Scripts/memory-kit-mcp.exe` exists; the Inno
+   `CurStepChanged(ssPostInstall)` hook aborts the install with a
+   clear MsgBox if it doesn't, so users never reach a wizard against
+   a half-installed engine.
+
+On uninstall the `[UninstallDelete]` block wipes the runtime-generated
+content (`engine/Lib/`, `engine/Scripts/`, `engine/python/` —
+including the pywin32 DLLs we copied — `__pycache__/`, ad-hoc `.pth`
+edits) so nothing leaks under Program Files. `CurUninstallStepChanged`
+also strips the engine `Scripts/` directory from the HKLM `Path`
+value (Inno's [Registry] entry uses `preservestringtype noerror`
+which doesn't carry `uninsdeletevalue`). The taskkill step now also
+terminates any `memory-kit-mcp.exe` instances spawned by the user's
+LLM CLIs, so file locks never block the cleanup.
+
 ## Versioning
 
 `sb-desktop` ships on its own cadence. Tags follow the pattern
-`sb-desktop-vX.Y.Z` (e.g. `sb-desktop-v0.7.0`). The kit (`memory-kit-mcp`)
+`sb-desktop-vX.Y.Z` (e.g. `sb-desktop-v0.8.7`). The kit (`memory-kit-mcp`)
 keeps its own `vX.Y.Z` tag scheme.
 
 The desktop app talks to **any** kit version compatible with the MCP
 protocol contract it expects (`2024-11-05`). When the kit ships a
 breaking protocol change, the desktop app gets a corresponding bump.
+
+## Cross-OS PATH integration (v0.8+)
+
+The engine binary (`memory-kit-mcp`) must be reachable from every
+process that needs it — terminal CLIs (Claude Code, Codex, Gemini
+CLI…) **and** GUI apps (Claude Desktop, IDE plugins). The desktop
+app handles this automatically per-OS:
+
+| OS | System install | User install |
+|---|---|---|
+| **Windows** | `HKLM\…\Environment\Path` (admin) → `WM_SETTINGCHANGE` broadcast | `HKCU\Environment\PATH` → broadcast |
+| **macOS / Linux** | symlink in `/usr/local/bin/` (root) | symlink in `~/.local/bin/` + managed block in `~/.bashrc` / `~/.zshrc` |
+
+POSIX uses the symlink layer specifically so GUI apps see the
+binary — launchd / systemd-user processes never source shell rc
+files, so a `PATH=` line in `.zshrc` alone doesn't help Claude
+Desktop on macOS. The rc-file block remains a safety net for
+non-login shells.
+
+If the elevated layer can't be written (no admin/root), the
+installer falls back to the per-user layer so the current user at
+least retains access.
 
 ## Multi-user / RDP (v0.7+)
 
