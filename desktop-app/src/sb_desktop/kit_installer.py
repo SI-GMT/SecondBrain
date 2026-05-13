@@ -59,6 +59,7 @@ Each step returns a small status object the wizard renders inline.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -95,7 +96,13 @@ ProgressCallback = Callable[[str], None] | None
 
 @dataclass
 class LlmCliInfo:
-    """One LLM client we know how to wire MCP into."""
+    """One LLM client we know how to wire MCP into.
+
+    ``binary_name`` is the primary executable name we probe; alt names
+    in ``binary_aliases`` cover the same CLI shipped under a different
+    bin (e.g. ``gh-copilot`` next to ``gh``, ``codex.cmd`` on Windows
+    when installed via npm).
+    """
 
     identifier: str
     label: str
@@ -103,8 +110,11 @@ class LlmCliInfo:
     config_writer: str  # 'json' | 'codex-toml' | 'vibe-toml'
     config_path_segments: tuple[str, ...]
     binary_name: str | None = None
+    binary_aliases: tuple[str, ...] = ()
+    npm_package: str | None = None
     detection_segments: tuple[tuple[str, ...], ...] = ()
     binary_on_path: bool = False
+    binary_path: Path | None = None
     config_present: bool = False
     config_path: Path | None = None
 
@@ -114,7 +124,12 @@ class LlmCliInfo:
 
 
 def _cli_targets() -> list[LlmCliInfo]:
-    """Canonical list — same set deploy.ps1 wires."""
+    """Canonical list — same set deploy.ps1 wires.
+
+    ``npm_package`` declarations cover the case where the CLI was
+    installed via ``npm install -g …`` and lives in the user's npm
+    global prefix rather than on the system PATH.
+    """
     return [
         LlmCliInfo(
             identifier="claude-code",
@@ -123,6 +138,8 @@ def _cli_targets() -> list[LlmCliInfo]:
             config_writer="json",
             config_path_segments=(".claude.json",),
             binary_name="claude",
+            binary_aliases=("claude.cmd", "claude.exe", "claude.ps1"),
+            npm_package="@anthropic-ai/claude-code",
             detection_segments=((".claude",), (".claude.json",)),
         ),
         LlmCliInfo(
@@ -144,6 +161,8 @@ def _cli_targets() -> list[LlmCliInfo]:
             config_writer="codex-toml",
             config_path_segments=(".codex", "config.toml"),
             binary_name="codex",
+            binary_aliases=("codex.cmd", "codex.exe"),
+            npm_package="@openai/codex",
             detection_segments=((".codex",),),
         ),
         LlmCliInfo(
@@ -153,6 +172,8 @@ def _cli_targets() -> list[LlmCliInfo]:
             config_writer="json",
             config_path_segments=(".gemini", "settings.json"),
             binary_name="gemini",
+            binary_aliases=("gemini.cmd", "gemini.exe", "gemini.ps1"),
+            npm_package="@google/gemini-cli",
             detection_segments=((".gemini",),),
         ),
         LlmCliInfo(
@@ -162,6 +183,8 @@ def _cli_targets() -> list[LlmCliInfo]:
             config_writer="vibe-toml",
             config_path_segments=(".vibe", "config.toml"),
             binary_name="vibe",
+            binary_aliases=("vibe.cmd", "vibe.exe"),
+            npm_package="@mistralai/vibe-cli",
             detection_segments=((".vibe",),),
         ),
         LlmCliInfo(
@@ -171,6 +194,18 @@ def _cli_targets() -> list[LlmCliInfo]:
             config_writer="json",
             config_path_segments=(),  # resolved per-OS
             binary_name="gh",
+            # ``gh-copilot`` ships as a standalone bin in some installs;
+            # ``copilot`` is the newer top-level command on GH Copilot CLI v1+.
+            binary_aliases=(
+                "gh.exe",
+                "gh.cmd",
+                "gh-copilot",
+                "gh-copilot.exe",
+                "copilot",
+                "copilot.exe",
+                "copilot.cmd",
+            ),
+            npm_package="@github/copilot-cli",
             detection_segments=(
                 ("AppData", "Local", "github-copilot"),
                 (".config", "github-copilot"),
@@ -205,22 +240,185 @@ def _resolve_config_path(cli: LlmCliInfo) -> Path | None:
     return None
 
 
+def _npm_global_bin_dirs() -> list[Path]:
+    """Best-effort enumeration of NPM global ``bin`` directories.
+
+    Many LLM CLIs ship via ``npm install -g`` (Claude Code, Gemini CLI,
+    Codex CLI, Copilot CLI, …) and land outside the default PATH on
+    many systems — especially fresh Windows boxes where ``%APPDATA%
+    \\npm`` isn't on PATH yet.
+
+    Probes, in order:
+
+    1. ``npm config get prefix`` (canonical answer) — synchronous
+       subprocess, ~50 ms when ``npm`` is on PATH; otherwise skipped.
+    2. Common defaults: ``%APPDATA%\\npm`` (Windows), ``~/.npm-global``,
+       ``~/.npm-global/bin``, ``/usr/local/bin`` (POSIX system NPM),
+       ``/opt/homebrew/bin`` (Apple Silicon Homebrew).
+    3. Any explicit ``NPM_CONFIG_PREFIX`` env var override.
+
+    Returns absolute directories that actually exist on disk —
+    de-duplicated and ordered so the highest-precedence probe wins.
+    """
+    home = Path.home()
+    raw: list[Path] = []
+
+    npm_path = shutil.which("npm") or shutil.which("npm.cmd")
+    if npm_path:
+        try:
+            completed = subprocess.run(
+                [npm_path, "config", "get", "prefix"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
+                **_silent_subprocess_kwargs(),
+            )
+            if completed.returncode == 0:
+                prefix = Path(completed.stdout.strip())
+                if sys.platform == "win32":
+                    raw.append(prefix)  # npm.cmd lives directly under prefix
+                else:
+                    raw.append(prefix / "bin")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    env_prefix = os.environ.get("NPM_CONFIG_PREFIX")
+    if env_prefix:
+        p = Path(env_prefix)
+        raw.append(p if sys.platform == "win32" else p / "bin")
+
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            raw.append(Path(appdata) / "npm")
+    else:
+        raw.extend([
+            home / ".npm-global" / "bin",
+            home / ".npm-packages" / "bin",
+            Path("/usr/local/bin"),
+            Path("/opt/homebrew/bin"),
+            Path("/opt/local/bin"),
+        ])
+
+    seen: set[str] = set()
+    out: list[Path] = []
+    for candidate in raw:
+        if not candidate:
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if resolved.is_dir():
+            out.append(resolved)
+    return out
+
+
+def _alt_install_dirs() -> list[Path]:
+    """Common non-NPM install dirs worth probing for CLI binaries.
+
+    Pure-platform installers (Anthropic's macOS pkg, GitHub CLI's
+    Windows MSI, Homebrew, …) sometimes drop binaries outside the
+    user's PATH on first install. We probe these too so the wizard
+    sees the CLI even before the user has refreshed their shell.
+    """
+    home = Path.home()
+    out: list[Path] = []
+    if sys.platform == "win32":
+        for env in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+            base = os.environ.get(env)
+            if base:
+                out.extend([
+                    Path(base) / "GitHub CLI",
+                    Path(base) / "Programs" / "Claude",
+                ])
+        out.append(home / "AppData" / "Local" / "Programs" / "claude")
+    elif sys.platform == "darwin":
+        out.extend([
+            Path("/Applications/Claude.app/Contents/MacOS"),
+            Path("/usr/local/bin"),
+            Path("/opt/homebrew/bin"),
+        ])
+    else:
+        out.extend([
+            Path("/usr/local/bin"),
+            Path("/usr/bin"),
+            home / ".local" / "bin",
+        ])
+    return [p for p in out if p.is_dir()]
+
+
+def _find_binary(cli: LlmCliInfo, extra_dirs: list[Path]) -> Path | None:
+    """Return the absolute path of the CLI binary if findable.
+
+    Search order:
+
+    1. ``shutil.which`` against the primary name (PATH-respecting).
+    2. ``shutil.which`` against each alias (covers ``.cmd`` / ``.exe``
+       suffixes Windows needs to disambiguate, plus the ``copilot``
+       alias for GitHub Copilot CLI v1+).
+    3. Direct probe of ``extra_dirs`` (NPM globals + alt install
+       roots) for the primary and aliases.
+    """
+    if not cli.binary_name:
+        return None
+
+    candidates = [cli.binary_name, *cli.binary_aliases]
+    for name in candidates:
+        hit = shutil.which(name)
+        if hit:
+            return Path(hit)
+
+    for directory in extra_dirs:
+        for name in candidates:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate.resolve()
+    return None
+
+
 def detect_llm_clis() -> list[LlmCliInfo]:
-    """Run the install detection heuristics and return enriched info."""
+    """Run the install detection heuristics and return enriched info.
+
+    Detection sources, combined:
+
+    * Direct binary on PATH + aliases (``shutil.which`` for both the
+      canonical name and platform variants like ``claude.cmd`` /
+      ``claude.exe``).
+    * NPM global bin directories (``npm config get prefix`` +
+      ``%APPDATA%\\npm`` / ``~/.npm-global/bin`` / …) so users who
+      installed via ``npm install -g`` are picked up even when their
+      shell PATH lags.
+    * Common alt install dirs (Program Files\\GitHub CLI,
+      ``/Applications/Claude.app/Contents/MacOS``, ``/opt/homebrew/bin``,
+      …).
+    * Home-directory probes (``~/.claude``, ``~/.codex``, …) — the
+      strongest signal a CLI was actually used at least once.
+
+    A CLI counts as ``installed`` if EITHER the binary was found OR
+    a config / home directory exists for it.
+    """
     home = Path.home()
     targets = _cli_targets()
+    extra_dirs = _npm_global_bin_dirs() + _alt_install_dirs()
     for cli in targets:
-        if cli.binary_name:
-            cli.binary_on_path = bool(shutil.which(cli.binary_name))
+        binary_path = _find_binary(cli, extra_dirs)
+        if binary_path is not None:
+            cli.binary_on_path = True
+            cli.binary_path = binary_path
         for segments in cli.detection_segments:
             candidate = home.joinpath(*segments)
             if candidate.is_dir() or candidate.is_file():
                 cli.config_present = True
                 cli.config_path = candidate
                 break
-        # The "config_path" we store on the info is the detection probe; the
-        # actual file we write to is computed separately in
-        # ``_resolve_config_path`` so it always lands at the canonical path.
     return targets
 
 

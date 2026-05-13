@@ -23,9 +23,21 @@ def test_ensure_vault_creates_dir(tmp_path: Path):
     assert target.is_dir()
 
 
+def _isolate_filesystem_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin every non-shutil detection source to an empty result.
+
+    detect_llm_clis now also walks NPM globals and platform alt-dirs;
+    tests want to control detection purely via the ``which`` mock and
+    ``tmp_path`` home, so we silence the filesystem probes.
+    """
+    monkeypatch.setattr(kit_installer, "_npm_global_bin_dirs", lambda: [])
+    monkeypatch.setattr(kit_installer, "_alt_install_dirs", lambda: [])
+
+
 def test_detect_llm_clis_no_installs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(kit_installer.shutil, "which", lambda _name: None)
     monkeypatch.setattr(kit_installer.Path, "home", classmethod(lambda cls: tmp_path))
+    _isolate_filesystem_probes(monkeypatch)
     results = kit_installer.detect_llm_clis()
     identifiers = {r.identifier for r in results}
     assert {
@@ -46,9 +58,29 @@ def test_detect_llm_clis_picks_up_binary(monkeypatch: pytest.MonkeyPatch, tmp_pa
         "which",
         lambda name: "/usr/bin/claude" if name == "claude" else None,
     )
+    _isolate_filesystem_probes(monkeypatch)
     results = {r.identifier: r for r in kit_installer.detect_llm_clis()}
     assert results["claude-code"].binary_on_path is True
     assert results["claude-code"].installed is True
+
+
+def test_detect_llm_clis_picks_up_npm_global(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A CLI installed under NPM globals must be detected even when off PATH."""
+    monkeypatch.setattr(kit_installer.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(kit_installer.Path, "home", classmethod(lambda cls: tmp_path))
+    npm_dir = tmp_path / "npm"
+    npm_dir.mkdir()
+    # Mimic Windows-style npm-global drop: ``gemini.cmd`` shim alongside
+    # other tools, none of which are on PATH.
+    (npm_dir / "gemini.cmd").write_text("@echo gemini", encoding="utf-8")
+    monkeypatch.setattr(kit_installer, "_npm_global_bin_dirs", lambda: [npm_dir])
+    monkeypatch.setattr(kit_installer, "_alt_install_dirs", lambda: [])
+
+    results = {r.identifier: r for r in kit_installer.detect_llm_clis()}
+    assert results["gemini-cli"].binary_on_path is True
+    assert results["gemini-cli"].binary_path == npm_dir / "gemini.cmd"
 
 
 def test_detect_llm_clis_picks_up_config_dir(
@@ -56,6 +88,7 @@ def test_detect_llm_clis_picks_up_config_dir(
 ):
     monkeypatch.setattr(kit_installer.shutil, "which", lambda _name: None)
     monkeypatch.setattr(kit_installer.Path, "home", classmethod(lambda cls: tmp_path))
+    _isolate_filesystem_probes(monkeypatch)
     (tmp_path / ".codex").mkdir()
     results = {r.identifier: r for r in kit_installer.detect_llm_clis()}
     assert results["codex"].config_present is True
