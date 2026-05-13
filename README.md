@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/secondbrain-lockup.svg" alt="SecondBrain" width="380">
+  <img src="docs/assets/SecondBrain-lockup-horizontal-dark.png" alt="SecondBrain" width="380">
 </p>
 
 > **Une mémoire persistante pour vos agents LLM.** Ne re-briefez plus jamais Claude, Gemini, Codex ou Mistral. Le contexte de vos projets vous suit d'une session à l'autre — et même d'un LLM à l'autre.
