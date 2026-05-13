@@ -26,9 +26,10 @@ def _make_obsidian_style_adapter(root: Path) -> Path:
     return root
 
 
-# Expected base-structure file count: vault/index.md + 3 zone readmes
-# (archives, projets, inbox — perso has no readme by design).
-BASE_SCAFFOLD_FILES = 4
+# Expected base-structure file count: vault/index.md + one index per
+# canonical zone (00-inbox, 10-episodes, 20-knowledge, 30-procedures,
+# 40-principles, 50-goals, 60-people, 70-cognition, 99-meta).
+BASE_SCAFFOLD_FILES = 1 + 9
 
 
 def test_scaffold_creates_vault_and_copies_files(tmp_path: Path):
@@ -39,10 +40,10 @@ def test_scaffold_creates_vault_and_copies_files(tmp_path: Path):
 
     assert vault.is_dir()
     assert (vault / "index.md").is_file()
-    assert (vault / "archives" / "index.md").is_file()
-    assert (vault / "projets" / "index.md").is_file()
-    assert (vault / "inbox" / "index.md").is_file()
-    assert (vault / "perso").is_dir()
+    # Every canonical zone has its dir + index.md hub.
+    for slug, _display, _body in vault_setup.VAULT_ZONES:
+        assert (vault / slug).is_dir(), f"missing zone dir {slug}"
+        assert (vault / slug / "index.md").is_file(), f"missing zone index {slug}"
     assert (vault / ".obsidian" / "graph.json").is_file()
     plugin = vault / ".obsidian" / "plugins" / "obsidian-front-matter-title-plugin" / "data.json"
     assert plugin.is_file()
@@ -109,15 +110,17 @@ def test_migrate_moves_content_then_scaffolds(tmp_path: Path):
     adapter = _make_obsidian_style_adapter(tmp_path / "adapter")
     old = tmp_path / "old-vault"
     new = tmp_path / "new-vault"
-    (old / "archives").mkdir(parents=True)
-    (old / "archives" / "session-1.md").write_text("hello", encoding="utf-8")
+    (old / "10-episodes").mkdir(parents=True)
+    (old / "10-episodes" / "session-1.md").write_text("hello", encoding="utf-8")
     (old / "index.md").write_text("# Index", encoding="utf-8")
 
     result = vault_setup.setup_vault(
         new, old_vault=old, obsidian_style_dir=adapter
     )
 
-    assert (new / "archives" / "session-1.md").read_text(encoding="utf-8") == "hello"
+    assert (
+        new / "10-episodes" / "session-1.md"
+    ).read_text(encoding="utf-8") == "hello"
     # Migrated index.md must be preserved as-is (idempotent base scaffold
     # never overwrites an existing file).
     assert (new / "index.md").read_text(encoding="utf-8") == "# Index"
@@ -125,10 +128,11 @@ def test_migrate_moves_content_then_scaffolds(tmp_path: Path):
     assert not old.exists()  # old folder cleaned up
     assert result.action == "migrated"
     assert result.moved_entries == 2
-    # Migration moved index.md + archives/ over. Subsequent scaffold then
-    # creates the missing zone readmes (archives/index.md, projets/index.md,
-    # inbox/index.md) and the 2 Obsidian files — vault index.md is preserved.
-    assert result.scaffold_files == 2 + 3
+    # Migration moved index.md + 10-episodes/ over. Subsequent scaffold
+    # creates 10-episodes/index.md (missing in old) + the other 8 zone
+    # index files + 2 Obsidian config files. The vault root index.md is
+    # preserved as-is.
+    assert result.scaffold_files == 2 + 9
 
 
 def test_migrate_noop_when_paths_equal(tmp_path: Path):
@@ -158,6 +162,51 @@ def test_migrate_skips_collisions_without_overwriting(tmp_path: Path):
     assert (new / "archives" / "x.md").read_text(encoding="utf-8") == "target"
     assert (old / "archives" / "x.md").exists()
     assert result.skipped_files >= 1
+
+
+def test_audit_reports_missing_zones(tmp_path: Path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    # Partial scaffold: vault root index.md + one zone only.
+    (vault / "index.md").write_text("# x", encoding="utf-8")
+    (vault / "00-inbox").mkdir()
+    (vault / "00-inbox" / "index.md").write_text("# inbox", encoding="utf-8")
+    # Add a non-canonical dir so the audit surfaces it.
+    (vault / "old-archives").mkdir()
+
+    audit = vault_setup.audit_vault_structure(vault)
+    assert audit.needs_repair is True
+    assert audit.root_index_missing is False
+    assert "00-inbox" not in audit.missing_zone_dirs
+    assert "10-episodes" in audit.missing_zone_dirs
+    assert "old-archives" in audit.non_canonical_top_level
+
+
+def test_audit_clean_vault(tmp_path: Path):
+    vault = tmp_path / "vault"
+    vault_setup.scaffold_vault(vault, obsidian_style_dir=None)
+    audit = vault_setup.audit_vault_structure(vault)
+    assert audit.needs_repair is False
+    assert audit.missing_zone_dirs == []
+    assert audit.missing_zone_indexes == []
+
+
+def test_repair_vault_structure_idempotent(tmp_path: Path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    # One zone present + custom file under it.
+    (vault / "10-episodes").mkdir()
+    (vault / "10-episodes" / "user.md").write_text("hello", encoding="utf-8")
+
+    first = vault_setup.repair_vault_structure(vault)
+    assert first.scaffold_files > 0
+    # User file preserved.
+    assert (vault / "10-episodes" / "user.md").read_text(encoding="utf-8") == "hello"
+    audit = vault_setup.audit_vault_structure(vault)
+    assert audit.needs_repair is False
+
+    second = vault_setup.repair_vault_structure(vault)
+    assert second.scaffold_files == 0  # everything already present
 
 
 def test_setup_vault_creates_target_without_adapter(tmp_path: Path):

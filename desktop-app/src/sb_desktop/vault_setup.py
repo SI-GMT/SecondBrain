@@ -133,93 +133,135 @@ def _backup_path(target: Path) -> Path:
     return target.with_name(f"{target.name}.bak-pre-style-{stamp}")
 
 
-VAULT_BASE_FOLDERS = ("archives", "projets", "perso", "inbox")
+# Canonical SecondBrain zone layout — must stay aligned with
+# ``memory_kit_mcp.health.scan.ZONES``. The kit emits a
+# ``missing-zone-index`` health finding when a zone dir exists without
+# an ``index.md``, so we ship one for every zone we create here.
+VAULT_ZONES: tuple[tuple[str, str, str], ...] = (
+    (
+        "00-inbox",
+        "Inbox",
+        "Catch-all zone for documents ingested via `/mem-doc` and atoms\n"
+        "not yet classified into a project or domain. The kit either\n"
+        "auto-classifies them or surfaces them in `/mem-list` for manual\n"
+        "reclassification (`/mem-reclass`).",
+    ),
+    (
+        "10-episodes",
+        "Episodes",
+        "Project- and domain-bound history. Each project lives under\n"
+        "`projects/{slug}/` with `context.md`, `history.md` and an\n"
+        "`archives/` folder holding the immutable per-session entries.\n"
+        "Domains use `domains/{slug}/` with the same shape.",
+    ),
+    (
+        "20-knowledge",
+        "Knowledge",
+        "Transverse knowledge atoms (notes, snippets, references) that\n"
+        "are not tied to a single project or session.",
+    ),
+    (
+        "30-procedures",
+        "Procedures",
+        "Reusable procedures, checklists and runbooks the agent should\n"
+        "follow consistently across sessions.",
+    ),
+    (
+        "40-principles",
+        "Principles",
+        "Standing instructions and design principles. The LLM treats\n"
+        "these as ground truth when reasoning across projects.",
+    ),
+    (
+        "50-goals",
+        "Goals",
+        "Long-running objectives and outcomes. Reviewed during\n"
+        "`/mem-recall` to anchor the session against the bigger picture.",
+    ),
+    (
+        "60-people",
+        "People",
+        "Person cards documenting colleagues, clients and stakeholders.\n"
+        "Surfaced when their names appear in the conversation.",
+    ),
+    (
+        "70-cognition",
+        "Cognition",
+        "Meta-cognitive notes about how the user thinks, recurring biases\n"
+        "and feedback patterns. The agent adapts its style accordingly.",
+    ),
+    (
+        "99-meta",
+        "Meta",
+        "Vault meta-state: index, statistics, archeo manifests — the\n"
+        "kit's own bookkeeping. Rarely edited by hand.",
+    ),
+)
+
 
 VAULT_INDEX_BODY = """---
-title: SecondBrain — Vault index
+title: SecondBrain Vault
 type: index
-display: SecondBrain — Vault
+display: SecondBrain Vault
 ---
 
-# SecondBrain — your second brain vault
+# SecondBrain - your second brain vault
 
-This folder is your **persistent memory** for every LLM agent connected
+This folder is your persistent memory for every LLM agent connected
 to SecondBrain (Claude Code, Codex, Gemini CLI, Mistral Vibe, GitHub
-Copilot CLI, Claude Desktop, …). Anything the agents archive lands here
-in plain Markdown — open it in Obsidian, in your favourite text editor,
-or `grep` through it; it's just files.
+Copilot CLI, Claude Desktop). Anything the agents archive lands here
+in plain Markdown - open it in Obsidian, in your favourite editor, or
+grep through it; it is just files.
 
 ## Layout
 
-| Folder       | Purpose                                                                 |
-|--------------|-------------------------------------------------------------------------|
-| `archives/`  | Timestamped, immutable session archives. One per `/mem-archive` call.   |
-| `projets/`   | Project-specific living context (`{slug}/context.md`, `history.md`).   |
-| `perso/`     | Personal notes / personae / principles outside any single project.      |
-| `inbox/`     | Catch-all for ingested documents (`/mem-doc`) before classification.    |
+| Zone               | Purpose                                                                |
+|--------------------|------------------------------------------------------------------------|
+| `00-inbox/`        | Catch-all for ingested documents before classification.                |
+| `10-episodes/`     | Project- and domain-bound history (context, archives, timeline).       |
+| `20-knowledge/`    | Transverse knowledge atoms unrelated to a single project.              |
+| `30-procedures/`   | Reusable procedures and runbooks.                                      |
+| `40-principles/`   | Standing instructions and design principles.                           |
+| `50-goals/`        | Long-running objectives.                                               |
+| `60-people/`       | Person cards.                                                          |
+| `70-cognition/`    | Meta-cognitive notes about how the user thinks.                        |
+| `99-meta/`         | Kit-side meta-state (index, statistics, manifests).                    |
 
 ## First steps
 
-1. Talk to your LLM agent normally — it can already write here.
+1. Talk to your LLM agent normally - it can already write here.
 2. Trigger `/mem-archive` at the end of a session to capture the state.
 3. Run `/mem-recall` at the start of the next session to reload context.
 4. Browse this folder in Obsidian to visualise the knowledge graph.
 
-The desktop tray monitors this vault and surfaces health findings in the
-notification icon. You never need to edit files here by hand.
+The desktop tray monitors this vault and surfaces health findings in
+the notification icon. You never need to edit files here by hand.
 """
 
-VAULT_INBOX_README = """---
-title: Inbox
-type: zone
-display: Inbox
----
 
-# Inbox
-
-Catch-all zone for documents ingested via `/mem-doc` and atoms that
-haven't been classified into a project or domain yet. The kit will
-either auto-classify them or surface them in `/mem-list` so you can
-reclass them with `/mem-reclass`.
-"""
-
-VAULT_ARCHIVES_README = """---
-title: Archives
-type: zone
-display: Archives
----
-
-# Archives
-
-Timestamped, immutable archives — one per `/mem-archive` call. Each
-file documents a single session: what was decided, what shipped, what's
-next. Never edit by hand; the kit treats them as ground truth.
-"""
-
-VAULT_PROJETS_README = """---
-title: Projects
-type: zone
-display: Projects
----
-
-# Projects
-
-Living per-project state. Each project lives under `{slug}/` and holds:
-
-* `context.md` — mutable snapshot of the project's current state.
-* `history.md` — chronological timeline of archived sessions.
-* `index.md` — entry point linked from this folder's index.
-
-Create new projects implicitly by archiving a session under a project
-name; the kit scaffolds the folder automatically.
-"""
+def _zone_index_body(slug: str, display: str, body: str) -> str:
+    """Render the canonical frontmatter + body for a zone's ``index.md``."""
+    return (
+        "---\n"
+        f"title: {display}\n"
+        "type: zone\n"
+        f"display: {display}\n"
+        f"slug: {slug}\n"
+        "---\n\n"
+        f"# {display}\n\n"
+        f"{body}\n"
+    )
 
 
 def _scaffold_base_structure(vault: Path) -> int:
-    """Lay out the canonical SecondBrain folder structure under ``vault``.
+    """Lay out the canonical SecondBrain zone structure under ``vault``.
 
-    Idempotent — never overwrites existing content. Returns the number
-    of fresh files written so the caller can report a summary.
+    Creates every zone listed in :data:`VAULT_ZONES` (numbered prefix,
+    aligned with ``memory_kit_mcp.health.scan.ZONES``) and writes an
+    ``index.md`` hub per zone so the kit's ``missing-zone-index``
+    health check stays clean from day one. Idempotent - never
+    overwrites an existing file. Returns the number of fresh files
+    written.
     """
     written = 0
     index = vault / "index.md"
@@ -227,20 +269,16 @@ def _scaffold_base_structure(vault: Path) -> int:
         index.write_text(VAULT_INDEX_BODY, encoding="utf-8", newline="\n")
         written += 1
 
-    zone_readmes: dict[str, str] = {
-        "archives": VAULT_ARCHIVES_README,
-        "projets": VAULT_PROJETS_README,
-        "inbox": VAULT_INBOX_README,
-    }
-    for folder in VAULT_BASE_FOLDERS:
-        target_dir = vault / folder
-        target_dir.mkdir(parents=True, exist_ok=True)
-        readme_body = zone_readmes.get(folder)
-        if readme_body is None:
-            continue
-        readme = target_dir / "index.md"
-        if not readme.exists():
-            readme.write_text(readme_body, encoding="utf-8", newline="\n")
+    for slug, display, body in VAULT_ZONES:
+        zone_dir = vault / slug
+        zone_dir.mkdir(parents=True, exist_ok=True)
+        zone_index = zone_dir / "index.md"
+        if not zone_index.exists():
+            zone_index.write_text(
+                _zone_index_body(slug, display, body),
+                encoding="utf-8",
+                newline="\n",
+            )
             written += 1
     return written
 
@@ -252,18 +290,17 @@ def scaffold_vault(
 
     Two layers:
 
-    1. **Base structure** — ``index.md`` welcome page + the standard
-       zone folders (``archives/``, ``projets/``, ``perso/``, ``inbox/``)
-       each with their own ``index.md`` describing their purpose.
-       Idempotent: never overwrites a file the user already has.
-    2. **Obsidian config** — mirrors ``obsidian_style_dir`` (the kit's
-       ``adapters/obsidian-style/``) into ``vault/.obsidian/`` with
-       the same canonical-marker discipline as ``deploy.ps1``'s
+    1. **Base structure** - canonical zone folders (``00-inbox``,
+       ``10-episodes``, … ``99-meta``) each with their own
+       ``index.md`` hub, plus a root ``index.md`` welcome page.
+       Idempotent: never overwrites an existing file.
+    2. **Obsidian config** - mirrors ``obsidian_style_dir`` (the
+       kit's ``adapters/obsidian-style/``) into ``vault/.obsidian/``
+       with the same canonical-marker discipline as ``deploy.ps1``'s
        ``Deploy-ObsidianStyle`` bridge.
 
-    If ``obsidian_style_dir`` is missing the vault is still scaffolded
-    — the kit works fine without the graph palette, the user just
-    doesn't get the recommended colour groups out of the box.
+    If ``obsidian_style_dir`` is missing the vault is still
+    scaffolded - the kit works fine without the graph palette.
     """
     vault.mkdir(parents=True, exist_ok=True)
     base_written = _scaffold_base_structure(vault)
@@ -334,6 +371,127 @@ def scaffold_vault(
             + (f", {backed_up} backed up" if backed_up else "")
         ),
     )
+
+
+@dataclass
+class VaultStructureAudit:
+    """Snapshot of which canonical zones / hubs are missing from a vault.
+
+    Returned by :func:`audit_vault_structure`. The Settings and Scan
+    dialogs render the missing list and enable a "Repair structure"
+    button when any element is missing.
+    """
+
+    vault: Path
+    missing_zone_dirs: list[str]
+    missing_zone_indexes: list[str]
+    root_index_missing: bool
+    non_canonical_top_level: list[str]  # info-only, surfaced for user awareness
+
+    @property
+    def needs_repair(self) -> bool:
+        return (
+            self.root_index_missing
+            or bool(self.missing_zone_dirs)
+            or bool(self.missing_zone_indexes)
+        )
+
+    def summary(self) -> str:
+        if not self.needs_repair:
+            return "Vault structure: complete."
+        parts: list[str] = []
+        if self.root_index_missing:
+            parts.append("root index.md missing")
+        if self.missing_zone_dirs:
+            parts.append(
+                f"{len(self.missing_zone_dirs)} missing zone dir(s)"
+            )
+        if self.missing_zone_indexes:
+            parts.append(
+                f"{len(self.missing_zone_indexes)} missing zone index(es)"
+            )
+        return "Vault structure incomplete: " + ", ".join(parts)
+
+
+# Known non-canonical top-level entries we want to leave alone (Obsidian
+# config + the kit's runtime caches). Anything else surfaced as
+# "non-canonical" prompts the user to consider reclassifying its content.
+_VAULT_NEUTRAL_TOP_LEVEL = {
+    ".obsidian",
+    ".trash",
+    ".memory-kit",
+    "index.md",
+}
+
+
+def audit_vault_structure(vault: Path) -> VaultStructureAudit:
+    """Return which canonical zones / hubs the vault is missing.
+
+    Pure-read: never touches the filesystem beyond ``Path.exists``
+    probes. Safe to call from a UI handler.
+
+    A vault is "complete" when:
+
+    * ``vault/index.md`` exists.
+    * Every zone slug in :data:`VAULT_ZONES` has its directory.
+    * Every present zone directory has its ``index.md`` hub.
+
+    Non-canonical top-level entries are surfaced separately as info
+    only — they are not deleted, but the user may want to reclassify
+    their content via ``/mem-reclass`` after the repair.
+    """
+    missing_dirs: list[str] = []
+    missing_indexes: list[str] = []
+    canonical_slugs = {slug for slug, _, _ in VAULT_ZONES}
+
+    if not vault.is_dir():
+        return VaultStructureAudit(
+            vault=vault,
+            missing_zone_dirs=[s for s, _, _ in VAULT_ZONES],
+            missing_zone_indexes=[],
+            root_index_missing=True,
+            non_canonical_top_level=[],
+        )
+
+    for slug, _display, _body in VAULT_ZONES:
+        zone_dir = vault / slug
+        if not zone_dir.is_dir():
+            missing_dirs.append(slug)
+            continue
+        if not (zone_dir / "index.md").is_file():
+            missing_indexes.append(slug)
+
+    non_canonical: list[str] = []
+    try:
+        for entry in vault.iterdir():
+            name = entry.name
+            if name in _VAULT_NEUTRAL_TOP_LEVEL:
+                continue
+            if name in canonical_slugs:
+                continue
+            non_canonical.append(name)
+    except OSError:
+        pass
+
+    return VaultStructureAudit(
+        vault=vault,
+        missing_zone_dirs=missing_dirs,
+        missing_zone_indexes=missing_indexes,
+        root_index_missing=not (vault / "index.md").is_file(),
+        non_canonical_top_level=sorted(non_canonical),
+    )
+
+
+def repair_vault_structure(
+    vault: Path, *, obsidian_style_dir: Path | None = None
+) -> VaultSetupResult:
+    """Apply :func:`scaffold_vault` to fill in missing canonical pieces.
+
+    Idempotent: existing files are never overwritten. Wraps the same
+    scaffold function used at first-run so the Settings / Scan
+    "Repair structure" buttons converge on the canonical layout.
+    """
+    return scaffold_vault(vault, obsidian_style_dir=obsidian_style_dir)
 
 
 def setup_vault(

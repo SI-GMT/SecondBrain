@@ -31,6 +31,7 @@ from ..config import AppSettings, KitConfig, save_settings
 from ..i18n import t
 from ..kit_installer import detect_llm_clis, find_install_layout, wire_llm_clis
 from ..paths import log_file_path, settings_file_path
+from ..vault_setup import audit_vault_structure, repair_vault_structure
 from ._base import dialog_lifecycle, make_root
 
 _LANGUAGES = [
@@ -207,6 +208,78 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
             row.pack(fill="x", pady=1)
             ttk.Label(row, text=label, width=14).pack(side="left")
             ttk.Label(row, text=value, foreground="#555555").pack(side="left")
+
+    # ---- Vault structure audit ----
+    if kit is not None:
+        struct_box = ttk.LabelFrame(
+            tab_vault, text="Vault structure", padding=8
+        )
+        struct_box.pack(fill="x", pady=(8, 0))
+        struct_status_var = tk.StringVar()
+        struct_detail_var = tk.StringVar()
+        ttk.Label(struct_box, textvariable=struct_status_var).pack(anchor="w")
+        ttk.Label(
+            struct_box,
+            textvariable=struct_detail_var,
+            foreground="#666666",
+            wraplength=560,
+        ).pack(anchor="w", pady=(2, 0))
+
+        struct_btn = ttk.Button(
+            struct_box, text="Repair structure", state="disabled"
+        )
+        struct_btn.pack(anchor="e", pady=(6, 0))
+
+        def _refresh_audit() -> None:
+            audit = audit_vault_structure(kit.vault)
+            struct_status_var.set(audit.summary())
+            if audit.needs_repair:
+                bits: list[str] = []
+                if audit.root_index_missing:
+                    bits.append("missing: index.md")
+                if audit.missing_zone_dirs:
+                    bits.append(
+                        "missing zones: " + ", ".join(audit.missing_zone_dirs)
+                    )
+                if audit.missing_zone_indexes:
+                    bits.append(
+                        "no hub in: " + ", ".join(audit.missing_zone_indexes)
+                    )
+                if audit.non_canonical_top_level:
+                    bits.append(
+                        "non-canonical entries (kept as-is): "
+                        + ", ".join(audit.non_canonical_top_level)
+                    )
+                struct_detail_var.set(" | ".join(bits))
+                struct_btn.configure(state="normal")
+            else:
+                struct_detail_var.set("")
+                struct_btn.configure(state="disabled")
+
+        def _do_repair() -> None:
+            from tkinter import messagebox
+
+            layout = find_install_layout()
+            obsidian_style = (
+                layout.resources_dir / "adapters" / "obsidian-style"
+                if layout is not None
+                else None
+            )
+            result = repair_vault_structure(
+                kit.vault,
+                obsidian_style_dir=(
+                    obsidian_style if obsidian_style and obsidian_style.is_dir()
+                    else None
+                ),
+            )
+            messagebox.showinfo(
+                t("settings.title"),
+                f"Vault structure repaired.\n{result.detail}",
+            )
+            _refresh_audit()
+
+        struct_btn.configure(command=_do_repair)
+        _refresh_audit()
 
     vault_box = ttk.LabelFrame(tab_vault, text="Per-session vault override", padding=8)
     vault_box.pack(fill="x", pady=(8, 0))
