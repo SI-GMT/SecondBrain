@@ -27,7 +27,7 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.10.5"
+#define MyAppVersion     "0.10.6"
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"
@@ -211,17 +211,27 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
     Flags: preservestringtype noerror; Check: IsAdminInstallMode and PathNotAlreadyOnSystem
 
 [Run]
-; System install: bootstrap the engine once at install time (admin
-; context, can write under Program Files). One single Python script
-; orchestrates everything (patch _pth → get-pip → pip install →
-; verify) so a partial state never leaks to the per-user wizard.
-; Per-user install: skip — the wizard handles it on first launch.
+; System install: always re-run the bootstrap on install/upgrade.
+;
+; Why "always" and not gated on a missing binary: Inno's [Files] step
+; overwrites ``engine/python/python312._pth`` with the pristine copy
+; from the embeddable zip on every upgrade. If we only re-bootstrap
+; when the binary is absent, an upgrade keeps the freshly-overwritten
+; (un-patched) ``_pth`` while the [Files] copy resets it — site-
+; packages drop off ``sys.path`` and the engine spawn dies with
+; ``ModuleNotFoundError: memory_kit_mcp``. The bootstrap is
+; idempotent (pip is a no-op on already-installed wheels, _pth patch
+; + pywin32 DLL copy + .pth merge are all "ensure" operations) so a
+; ~10 s re-run on upgrade is cheap insurance.
+;
+; Per-user install: still skipped here — wizard handles it on first
+; launch in the user's writable layout.
 Filename: "{app}\engine\python\python.exe"; \
     Parameters: """{app}\engine\bootstrap_engine.py"""; \
     WorkingDir: "{app}\engine"; \
     Flags: runhidden waituntilterminated; \
     StatusMsg: "{cm:StatusBootstrap}"; \
-    Check: IsAdminInstallMode and NeedsBootstrap
+    Check: IsAdminInstallMode
 
 ; Hard verification — [Code] CurStepChanged at ssPostInstall asserts
 ; that memory-kit-mcp.exe is present on a system install. If absent,
