@@ -190,23 +190,29 @@ def _cli_targets() -> list[LlmCliInfo]:
         LlmCliInfo(
             identifier="copilot-cli",
             label="GitHub Copilot CLI",
-            description="Microsoft's terminal LLM (`gh copilot`).",
+            description="GitHub's terminal LLM (`copilot` / `gh copilot`).",
             config_writer="json",
-            config_path_segments=(),  # resolved per-OS
-            binary_name="gh",
-            # ``gh-copilot`` ships as a standalone bin in some installs;
-            # ``copilot`` is the newer top-level command on GH Copilot CLI v1+.
+            config_path_segments=(),  # resolved per-OS below
+            # The new `copilot` v1+ binary is the canonical Copilot CLI;
+            # the legacy `gh copilot` extension reuses the same config
+            # directory and is still detected for back-compat.
+            binary_name="copilot",
             binary_aliases=(
+                "copilot.exe",
+                "copilot.cmd",
+                "gh",
                 "gh.exe",
                 "gh.cmd",
                 "gh-copilot",
                 "gh-copilot.exe",
-                "copilot",
-                "copilot.exe",
-                "copilot.cmd",
             ),
             npm_package="@github/copilot-cli",
+            # Canonical config dir is ``~/.copilot/`` on every platform
+            # (same source-of-truth deploy.ps1 / deploy.sh use). The
+            # legacy ``AppData\Local\github-copilot`` location was a
+            # gh-copilot extension artefact, kept as a fallback probe.
             detection_segments=(
+                (".copilot",),
                 ("AppData", "Local", "github-copilot"),
                 (".config", "github-copilot"),
             ),
@@ -230,11 +236,16 @@ def _resolve_config_path(cli: LlmCliInfo) -> Path | None:
             )
         return home / ".config" / "Claude" / "claude_desktop_config.json"
     if cli.identifier == "copilot-cli":
-        if sys.platform == "win32":
-            return (
-                home / "AppData" / "Local" / "github-copilot" / "mcp-config.json"
-            )
-        return home / ".config" / "github-copilot" / "mcp-config.json"
+        # Canonical path per kit's deploy.ps1: ~/.copilot/mcp-config.json
+        # (matches the dir GitHub's `copilot` CLI v1+ creates on first
+        # run). ``$COPILOT_HOME`` env override is respected so power
+        # users can move the dir.
+        import os
+
+        override = os.environ.get("COPILOT_HOME")
+        if override:
+            return Path(override) / "mcp-config.json"
+        return home / ".copilot" / "mcp-config.json"
     if cli.config_path_segments:
         return home.joinpath(*cli.config_path_segments)
     return None
@@ -892,8 +903,16 @@ def wire_llm_clis(
             )
             continue
         if cli.config_writer == "json":
+            # Copilot CLI requires extra fields (``type`` + ``tools``)
+            # to actually register the server at runtime; without them
+            # the entry parses but ``copilot mcp list`` ignores it.
+            extras: dict | None = None
+            if cli.identifier == "copilot-cli":
+                extras = {"type": "local", "tools": ["*"]}
             result = mcp_injector.inject_json_mcp_server(
-                target, target_label=cli.label
+                target,
+                target_label=cli.label,
+                extra_entry_fields=extras,
             )
         elif cli.config_writer == "codex-toml":
             result = mcp_injector.inject_codex_mcp_server(

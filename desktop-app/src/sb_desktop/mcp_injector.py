@@ -88,8 +88,16 @@ def inject_json_mcp_server(
     server_name: str = DEFAULT_SERVER_NAME,
     command: str = DEFAULT_COMMAND,
     legacy_names: tuple[str, ...] = LEGACY_SERVER_NAMES,
+    extra_entry_fields: dict | None = None,
 ) -> InjectResult:
-    """Add / update ``mcpServers.{server_name}`` in a JSON config file."""
+    """Add / update ``mcpServers.{server_name}`` in a JSON config file.
+
+    ``extra_entry_fields`` is merged into the per-server entry alongside
+    ``command`` + ``args``. Required by GitHub Copilot CLI which only
+    activates servers carrying ``"type": "local"`` and a ``"tools"``
+    allow-list — without those fields the entry parses but never
+    surfaces in ``copilot mcp list``.
+    """
     created = False
     existing: dict = {}
     if config_path.is_file():
@@ -119,10 +127,19 @@ def inject_json_mcp_server(
             servers.pop(legacy)
             purged_legacy.append(legacy)
 
-    new_entry = {"command": command, "args": []}
+    new_entry: dict = {"command": command, "args": []}
+    if extra_entry_fields:
+        for k, v in extra_entry_fields.items():
+            new_entry[k] = v
 
     current = servers.get(server_name)
-    if isinstance(current, dict) and current.get("command") == command:
+    if (
+        isinstance(current, dict)
+        and current.get("command") == command
+        and all(
+            current.get(k) == v for k, v in (extra_entry_fields or {}).items()
+        )
+    ):
         if purged_legacy:
             try:
                 _atomic_write_text(
