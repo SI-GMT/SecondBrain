@@ -36,6 +36,7 @@
   "settings.save": "Guardar",
   "settings.cancel": "Cancelar",
   "settings.redetect": "Volver a detectar CLI instaladas",
+  "settings.redeploy": "Detectar y conectar MCP en las CLI seleccionadas",
   "settings.detected": "detectada",
   "settings.not_detected": "no detectada",
 

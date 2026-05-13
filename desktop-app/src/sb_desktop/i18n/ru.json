@@ -36,6 +36,7 @@
   "settings.save": "Сохранить",
   "settings.cancel": "Отмена",
   "settings.redetect": "Перепроверить установленные CLI",
+  "settings.redeploy": "Обнаружить и подключить MCP к отмеченным CLI",
   "settings.detected": "найдена",
   "settings.not_detected": "не найдена",
 

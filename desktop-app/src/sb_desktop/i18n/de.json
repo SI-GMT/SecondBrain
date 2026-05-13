@@ -36,6 +36,7 @@
   "settings.save": "Speichern",
   "settings.cancel": "Abbrechen",
   "settings.redetect": "Installierte CLIs erneut erkennen",
+  "settings.redeploy": "MCP-Verkabelung auf markierte CLIs anwenden",
   "settings.detected": "erkannt",
   "settings.not_detected": "nicht erkannt",
 

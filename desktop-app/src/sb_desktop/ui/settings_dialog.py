@@ -29,7 +29,7 @@ from ..autostart import (
 )
 from ..config import AppSettings, KitConfig, save_settings
 from ..i18n import t
-from ..kit_installer import detect_llm_clis
+from ..kit_installer import detect_llm_clis, find_install_layout, wire_llm_clis
 from ..paths import log_file_path, settings_file_path
 from ._base import dialog_lifecycle, make_root
 
@@ -245,9 +245,10 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
     ttk.Label(
         targets_box,
         text=(
-            "Only detected CLIs are pre-ticked. Re-detect after you install "
-            "a new client to refresh the list. Tick a row to ask the next "
-            "Update / installer run to wire it; untick to leave it alone."
+            "Only detected CLIs are pre-ticked. Tick a row to wire it now "
+            "with the button below; untick to leave it alone. The wiring "
+            "is idempotent — clicking again on an already-wired CLI is a "
+            "no-op."
         ),
         foreground="#666666",
         wraplength=560,
@@ -274,9 +275,20 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
 
     _render_target_rows()
 
-    def _redetect_clis() -> None:
+    def _redeploy_clis() -> None:
+        """Re-detect installed CLIs and deploy MCP wiring to ticked rows.
+
+        Single-button "do the right thing" for the user — combines the
+        previous "re-detect" affordance (refreshes badges so newly
+        installed CLIs become visible) and the install-time wire step
+        so the user can pull a freshly installed CLI into SecondBrain
+        without re-running the full installer.
+        """
+        from tkinter import messagebox
+
+        # Step 1 — refresh detection state.
         fresh = _detect_installed_clis()
-        for ident, _ in installed_map.items():
+        for ident in list(installed_map.keys()):
             now_installed = fresh.get(ident, False)
             installed_map[ident] = now_installed
             target_status_vars[ident].set(
@@ -289,8 +301,42 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
             if now_installed and not target_vars[ident].get():
                 target_vars[ident].set(True)
 
+        # Step 2 — wire the ticked subset that is actually installed.
+        layout = find_install_layout()
+        if layout is None:
+            messagebox.showwarning(
+                t("settings.title"),
+                "Install layout could not be resolved — wiring skipped.",
+            )
+            return
+
+        all_clis = detect_llm_clis()
+        wanted_ids = {
+            ident for ident, var in target_vars.items() if var.get()
+        }
+        selected = [
+            cli for cli in all_clis if cli.identifier in wanted_ids and cli.installed
+        ]
+        if not selected:
+            messagebox.showinfo(
+                t("settings.title"),
+                "No detected CLI is ticked — nothing to wire.",
+            )
+            return
+
+        reports = wire_llm_clis(layout, selected)
+        summary_lines: list[str] = []
+        for r in reports:
+            summary_lines.append(f"{r.label}: {r.status}")
+            if r.detail:
+                summary_lines.append(f"    {r.detail}")
+        messagebox.showinfo(
+            t("settings.title"),
+            "MCP wiring run:\n\n" + "\n".join(summary_lines),
+        )
+
     ttk.Button(
-        targets_box, text=t("settings.redetect"), command=_redetect_clis
+        targets_box, text=t("settings.redeploy"), command=_redeploy_clis
     ).pack(anchor="e", pady=(6, 0))
 
     # ---------- Tab 4: About ----------

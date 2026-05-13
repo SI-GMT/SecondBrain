@@ -36,6 +36,7 @@
   "settings.save": "Save",
   "settings.cancel": "Cancel",
   "settings.redetect": "Re-detect installed CLIs",
+  "settings.redeploy": "Detect & wire MCP on ticked CLIs",
   "settings.detected": "detected",
   "settings.not_detected": "not detected",
 

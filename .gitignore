@@ -42,3 +42,9 @@ desktop-app/build/release-kit/
 desktop-app/build/.cache/
 desktop-app/.coverage
 desktop-app/.pytest_cache/
+
+# Generated at build time by build_windows.ps1 from pyproject.toml.
+# Inside a PyInstaller bundle this file is the authoritative source for
+# __version__; in a dev checkout it should not exist (importlib.metadata
+# resolves the editable install version instead).
+desktop-app/src/sb_desktop/_version.py
