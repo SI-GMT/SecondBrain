@@ -27,7 +27,7 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.8.7"
+#define MyAppVersion     "0.8.8"
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"
@@ -67,6 +67,15 @@ DefaultDirName={autopf}\SecondBrain
 DirExistsWarning=auto
 DisableDirPage=no
 UsePreviousAppDir=yes
+
+; Detect & shut down the tray (and any LLM-CLI-spawned engine
+; processes) before file copy. ``force`` skips the modal close prompt
+; — InitializeSetup already showed our own upgrade confirmation, so a
+; second close dialog would be redundant noise. RestartApplications
+; is left off; the postinstall [Run] step relaunches the tray.
+CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll
+RestartApplications=no
 
 DefaultGroupName=SecondBrain
 DisableProgramGroupPage=yes
@@ -189,6 +198,64 @@ Type: filesandordirs; Name: "{app}\app\__pycache__"
 Type: dirifempty;     Name: "{app}"
 
 [Code]
+const
+  UninstallRegKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting("AppId")}_is1';
+
+function _DetectPreviousVersion(var Version: String): Boolean;
+begin
+  // Look for the previous install under both hives — AppId-suffixed
+  // ``_is1`` key is Inno's standard. HKLM first (system install,
+  // most common) then HKCU (per-user install).
+  Result := RegQueryStringValue(
+              HKEY_LOCAL_MACHINE, UninstallRegKey, 'DisplayVersion', Version)
+         or RegQueryStringValue(
+              HKEY_CURRENT_USER, UninstallRegKey, 'DisplayVersion', Version);
+end;
+
+procedure _KillRunningProcesses();
+var
+  ResultCode: Integer;
+begin
+  // Stop the tray + any LLM-CLI-spawned engine sessions BEFORE the
+  // file-copy step runs. ``CloseApplications=force`` catches anything
+  // holding [Files] handles, but we kill explicitly here so the user
+  // gets immediate feedback if they had the tray open.
+  Exec('taskkill.exe', '/IM ' + '{#MyAppExeName}' + ' /F',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/IM memory-kit-mcp.exe /F /T',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function InitializeSetup(): Boolean;
+var
+  PrevVersion, Msg: String;
+begin
+  Result := True;
+  if not _DetectPreviousVersion(PrevVersion) then
+    Exit;  // Fresh install — proceed normally.
+
+  if CompareText(PrevVersion, '{#MyAppVersion}') = 0 then
+    Msg := 'SecondBrain Desktop ' + PrevVersion + ' is already installed.'
+         + #13#10 + #13#10
+         + 'Reinstall the same version?'
+  else
+    Msg := 'SecondBrain Desktop ' + PrevVersion + ' is currently installed.'
+         + #13#10 + #13#10
+         + 'Do you want to update it to version ' + '{#MyAppVersion}' + '?'
+         + #13#10 + #13#10
+         + 'The tray application and any running engine sessions will be '
+         + 'closed automatically. Your vault, settings and MCP wirings '
+         + 'are preserved.';
+
+  if MsgBox(Msg, mbConfirmation, MB_YESNO) = IDNO then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  _KillRunningProcesses();
+end;
+
 function _PythonExePath(): String;
 begin
   Result := ExpandConstant('{app}\engine\python\python.exe');
