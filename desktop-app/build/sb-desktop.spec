@@ -25,14 +25,21 @@ The spec embeds:
 
 # pylint: disable=all
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+import os
 import sys
 from pathlib import Path
 
 block_cipher = None
 project_root = Path(SPECPATH).resolve().parent
 src_root = project_root / "src"
-icon_path = project_root / "build" / "generated-icons" / "app.ico"
+if sys.platform == "darwin":
+    icon_path = project_root / "build" / "generated-icons" / "SecondBrain.icns"
+else:
+    icon_path = project_root / "build" / "generated-icons" / "app.ico"
 icon_arg = str(icon_path) if icon_path.exists() else None
+bundle_version = os.environ.get("SB_DESKTOP_VERSION", "0.0.0")
+bundle_build_number = os.environ.get("SB_DESKTOP_BUILD_NUMBER", "0")
+bundle_min_os = os.environ.get("SB_DESKTOP_MIN_OS", "11.0")
 
 hidden_imports: list[str] = []
 collected_datas: list[tuple[str, str]] = []
@@ -113,3 +120,27 @@ coll = COLLECT(
     upx_exclude=[],
     name="SecondBrainTray",
 )
+
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="SecondBrain.app",
+        icon=icon_arg,
+        bundle_identifier="com.si-gmt.secondbrain.desktop",
+        info_plist={
+            "CFBundleDevelopmentRegion": "en",
+            "CFBundleDisplayName": "SecondBrain",
+            "CFBundleExecutable": "SecondBrainTray",
+            "CFBundleIdentifier": "com.si-gmt.secondbrain.desktop",
+            "CFBundleInfoDictionaryVersion": "6.0",
+            "CFBundleName": "SecondBrain",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": bundle_version,
+            "CFBundleVersion": bundle_build_number,
+            "LSMinimumSystemVersion": bundle_min_os,
+            "LSUIElement": True,
+            "NSHighResolutionCapable": True,
+            "NSPrincipalClass": "NSApplication",
+            "NSHumanReadableCopyright": "© SI-GMT — AGPL-3.0-or-later",
+        },
+    )

@@ -33,7 +33,7 @@ Use one of:
 
 ```bash
 # Option A — homebrew (recommended)
-brew install python@3.12
+brew install python@3.12 python-tk@3.12
 
 # Option B — python.org installer
 # Download from https://www.python.org/downloads/macos/ and run the .pkg.
@@ -46,7 +46,13 @@ Verify:
 
 ```bash
 python3 --version  # → Python 3.12.x
+python3 -c "import tkinter; print(tkinter.TkVersion)"
 ```
+
+`python-tk@3.12` is required with Homebrew Python because the desktop
+first-run wizard and settings dialogs use Tkinter. The build script
+fails early if `_tkinter` is missing, instead of producing a DMG whose
+tray starts but whose dialogs crash.
 
 ### 4. Apple Developer ID certificate (for signed builds)
 
@@ -140,15 +146,17 @@ The script will:
 2. Install the engine + the desktop app in editable mode there.
 3. Render the icon set + `.icns` from `sb_desktop.icons`.
 4. Run PyInstaller against `build/sb-desktop.spec`.
-5. Assemble the `.app` bundle at `desktop-app/dist/SecondBrain.app`.
-6. Substitute `Info.plist.template` with the resolved version /
-   build / `MIN_OS`.
-7. Sign the bundle with `codesign --deep --force --options runtime`.
-8. Wrap the `.app` in a DMG via `hdiutil`.
+5. Let PyInstaller assemble the `.app` bundle at
+   `desktop-app/dist/SecondBrain.app`.
+6. Sign embedded Mach-O payloads, `Python.framework`, then the `.app`
+   bundle with hardened runtime.
+7. Create a DMG staging root containing `SecondBrain.app`, an
+   `Applications` shortcut, and the SecondBrain volume icon.
+8. Wrap that root in a DMG via `hdiutil`.
 9. Sign the DMG itself.
 10. Submit to Apple notary, wait for the result, staple the ticket.
 
-End artifact: `desktop-app/dist/SecondBrainDesktop-0.6.0.dmg`.
+End artifact: `desktop-app/dist/SecondBrainDesktop-<version>.dmg`.
 
 Typical run time on an M-series Mac: 3–6 minutes (notarization is
 the slow part).
@@ -244,6 +252,23 @@ clean reinstall.
 The iconset directory has to contain files named exactly
 `icon_{NN}x{NN}.png`. If `sb_desktop.icons --export` produces a
 different naming, fix the loop in `build_macos.sh` step 2.
+
+### PyInstaller says Tkinter is broken
+
+Install the Tk bridge matching your Python version:
+
+```bash
+brew install python-tk@3.12
+python3 -c "import tkinter; print(tkinter.TkVersion)"
+```
+
+Then remove the stale build venv and rebuild:
+
+```bash
+rm -rf desktop-app/.venv-build
+cd desktop-app
+./build/macos/build_macos.sh --no-sign --no-notarize
+```
 
 ## Architecture parity with the Windows installer
 

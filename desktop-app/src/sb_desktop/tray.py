@@ -14,8 +14,8 @@ Threading model:
 * ``pystray.Icon.run`` blocks the calling thread (typically ``main``).
 * A background ``threading.Thread`` runs the polling loop and pushes
   state onto the icon via ``icon.icon = ...`` and ``icon.menu = ...``.
-* Menu callbacks run on pystray's worker thread; they may open Tk
-  dialogs synchronously (each dialog spins its own ``Tk`` root).
+* Menu callbacks return quickly. Any Tk dialog is opened in a short-lived
+  helper process so Tk does not share pystray's AppKit loop on macOS.
 
 The shared :class:`TrayState` is protected by a re-entrant lock so the
 poller and the action handlers see a coherent snapshot.
@@ -28,7 +28,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,28 +36,14 @@ import pystray
 
 from . import __version__
 from .config import AppSettings, KitConfig, load_kit_config, load_settings
-from .health import HealthRepairReport, HealthReport, repair_vault, scan_vault
 from .i18n import t
 from .icons import render_icon
 from .notifications import notify
 from .status import StatusLevel, StatusSnapshot, probe_status
-from .ui import (
-    ask_confirm,
-    open_logs_viewer,
-    open_settings_dialog,
-    show_repair_report,
-    show_scan_report,
-    show_combined_update_dialog,
-    show_update_progress,
-)
 from .update import (
     CombinedUpdateInfo,
     UpdateCheckResult,
     check_all_updates,
-    check_desktop_update,
-    check_update,
-    plan_update,
-    run_update,
 )
 
 log = logging.getLogger(__name__)
@@ -72,7 +57,9 @@ class TrayState:
     kit: KitConfig | None = None
     status: StatusSnapshot | None = None
     last_update_check: UpdateCheckResult | None = None
+    last_combined_update: CombinedUpdateInfo | None = None
     notified_update_for_version: str | None = None
+    stop_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
@@ -89,6 +76,28 @@ def _open_path_in_filemanager(target: Path) -> None:
             subprocess.run(["xdg-open", str(target)], check=False)
     except Exception as exc:
         log.error("open path failed: %s", exc)
+
+
+def _dialog_command(dialog: str) -> list[str]:
+    """Return a command that opens a single UI dialog in a helper process."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--dialog", dialog]
+    return [sys.executable, "-m", "sb_desktop", "--dialog", dialog]
+
+
+def _launch_dialog(dialog: str) -> None:
+    """Spawn a dialog helper and return immediately to pystray/AppKit."""
+    cmd = _dialog_command(dialog)
+    log.info("launching dialog helper: %s", " ".join(cmd))
+    try:
+        subprocess.Popen(
+            cmd,
+            close_fds=True,
+            start_new_session=(sys.platform != "win32"),
+        )
+    except Exception as exc:
+        log.exception("failed to launch dialog helper %s: %s", dialog, exc)
+        notify("SecondBrain", f"Impossible d'ouvrir la fenêtre: {exc}")
 
 
 def _refresh_icon(icon: pystray.Icon, state: TrayState) -> None:
@@ -117,12 +126,13 @@ def _build_menu(icon: pystray.Icon, state: TrayState) -> pystray.Menu:
         state.status.summary if state.status else t("menu.status.probing")
     )
 
+    update_info = _preferred_update_for_menu(state)
     update_label = t("menu.check_updates")
-    if state.last_update_check is not None and state.last_update_check.update_available:
+    if update_info is not None and update_info.update_available:
         update_label = t(
             "menu.update_available",
-            current=state.last_update_check.current_version,
-            latest=state.last_update_check.latest_version,
+            current=update_info.current_version,
+            latest=update_info.latest_version,
         )
 
     return pystray.Menu(
@@ -133,14 +143,31 @@ def _build_menu(icon: pystray.Icon, state: TrayState) -> pystray.Menu:
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(update_label, _action_update(icon, state)),
         pystray.MenuItem(t("menu.open_vault"), _action_open_vault(state)),
-        pystray.MenuItem(t("menu.open_logs"), lambda *_: open_logs_viewer()),
+        pystray.MenuItem(t("menu.open_logs"), _action_open_logs()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(t("menu.settings"), _action_settings(icon, state)),
         pystray.MenuItem(t("menu.rerun_wizard"), _action_rerun_wizard(icon, state)),
         pystray.MenuItem(t("menu.about"), _action_about),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem(t("menu.quit"), lambda *_: icon.stop()),
+        pystray.MenuItem(t("menu.quit"), _action_quit(icon, state)),
     )
+
+
+def _preferred_update_for_menu(state: TrayState) -> UpdateCheckResult | None:
+    """Return the update channel that should drive the tray menu label.
+
+    Desktop updates are preferred because installing the desktop bundle also
+    refreshes the bundled engine. Older state only stored the engine result,
+    which made a desktop-only update visible via notification but not via the
+    menu entry the user needs to click to download it.
+    """
+    combined = state.last_combined_update
+    if combined is not None:
+        if combined.desktop.update_available:
+            return combined.desktop
+        if combined.engine.update_available:
+            return combined.engine
+    return state.last_update_check
 
 
 def _action_status(icon: pystray.Icon, state: TrayState):
@@ -152,124 +179,30 @@ def _action_status(icon: pystray.Icon, state: TrayState):
 
 def _action_scan(icon: pystray.Icon, state: TrayState):
     def handler(*_args) -> None:
-        report = scan_vault()
-        with state.lock:
-            if state.settings.notify_on_scan_findings and report.has_findings():
-                notify(
-                    t("notify.scan.title"),
-                    t("notify.scan.body", count=len(report.findings)),
-                )
-        show_scan_report(
-            report,
-            on_repair=lambda apply: _run_repair_from_dialog(state, apply),
-        )
+        log.info("scan action requested")
+        _launch_dialog("scan")
 
     return handler
 
 
 def _action_repair(icon: pystray.Icon, state: TrayState):
     def handler(*_args) -> None:
-        with state.lock:
-            confirm = state.settings.confirm_repair
-        if confirm:
-            ok = ask_confirm(
-                title=t("confirm.repair.title"),
-                message=t("confirm.repair.message"),
-                confirm_label=t("confirm.repair.button"),
-            )
-            if not ok:
-                return
-        _run_repair_with_review(state)
+        log.info("repair action requested")
+        _launch_dialog("repair")
 
     return handler
 
 
-def _run_repair_from_dialog(state: TrayState, apply: bool) -> str:
-    """Hook used by the scan dialog's inline repair buttons."""
-    if apply:
-        with state.lock:
-            confirm = state.settings.confirm_repair
-        if confirm and not ask_confirm(
-            title=t("confirm.apply.title"),
-            message=t("confirm.apply.message"),
-            confirm_label=t("confirm.apply.button"),
-        ):
-            return "Cancelled."
-    report = repair_vault(apply=apply)
-    if apply:
-        # Surface the full diff dialog so the user sees what changed.
-        try:
-            show_repair_report(report)
-        except Exception as exc:
-            log.warning("show_repair_report raised: %s", exc)
-    return _format_repair(report)
-
-
-def _run_repair_with_review(state: TrayState) -> None:
-    dry = repair_vault(apply=False)
-    if not dry.ok:
-        notify("SecondBrain — repair failed", dry.error or "Unknown error")
-        return
-    if dry.fixed_count == 0:
-        # Honest UX: distinguish "nothing to fix" from "we ignored stuff that
-        # needs manual review". Surface the full report so the user sees the
-        # manual-review remainder and which categories require attention.
-        show_repair_report(dry)
-        return
-    proceed = ask_confirm(
-        title="Apply repair",
-        message=(
-            f"Dry-run shows {dry.fixed_count} fix(es) ready to apply"
-            + (
-                f" plus {dry.manual_review_count} requiring manual review.\n"
-                if dry.manual_review_count else ".\n"
-            )
-            + "Apply the auto-fixes now?"
-        ),
-        confirm_label="Apply",
-    )
-    if not proceed:
-        return
-    final = repair_vault(apply=True)
-    show_repair_report(final)
-    notify("SecondBrain — repair", _format_repair(final))
-
-
-def _format_repair(report: HealthRepairReport) -> str:
-    if not report.ok:
-        return f"Repair failed: {report.error or 'unknown error'}"
-    mode = "applied" if report.applied else "dry-run"
-    return f"Repair {mode}: {report.fixed_count} fixed, {report.skipped_count} skipped."
-
-
 def _action_update(icon: pystray.Icon, state: TrayState):
-    """Open the combined update dialog (engine + desktop).
-
-    Replaces the v0.8-era single-channel deploy.ps1 flow. Dialog
-    drives the per-channel download + install. Old ``run_update`` /
-    ``show_update_progress`` path remains available for dev installs
-    via the CLI (``sb-desktop --action update``).
-    """
+    """Open the combined update dialog (engine + desktop)."""
 
     def handler(*_args) -> None:
-        info = check_all_updates(force_refresh=True)
-        with state.lock:
-            state.last_update_check = info.engine
-        _refresh_icon(icon, state)
-
-        if not info.any_available:
-            engine_v = info.engine.current_version or "?"
-            desktop_v = info.desktop.current_version or "?"
-            notify(
-                t("notify.up_to_date.title"),
-                t("notify.up_to_date.body", engine=engine_v, desktop=desktop_v),
-            )
-            return
-
-        show_combined_update_dialog(info)
-        # After the dialog closes, re-probe so the tray icon reflects
-        # any in-place engine refresh.
-        _do_status_probe(icon, state)
+        try:
+            log.info("manual update check requested")
+            _launch_dialog("update")
+        except Exception as exc:
+            log.exception("update dialog failed: %s", exc)
+            notify("SecondBrain — update", f"Impossible d'ouvrir la fenêtre: {exc}")
 
     return handler
 
@@ -286,14 +219,18 @@ def _action_open_vault(state: TrayState):
     return handler
 
 
+def _action_open_logs():
+    def handler(*_args) -> None:
+        log.info("logs viewer action requested")
+        _launch_dialog("logs")
+
+    return handler
+
+
 def _action_settings(icon: pystray.Icon, state: TrayState):
     def handler(*_args) -> None:
-        with state.lock:
-            current_settings = state.settings
-            kit_snapshot = state.kit
-        new_settings = open_settings_dialog(current_settings, kit_snapshot)
-        with state.lock:
-            state.settings = new_settings
+        log.info("settings action requested")
+        _launch_dialog("settings")
         _refresh_icon(icon, state)
 
     return handler
@@ -303,22 +240,25 @@ def _action_about(*_args) -> None:
     webbrowser.open("https://github.com/SI-GMT/SecondBrain")
 
 
+def _action_quit(icon: pystray.Icon, state: TrayState):
+    def handler(*_args) -> None:
+        log.info("quit action requested")
+        state.stop_event.set()
+        try:
+            icon.stop()
+        except Exception as exc:
+            log.exception("tray stop failed: %s", exc)
+
+    return handler
+
+
 def _action_rerun_wizard(icon: pystray.Icon, state: TrayState):
     """Re-launch the setup wizard from the tray. Useful for adding a new
     LLM CLI after the initial install, or for changing the vault path."""
 
     def handler(*_args) -> None:
-        from .ui import run_first_run_wizard
-
-        ok = run_first_run_wizard()
-        if ok:
-            with state.lock:
-                state.kit = None  # force re-read of ~/.memory-kit/config.json
-            from .config import load_kit_config
-
-            with state.lock:
-                state.kit = load_kit_config()
-            _do_status_probe(icon, state)
+        log.info("first-run wizard action requested")
+        _launch_dialog("wizard")
 
     return handler
 
@@ -331,8 +271,8 @@ def _do_status_probe(icon: pystray.Icon, state: TrayState) -> None:
     _refresh_icon(icon, state)
 
 
-def _poll_loop(icon: pystray.Icon, state: TrayState, stop_event: threading.Event) -> None:
-    while not stop_event.is_set():
+def _poll_loop(icon: pystray.Icon, state: TrayState) -> None:
+    while not state.stop_event.is_set():
         try:
             with state.lock:
                 interval = state.settings.poll_interval_seconds
@@ -343,6 +283,7 @@ def _poll_loop(icon: pystray.Icon, state: TrayState, stop_event: threading.Event
             info = check_all_updates(force_refresh=False)
             with state.lock:
                 state.last_update_check = info.engine
+                state.last_combined_update = info
                 # Notify once per (engine, desktop) version pair. Prefer
                 # the desktop update line when both are available because
                 # installing the desktop release implicitly refreshes the
@@ -378,7 +319,7 @@ def _poll_loop(icon: pystray.Icon, state: TrayState, stop_event: threading.Event
             _refresh_icon(icon, state)
         except Exception as exc:
             log.exception("poll loop iteration failed: %s", exc)
-        stop_event.wait(timeout=interval)
+        state.stop_event.wait(timeout=interval)
 
 
 def _initial_state() -> TrayState:
@@ -399,9 +340,8 @@ def run_tray() -> int:
     )
     icon.menu = _build_menu(icon, state)
 
-    stop_event = threading.Event()
     poller = threading.Thread(
-        target=_poll_loop, args=(icon, state, stop_event), daemon=True, name="sb-desktop-poller"
+        target=_poll_loop, args=(icon, state), daemon=True, name="sb-desktop-poller"
     )
 
     def _on_ready(_icon: pystray.Icon) -> None:
@@ -416,5 +356,7 @@ def run_tray() -> int:
     try:
         icon.run(setup=_on_ready)
     finally:
-        stop_event.set()
+        state.stop_event.set()
+        if poller.is_alive():
+            poller.join(timeout=2)
     return 0

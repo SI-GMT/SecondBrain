@@ -13,6 +13,7 @@ Two flavours:
 
 from __future__ import annotations
 
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -192,7 +193,7 @@ def _has_asset(result: UpdateCheckResult, channel: str) -> bool:
 
 
 def _apply_desktop(result: UpdateCheckResult, row: _ChannelRow) -> None:
-    """Download the installer and launch it via ShellExecute (UAC)."""
+    """Download the installer and launch/open it for the current platform."""
     if not result.asset_url or not result.asset_filename:
         return _open_release_page(result, row, "sb-desktop")
 
@@ -229,19 +230,29 @@ def _apply_desktop(result: UpdateCheckResult, row: _ChannelRow) -> None:
         )
         return
 
-    row.master.after(
-        0, lambda: row.set_status("Launching installer (look for the UAC prompt)…")
+    launch_text = (
+        "Opening DMG — drag SecondBrain.app to Applications…"
+        if sys.platform == "darwin"
+        else "Launching installer (look for the UAC prompt)…"
     )
+    row.master.after(0, lambda: row.set_status(launch_text))
     apply_result = launch_desktop_installer(download.path)
     if apply_result.ok:
-        row.master.after(
-            0,
-            lambda: row.set_status(
+        followup = (
+            "DMG opened. Drag SecondBrain.app to Applications to complete "
+            "the upgrade, then restart the app."
+            if sys.platform == "darwin"
+            else (
                 "Installer launched. The tray will be closed automatically; "
                 "follow the installer to complete the upgrade."
-            ),
+            )
         )
-        row.master.after(0, lambda: row.disable_button("Installing…"))
+        row.master.after(
+            0,
+            lambda: row.set_status(followup),
+        )
+        final_label = "DMG opened" if sys.platform == "darwin" else "Installing…"
+        row.master.after(0, lambda: row.disable_button(final_label))
     else:
         row.master.after(
             0, lambda: row.set_status(f"Launch failed: {apply_result.error}")

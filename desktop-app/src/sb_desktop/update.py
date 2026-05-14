@@ -62,7 +62,17 @@ GITHUB_RELEASES_URL = (
     "https://api.github.com/repos/SI-GMT/SecondBrain/releases?per_page=30"
 )
 _DESKTOP_TAG_RE = re.compile(r"^sb-desktop-v(\d+\.\d+\.\d+)$")
-INSTALLER_ASSET_RE = re.compile(r"SecondBrainDesktop-[\d\.]+-setup\.exe$", re.I)
+WINDOWS_INSTALLER_ASSET_RE = re.compile(
+    r"SecondBrainDesktop-[\d\.]+-setup\.exe$", re.I
+)
+MACOS_INSTALLER_ASSET_RE = re.compile(r"SecondBrainDesktop-[\d\.]+\.dmg$", re.I)
+
+
+def _desktop_installer_asset_re() -> re.Pattern[str]:
+    """Return the installer asset pattern for the current platform."""
+    if sys.platform == "darwin":
+        return MACOS_INSTALLER_ASSET_RE
+    return WINDOWS_INSTALLER_ASSET_RE
 
 
 class UpdateCheckResult(BaseModel):
@@ -318,9 +328,10 @@ def check_desktop_update(*, force_refresh: bool = False) -> UpdateCheckResult:
             continue
         latest_tag = tag
         latest_version = m.group(1)
+        installer_asset_re = _desktop_installer_asset_re()
         for asset in entry.get("assets") or []:
             name = asset.get("name", "")
-            if INSTALLER_ASSET_RE.search(name):
+            if installer_asset_re.search(name):
                 asset_url = asset.get("browser_download_url")
                 asset_filename = name
                 break
@@ -491,15 +502,22 @@ class ApplyResult:
 
 
 def launch_desktop_installer(installer_path: Path) -> ApplyResult:
-    """Spawn the downloaded installer and let Inno take it from there.
+    """Spawn/open the downloaded desktop installer for this platform.
 
+    Windows:
     The installer's ``InitializeSetup`` detects the existing install,
     prompts for confirmation, kills the tray and the running engine
     sessions, and runs the upgrade. We launch via ``ShellExecuteW`` so
     UAC is triggered when the installer requires admin (system install).
 
+    macOS:
+    The release asset is a signed + notarized DMG. Opening it mounts the
+    Finder drag-install window; the user copies ``SecondBrain.app`` to
+    ``/Applications``. We do not overwrite a running app bundle from the
+    tray process itself.
+
     Returns as soon as the spawn succeeds — the installer continues
-    asynchronously. The tray will be terminated by the installer.
+    asynchronously. On Windows the tray will be terminated by the installer.
     """
     if not installer_path.is_file():
         return ApplyResult(
@@ -531,8 +549,8 @@ def launch_desktop_installer(installer_path: Path) -> ApplyResult:
             return ApplyResult(
                 ok=False, error=f"failed to launch installer: {exc}"
             )
-    # POSIX: best-effort — most users won't install via .exe; macOS DMG
-    # flow lives in the macOS build and is handled separately.
+    # POSIX: open the downloaded asset with the platform handler. On macOS
+    # this mounts the DMG and shows the Applications shortcut.
     try:
         opener = "open" if sys.platform == "darwin" else "xdg-open"
         subprocess.Popen([opener, str(installer_path)])

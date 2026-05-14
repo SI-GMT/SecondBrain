@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
+import json
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,86 @@ def test_check_engine_raises(monkeypatch: pytest.MonkeyPatch):
     result = update.check_update()
     assert result.ok is False
     assert "kaboom" in (result.error or "")
+
+
+def test_check_desktop_update_selects_macos_dmg(monkeypatch: pytest.MonkeyPatch):
+    release_payload = [
+        {
+            "tag_name": "sb-desktop-v0.10.9",
+            "assets": [
+                {
+                    "name": "SecondBrainDesktop-0.10.9-setup.exe",
+                    "browser_download_url": "https://example.test/setup.exe",
+                },
+                {
+                    "name": "SecondBrainDesktop-0.10.9.dmg",
+                    "browser_download_url": "https://example.test/mac.dmg",
+                },
+            ],
+        }
+    ]
+
+    class FakeResponse:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps(release_payload).encode("utf-8")
+
+    monkeypatch.setattr(update.sys, "platform", "darwin")
+    monkeypatch.setattr(update, "_current_desktop_version", lambda: "0.10.8")
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda *a, **kw: FakeResponse())
+
+    result = update.check_desktop_update(force_refresh=True)
+
+    assert result.update_available
+    assert result.asset_filename == "SecondBrainDesktop-0.10.9.dmg"
+    assert result.asset_url == "https://example.test/mac.dmg"
+
+
+def test_check_desktop_update_selects_windows_setup(monkeypatch: pytest.MonkeyPatch):
+    release_payload = [
+        {
+            "tag_name": "sb-desktop-v0.10.9",
+            "assets": [
+                {
+                    "name": "SecondBrainDesktop-0.10.9.dmg",
+                    "browser_download_url": "https://example.test/mac.dmg",
+                },
+                {
+                    "name": "SecondBrainDesktop-0.10.9-setup.exe",
+                    "browser_download_url": "https://example.test/setup.exe",
+                },
+            ],
+        }
+    ]
+
+    class FakeResponse:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps(release_payload).encode("utf-8")
+
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.setattr(update, "_current_desktop_version", lambda: "0.10.8")
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda *a, **kw: FakeResponse())
+
+    result = update.check_desktop_update(force_refresh=True)
+
+    assert result.update_available
+    assert result.asset_filename == "SecondBrainDesktop-0.10.9-setup.exe"
+    assert result.asset_url == "https://example.test/setup.exe"
 
 
 def test_plan_missing_kit_repo(monkeypatch: pytest.MonkeyPatch):

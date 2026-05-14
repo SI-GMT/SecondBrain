@@ -95,9 +95,19 @@ def _bundled_version() -> tuple[str | None, str | None]:
     return kit_version, None
 
 
-def _pipx_default_venv() -> Path:
-    """The canonical pipx venv path for memory-kit-mcp on this host."""
-    return Path.home() / "pipx" / "venvs" / "memory-kit-mcp"
+def _pipx_default_venvs() -> list[Path]:
+    """Common pipx venv paths for memory-kit-mcp on this host.
+
+    pipx has used several layouts across versions and platforms. The
+    desktop app should not report a false drift warning just because
+    ``memory-kit-mcp`` is exposed through a ``~/.local/bin`` shim.
+    """
+    home = Path.home()
+    return [
+        home / ".local" / "pipx" / "venvs" / "memory-kit-mcp",
+        home / ".local" / "share" / "pipx" / "venvs" / "memory-kit-mcp",
+        home / "pipx" / "venvs" / "memory-kit-mcp",
+    ]
 
 
 def _looks_like_install_root(candidate: Path) -> bool:
@@ -132,18 +142,22 @@ def _venv_root_from_binary(binary: Path) -> Path | None:
     ``{install}/engine/Lib/site-packages/`` (no ``pyvenv.cfg`` because
     embedded Python distributions don't ship one). Both are accepted.
 
-    For ``~/.local/bin/`` shims (where ``shutil.which`` may land), we
-    fall back to the canonical ``~/pipx/venvs/memory-kit-mcp/`` venv.
+    For ``~/.local/bin/`` shims (where ``shutil.which`` may land), resolve
+    the symlink target first, then fall back to common pipx venv roots.
     """
+    try:
+        binary = binary.resolve()
+    except OSError:
+        pass
     parent = binary.parent
     if parent.name.lower() in {"scripts", "bin"}:
         candidate = parent.parent
         if _looks_like_install_root(candidate):
             return candidate
 
-    fallback = _pipx_default_venv()
-    if fallback.is_dir():
-        return fallback
+    for fallback in _pipx_default_venvs():
+        if fallback.is_dir():
+            return fallback
     return None
 
 

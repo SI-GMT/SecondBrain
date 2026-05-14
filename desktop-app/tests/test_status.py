@@ -54,6 +54,20 @@ def test_venv_root_accepts_classic_pipx_layout(tmp_path: Path):
     assert status._venv_root_from_binary(binary) == venv
 
 
+def test_venv_root_resolves_local_bin_symlink(tmp_path: Path):
+    venv = tmp_path / ".local" / "pipx" / "venvs" / "memory-kit-mcp"
+    bin_dir = venv / "bin"
+    shim_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    shim_dir.mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = ...", encoding="utf-8")
+    binary = bin_dir / "memory-kit-mcp"
+    binary.write_text("")
+    shim = shim_dir / "memory-kit-mcp"
+    shim.symlink_to(binary)
+    assert status._venv_root_from_binary(shim) == venv
+
+
 def test_versions_aligned_yields_ok(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(status, "_bundled_version", lambda: ("0.12.1", None))
     monkeypatch.setattr(
