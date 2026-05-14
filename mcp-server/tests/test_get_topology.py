@@ -48,3 +48,36 @@ async def test_reads_existing_topology(client: Client, vault_tmp: Path) -> None:
     assert d.content_hash == "deadbeefcafe"
     assert d.last_archive.endswith(".md")
     assert "betaproj" in d.body
+
+
+async def test_reads_branch_topology(client: Client, vault_tmp: Path) -> None:
+    target = (
+        vault_tmp
+        / "99-meta"
+        / "repo-topology"
+        / "betaproj-branches"
+        / "feat-x.md"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fm = {
+        "date": "2026-05-04",
+        "zone": "meta",
+        "type": "repo-topology",
+        "project": "betaproj",
+        "branch": "feat/x",
+        "repo_path": "/path/to/betaproj",
+        "content_hash": "abc",
+        "tags": ["zone/meta", "type/repo-topology", "project/betaproj", "branch/feat/x"],
+        "display": "betaproj — repo topology (feat/x)",
+    }
+    body = "# Topology — betaproj (branch: feat/x)\n"
+    frontmatter.write(target, fm, body)
+
+    res = await client.call_tool(
+        "mem_get_topology", {"project": "betaproj", "branch": "feat/x"}
+    )
+    d = res.data
+    assert d.exists is True
+    assert d.project == "betaproj"
+    assert d.frontmatter["branch"] == "feat/x"
+    assert "feat/x" in d.body

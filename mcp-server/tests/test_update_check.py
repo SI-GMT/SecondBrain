@@ -78,7 +78,7 @@ def test_check_for_update_flags_remote_newer(
     monkeypatch.setattr(
         update_check.urllib.request,
         "urlopen",
-        _mock_urlopen_factory({"tag_name": "v0.11.0"}),
+        _mock_urlopen_factory([{"tag_name": "v0.11.0"}]),
     )
 
     info = check_for_update(force_refresh=True)
@@ -96,7 +96,7 @@ def test_check_for_update_no_update_when_equal(
     monkeypatch.setattr(
         update_check.urllib.request,
         "urlopen",
-        _mock_urlopen_factory({"tag_name": "v0.10.0"}),
+        _mock_urlopen_factory([{"tag_name": "v0.10.0"}]),
     )
 
     info = check_for_update(force_refresh=True)
@@ -114,7 +114,7 @@ def test_check_for_update_no_update_when_local_ahead(
     monkeypatch.setattr(
         update_check.urllib.request,
         "urlopen",
-        _mock_urlopen_factory({"tag_name": "v0.10.0"}),
+        _mock_urlopen_factory([{"tag_name": "v0.10.0"}]),
     )
 
     info = check_for_update(force_refresh=True)
@@ -137,7 +137,7 @@ def test_cache_avoids_network_within_ttl(
         cm = MagicMock()
         cm.__enter__ = lambda self: self
         cm.__exit__ = lambda self, *a: None
-        cm.read = lambda: json.dumps({"tag_name": "v0.11.0"}).encode("utf-8")
+        cm.read = lambda: json.dumps([{"tag_name": "v0.11.0"}]).encode("utf-8")
         return cm
 
     monkeypatch.setattr(update_check.urllib.request, "urlopen", counting_urlopen)
@@ -162,7 +162,7 @@ def test_env_ttl_zero_disables_cache(
         cm = MagicMock()
         cm.__enter__ = lambda self: self
         cm.__exit__ = lambda self, *a: None
-        cm.read = lambda: json.dumps({"tag_name": "v0.11.0"}).encode("utf-8")
+        cm.read = lambda: json.dumps([{"tag_name": "v0.11.0"}]).encode("utf-8")
         return cm
 
     monkeypatch.setattr(update_check.urllib.request, "urlopen", counting_urlopen)
@@ -188,7 +188,7 @@ def test_force_refresh_bypasses_cache(
         cm = MagicMock()
         cm.__enter__ = lambda self: self
         cm.__exit__ = lambda self, *a: None
-        cm.read = lambda: json.dumps({"tag_name": "v0.11.0"}).encode("utf-8")
+        cm.read = lambda: json.dumps([{"tag_name": "v0.11.0"}]).encode("utf-8")
         return cm
 
     monkeypatch.setattr(update_check.urllib.request, "urlopen", counting_urlopen)
@@ -207,7 +207,7 @@ def test_cache_revalidates_against_running_version(
     monkeypatch.setattr(
         update_check.urllib.request,
         "urlopen",
-        _mock_urlopen_factory({"tag_name": "v0.11.0"}),
+        _mock_urlopen_factory([{"tag_name": "v0.11.0"}]),
     )
 
     first = check_for_update(force_refresh=True)
@@ -285,7 +285,7 @@ def test_malformed_response_returns_error(
     monkeypatch.setattr(
         update_check.urllib.request,
         "urlopen",
-        _mock_urlopen_factory({"not_a_tag": "garbage"}),
+        _mock_urlopen_factory([{"not_a_tag": "garbage"}]),
     )
 
     info = check_for_update(force_refresh=True)
@@ -345,7 +345,7 @@ async def test_mem_check_update_returns_structured_result(
     monkeypatch.setattr(
         update_check.urllib.request,
         "urlopen",
-        _mock_urlopen_factory({"tag_name": "v0.11.0"}),
+        _mock_urlopen_factory([{"tag_name": "v0.11.0"}]),
     )
 
     result = await client.call_tool("mem_check_update", {"force_refresh": True})

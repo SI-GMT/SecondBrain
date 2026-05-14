@@ -269,8 +269,14 @@ async def test_orchestrator_branch_first_with_acknowledgment_chains_through(
     proj_dir = vault_tmp / "10-episodes" / "projects" / "ecosav"
     assert (proj_dir / "context.md").is_file()
     assert (proj_dir / "history.md").is_file()
-    # Topology persisted
-    topo = vault_tmp / "99-meta" / "repo-topology" / "ecosav.md"
+    # Topology persisted in branch-specific location
+    topo = (
+        vault_tmp
+        / "99-meta"
+        / "repo-topology"
+        / "ecosav-branches"
+        / "ecosav.md"
+    )
     assert topo.is_file()
     # Branch frontmatter populated on archives
     archives = list((proj_dir / "archives").glob("*.md"))
@@ -295,3 +301,44 @@ async def test_orchestrator_standard_mode_skips_gating(
     # No needs_validation surface in standard mode.
     assert result.structured_content["needs_validation"] is False
     assert result.structured_content["git"] is not None
+
+
+async def test_orchestrator_creates_branch_topology_file(
+    client: Client, vault_tmp: Path, tmp_path: Path
+) -> None:
+    """In branch-first mode, topology is persisted under .../slug-branches/branch.md."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init_repo_with_branch(repo, "feat/new-thing")
+
+    topology_file = (
+        vault_tmp
+        / "99-meta"
+        / "repo-topology"
+        / "ecosav-branches"
+        / "feat-new-thing.md"
+    )
+    assert not topology_file.exists()
+
+    result = await client.call_tool(
+        "mem_archeo",
+        {
+            "repo_path": str(repo),
+            "project": "ecosav",
+            "branch_first": "feat/new-thing",
+            "branch_base": "main",
+            "acknowledged_via_plan": True,
+        },
+    )
+    data = result.structured_content
+
+    assert data["topology_outcome"] == "created"
+    assert topology_file.is_file()
+
+    fm, body = frontmatter.read(topology_file)
+    assert fm["type"] == "repo-topology"
+    assert fm["project"] == "ecosav"
+    assert fm["branch"] == "feat/new-thing"
+    assert "branch/feat/new-thing" in fm["tags"]
+    assert "Topology — ecosav (branch: feat/new-thing)" in body
+    assert "- **Branch** : `feat/new-thing`" in body

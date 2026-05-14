@@ -153,6 +153,8 @@ def _fetch_latest_tag(timeout: float = HTTP_TIMEOUT_SECONDS) -> str:
     )
     with urllib.request.urlopen(fallback_req, timeout=timeout) as resp:  # noqa: S310
         data = json.loads(resp.read())
+    if not isinstance(data, dict):
+        raise ValueError("GitHub latest release API returned non-dict payload")
     tag = data.get("tag_name")
     if not isinstance(tag, str) or not tag:
         raise ValueError("GitHub API response missing tag_name")

@@ -48,6 +48,18 @@ def topology_file(vault: Path, slug: str) -> Path:
     return vault / ZONE_META / "repo-topology" / f"{slug}.md"
 
 
+def branch_topology_file(vault: Path, slug: str, branch: str) -> Path:
+    """Branch-specific topology file: {vault}/99-meta/repo-topology/{slug}-branches/{branch-san}.md"""
+    branch_san = branch.replace("/", "-").replace("\\", "-")
+    return (
+        vault
+        / ZONE_META
+        / "repo-topology"
+        / f"{slug}-branches"
+        / f"{branch_san}.md"
+    )
+
+
 def index_file(vault: Path) -> Path:
     """Root index: {vault}/index.md"""
     return vault / "index.md"

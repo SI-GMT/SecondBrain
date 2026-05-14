@@ -213,7 +213,9 @@ def register(mcp: FastMCP) -> None:
         )
 
         # Topology persistence (best-effort)
-        topology_outcome, topology_rel_path = _persist_topology(vault, slug, topology)
+        topology_outcome, topology_rel_path = _persist_topology(
+            vault, slug, topology, branch=branch_first
+        )
 
         # Aggregate
         files_created = list(stack_result.files_created) + list(git_result.files_created)
@@ -288,7 +290,9 @@ def register(mcp: FastMCP) -> None:
 # ----------------------------------------------------------------------
 
 
-def _persist_topology(vault: Path, slug: str, topology: Topology) -> tuple[str, str]:
+def _persist_topology(
+    vault: Path, slug: str, topology: Topology, branch: str | None = None
+) -> tuple[str, str]:
     """Create the topology file if absent. Leave it untouched if present.
 
     Returns (outcome, vault_relative_path):
@@ -299,15 +303,20 @@ def _persist_topology(vault: Path, slug: str, topology: Topology) -> tuple[str, 
     the project's structure. We populate the canonical sections so Phase 2
     and Phase 3 outputs can link to it via context_origin wikilinks.
     """
-    target = paths.topology_file(vault, slug)
-    rel_path = f"99-meta/repo-topology/{slug}.md"
+    if branch:
+        target = paths.branch_topology_file(vault, slug, branch)
+        rel_path = target.relative_to(vault).as_posix()
+    else:
+        target = paths.topology_file(vault, slug)
+        rel_path = f"99-meta/repo-topology/{slug}.md"
 
     if target.is_file():
         # POC: don't try to merge with existing topology. The skill fallback
         # handles the full update workflow (insert/refresh sections idempotently).
         return "skipped", rel_path
 
-    body = _render_topology_body(slug, topology)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = _render_topology_body(slug, topology, branch=branch)
     body_hash = hash_content(body)
     fm = {
         "date": datetime.now(timezone.utc).date().isoformat(),
@@ -324,16 +333,26 @@ def _persist_topology(vault: Path, slug: str, topology: Topology) -> tuple[str, 
             "type/repo-topology",
             f"project/{slug}",
         ],
-        "display": f"{slug} — repo topology",
+        "display": f"{slug} — repo topology" + (f" ({branch})" if branch else ""),
     }
+    if branch:
+        fm["branch"] = branch
+        fm["tags"].append(f"branch/{branch}")
+
     frontmatter.write(target, fm, body)
     return "created", rel_path
 
 
-def _render_topology_body(slug: str, topology: Topology) -> str:
+def _render_topology_body(
+    slug: str, topology: Topology, branch: str | None = None
+) -> str:
     """Render the canonical topology body (sections per the spec §T6)."""
+    title = f"Topology — {slug}"
+    if branch:
+        title += f" (branch: {branch})"
+
     lines = [
-        f"# Topology — {slug}",
+        f"# {title}",
         "",
         f"_Scanned at: {topology.scanned_at} (depth {topology.depth_limit})._",
         "",
@@ -341,10 +360,13 @@ def _render_topology_body(slug: str, topology: Topology) -> str:
         "",
         f"- **Path** : `{topology.repo_path}`",
         f"- **Remote** : {topology.repo_remote or '(none)'}",
-        "",
-        "## Categories",
-        "",
     ]
+    if branch:
+        lines.append(f"- **Branch** : `{branch}`")
+
+    lines.append("")
+    lines.append("## Categories")
+    lines.append("")
     for cat in (
         "ai_files", "readme", "changelog", "docs", "sources", "tests",
         "ci", "infra", "manifests", "lockfiles", "config", "editor",

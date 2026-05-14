@@ -25,21 +25,40 @@ from memory_kit_mcp.tools._models import TopologyReadResult
 from memory_kit_mcp.vault import frontmatter, paths
 
 
-def execute_get_topology(vault: Path, project: str) -> TopologyReadResult:
+def execute_get_topology(
+    vault: Path, project: str, branch: str | None = None
+) -> TopologyReadResult:
     if not project:
         raise ValueError("project is required")
-    target = paths.topology_file(vault, project)
-    rel = target.relative_to(vault).as_posix() if target.exists() else f"99-meta/repo-topology/{project}.md"
+
+    if branch:
+        target = paths.branch_topology_file(vault, project, branch)
+    else:
+        target = paths.topology_file(vault, project)
+
+    rel = (
+        target.relative_to(vault).as_posix()
+        if target.exists()
+        else (
+            f"99-meta/repo-topology/{project}-branches/"
+            f"{branch.replace('/', '-').replace('\\', '-')}.md"
+            if branch
+            else f"99-meta/repo-topology/{project}.md"
+        )
+    )
 
     if not target.is_file():
+        msg = (
+            f"**mem_get_topology** — `{project}`"
+            + (f" (branch `{branch}`)" if branch else "")
+            + f": no topology persisted (expected at `{rel}`). "
+            f"Run mem_archeo or mem_archeo_stack to scan."
+        )
         return TopologyReadResult(
             project=project,
             topology_path="",
             exists=False,
-            summary_md=(
-                f"**mem_get_topology** — `{project}`: no topology persisted "
-                f"(expected at `{rel}`). Run mem_archeo or mem_archeo_stack to scan."
-            ),
+            summary_md=msg,
         )
 
     fm, body = frontmatter.read(target)
@@ -73,6 +92,10 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def mem_get_topology(
         project: str = Field(..., description="Project slug whose topology to read."),
+        branch: str | None = Field(
+            None,
+            description="Optional branch name to read a branch-specific topology.",
+        ),
     ) -> TopologyReadResult:
         """Read the persisted topology snapshot of a project.
 
@@ -84,4 +107,6 @@ def register(mcp: FastMCP) -> None:
         Read-only.
         """
         config = get_config()
-        return execute_get_topology(vault=config.vault, project=project)
+        return execute_get_topology(
+            vault=config.vault, project=project, branch=branch
+        )
