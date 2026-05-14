@@ -254,6 +254,24 @@ def _resolve_config_path(cli: LlmCliInfo) -> Path | None:
         if override:
             return Path(override) / "mcp-config.json"
         return home / ".copilot" / "mcp-config.json"
+    if cli.identifier == "opendesign":
+        if sys.platform == "darwin":
+            # Le desktop OpenDesign sur macOS stocke sa config ici
+            desktop_path = (
+                home
+                / "Library"
+                / "Application Support"
+                / "Open Design"
+                / "namespaces"
+                / "release-stable"
+                / "data"
+                / "mcp-config.json"
+            )
+            if desktop_path.exists():
+                return desktop_path
+        # Fallback générique pour la CLI ou autres OS
+        return home / ".od" / "mcp-config.json"
+
     if cli.config_path_segments:
         return home.joinpath(*cli.config_path_segments)
     return None

@@ -1404,6 +1404,114 @@ PYEOF
 #
 # Args : <config_path> <section_name> <command> <label>
 
+add_mcp_server_to_opendesign_config() {
+    local config_path="$1"
+    local server_name="$2"
+    local command_name="$3"
+    local label="$4"
+    shift 4
+    local legacy_names=("$@")
+
+    if ! command -v python3 &>/dev/null; then
+        _yellow "python3 indisponible — injection MCP $server_name dans $config_path skipee"
+        return 1
+    fi
+
+    local label_tag=""
+    [[ -n "$label" ]] && label_tag=" ($label)"
+
+    local legacy_csv=""
+    if [[ ${#legacy_names[@]} -gt 0 ]]; then
+        legacy_csv="$(IFS=,; echo "${legacy_names[*]}")"
+    fi
+
+    local result
+    result="$(python3 - "$config_path" "$server_name" "$command_name" "$legacy_csv" << 'PYEOF'
+import json, os, sys
+from pathlib import Path
+from collections import OrderedDict
+
+config_path = Path(sys.argv[1])
+server_name = sys.argv[2]
+command_name = sys.argv[3]
+legacy_names = [n for n in sys.argv[4].split(',') if n]
+
+if config_path.exists():
+    try:
+        existing = json.loads(config_path.read_text(encoding='utf-8'), object_pairs_hook=OrderedDict)
+    except Exception as e:
+        print(f"ERR|{e}")
+        sys.exit(0)
+else:
+    existing = OrderedDict()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+if 'servers' not in existing or not isinstance(existing['servers'], list):
+    existing['servers'] = []
+
+servers = existing['servers']
+
+removed_legacy = []
+for legacy in legacy_names:
+    for i in range(len(servers)-1, -1, -1):
+        if servers[i].get('id') == legacy and legacy != server_name:
+            servers.pop(i)
+            if legacy not in removed_legacy:
+                removed_legacy.append(legacy)
+
+new_server = OrderedDict([
+    ('id', server_name),
+    ('transport', 'stdio'),
+    ('enabled', True),
+    ('label', server_name),
+    ('command', command_name),
+    ('args', [])
+])
+
+status = "ADDED"
+for i, s in enumerate(servers):
+    if s.get('id') == server_name:
+        if s.get('command') != command_name:
+            servers[i] = new_server
+            status = "UPDATED"
+        else:
+            status = "SKIP"
+        break
+else:
+    servers.append(new_server)
+
+if status in ("UPDATED", "ADDED") or removed_legacy:
+    config_path.write_text(json.dumps(existing, indent=2), encoding='utf-8')
+
+print(f"{status}|{','.join(removed_legacy)}")
+PYEOF
+)"
+
+    case "$result" in
+        ERR\|*)
+            _yellow "$config_path illisible (${result#ERR|}). Inject MCP skip."
+            return 1
+            ;;
+    esac
+
+    local status="${result%%|*}"
+    local removed="${result#*|}"
+
+    if [[ -n "$removed" ]]; then
+        IFS=',' read -ra _legacy_arr <<< "$removed"
+        for _l in "${_legacy_arr[@]}"; do
+            _green "$config_path$label_tag : servers.$_l supprime (legacy)"
+        done
+    fi
+
+    case "$status" in
+        ADDED)   _green "$config_path$label_tag : servers.$server_name ajoute" ;;
+        UPDATED) _green "$config_path$label_tag : servers.$server_name mis a jour" ;;
+        SKIP)    _gray  "$config_path$label_tag : servers.$server_name deja present" ;;
+    esac
+    return 0
+}
+
 add_mcp_server_to_toml_config() {
     local config_path="$1"
     local section_name="$2"
@@ -1747,12 +1855,24 @@ deploy_mcp_server() {
         _gray "Claude Desktop non detecte ($claude_desktop_dir absent)"
     fi
 
-    local opendesign_config="$HOME/.od/mcp-config.json"
+    local opendesign_config
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        opendesign_config="$HOME/Library/Application Support/Open Design/namespaces/release-stable/data/mcp-config.json"
+    else
+        opendesign_config="$HOME/.od/mcp-config.json"
+    fi
     local opendesign_dir="$(dirname "$opendesign_config")"
     if [[ -d "$opendesign_dir" ]]; then
-        add_mcp_server_to_json_config "$opendesign_config" "$server_name" "$server_command" "OpenDesign" "memory-kit"
+        add_mcp_server_to_opendesign_config "$opendesign_config" "$server_name" "$server_command" "OpenDesign" "memory-kit"
     else
-        _gray "OpenDesign non detecte ($opendesign_dir absent)"
+        # Fallback pour vérifier aussi .od au cas où
+        local fallback_config="$HOME/.od/mcp-config.json"
+        local fallback_dir="$(dirname "$fallback_config")"
+        if [[ -d "$fallback_dir" ]]; then
+            add_mcp_server_to_opendesign_config "$fallback_config" "$server_name" "$server_command" "OpenDesign" "memory-kit"
+        else
+            _gray "OpenDesign non detecte ($opendesign_dir et $fallback_dir absents)"
+        fi
     fi
 
     # Codex Desktop : herite automatiquement de Codex CLI via le meme

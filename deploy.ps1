@@ -1455,6 +1455,92 @@ function Add-McpServerToJsonConfig {
     Write-Ok "$ConfigPath$labelTag : mcpServers.$ServerName ajoute"
 }
 
+function Add-McpServerToOpenDesignConfig {
+    param(
+        [Parameter(Mandatory=$true)][string]$ConfigPath,
+        [Parameter(Mandatory=$true)][string]$ServerName,
+        [Parameter(Mandatory=$true)][string]$Command,
+        [string]$Label = '',
+        [string[]]$LegacyServerNames = @()
+    )
+    $existing = $null
+    if (Test-Path $ConfigPath) {
+        try {
+            $existing = Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable
+        } catch {
+            Write-Warn2 "$ConfigPath illisible ($_). Inject MCP skip."
+            return
+        }
+    } else {
+        $existing = [ordered]@{}
+        $parent = Split-Path -Parent $ConfigPath
+        if ($parent -and -not (Test-Path $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+    }
+
+    if (-not $existing.Contains('servers')) {
+        $existing['servers'] = @()
+    }
+    $serversList = [System.Collections.ArrayList]@($existing['servers'])
+
+    $labelTagPre = if ($Label) { " ($Label)" } else { '' }
+    $removedAny = $false
+    foreach ($legacy in $LegacyServerNames) {
+        for ($i = $serversList.Count - 1; $i -ge 0; $i--) {
+            if ($serversList[$i].id -eq $legacy -and $legacy -ne $ServerName) {
+                $serversList.RemoveAt($i)
+                Write-Ok "$ConfigPath$labelTagPre : servers.$legacy supprime (legacy)"
+                $removedAny = $true
+            }
+        }
+    }
+
+    $newServer = [ordered]@{
+        id        = $ServerName
+        transport = 'stdio'
+        enabled   = $true
+        label     = $ServerName
+        command   = $Command
+        args      = @()
+    }
+
+    $labelTag = if ($Label) { " ($Label)" } else { '' }
+
+    $foundIndex = -1
+    for ($i = 0; $i -lt $serversList.Count; $i++) {
+        if ($serversList[$i].id -eq $ServerName) {
+            $foundIndex = $i
+            break
+        }
+    }
+
+    if ($foundIndex -ge 0) {
+        $current = $serversList[$foundIndex]
+        if ($current.command -ne $Command) {
+            $serversList[$foundIndex] = $newServer
+            $existing['servers'] = $serversList.ToArray()
+            $json = $existing | ConvertTo-Json -Depth 100
+            Set-Content -Path $ConfigPath -Value $json -Encoding utf8NoBOM -NoNewline
+            Write-Ok "$ConfigPath$labelTag : servers.$ServerName mis a jour"
+        } else {
+            if ($removedAny) {
+                $existing['servers'] = $serversList.ToArray()
+                $json = $existing | ConvertTo-Json -Depth 100
+                Set-Content -Path $ConfigPath -Value $json -Encoding utf8NoBOM -NoNewline
+            }
+            Write-Skip "$ConfigPath$labelTag : servers.$ServerName deja present"
+        }
+        return
+    }
+
+    $serversList.Add($newServer) | Out-Null
+    $existing['servers'] = $serversList.ToArray()
+    $json = $existing | ConvertTo-Json -Depth 100
+    Set-Content -Path $ConfigPath -Value $json -Encoding utf8NoBOM -NoNewline
+    Write-Ok "$ConfigPath$labelTag : servers.$ServerName ajoute"
+}
+
 function Add-McpServerToTomlConfig {
     param(
         [Parameter(Mandatory=$true)][string]$ConfigPath,
