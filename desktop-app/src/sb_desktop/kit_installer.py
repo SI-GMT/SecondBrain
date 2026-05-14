@@ -217,6 +217,14 @@ def _cli_targets() -> list[LlmCliInfo]:
                 (".config", "github-copilot"),
             ),
         ),
+        LlmCliInfo(
+            identifier="opendesign",
+            label="OpenDesign",
+            description="OpenDesign application.",
+            config_writer="json",
+            config_path_segments=(".od", "mcp-config.json"),
+            detection_segments=((".od",),),
+        ),
     ]
 
 

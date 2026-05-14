@@ -1678,6 +1678,14 @@ function Deploy-McpServer {
         Write-Skip "Claude Desktop non detecte ($claudeDesktopDir absent)"
     }
 
+    $openDesignConfig = Join-Path $HOME '.od\mcp-config.json'
+    $openDesignDir = Split-Path -Parent $openDesignConfig
+    if (Test-Path $openDesignDir) {
+        Add-McpServerToJsonConfig -ConfigPath $openDesignConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'OpenDesign'
+    } else {
+        Write-Skip "OpenDesign non detecte ($openDesignDir absent)"
+    }
+
     # Codex Desktop : chemin a investiguer (pas detecte sur ce poste, attente
     # info utilisateur sur le bon emplacement).
 }

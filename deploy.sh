@@ -1747,6 +1747,14 @@ deploy_mcp_server() {
         _gray "Claude Desktop non detecte ($claude_desktop_dir absent)"
     fi
 
+    local opendesign_config="$HOME/.od/mcp-config.json"
+    local opendesign_dir="$(dirname "$opendesign_config")"
+    if [[ -d "$opendesign_dir" ]]; then
+        add_mcp_server_to_json_config "$opendesign_config" "$server_name" "$server_command" "OpenDesign" "memory-kit"
+    else
+        _gray "OpenDesign non detecte ($opendesign_dir absent)"
+    fi
+
     # Codex Desktop : herite automatiquement de Codex CLI via le meme
     # fichier ~/.codex/config.toml (confirme par utilisateur). Pas d'action
     # supplementaire requise.
