@@ -99,6 +99,27 @@ for size in 16 32 64 128 256 512; do
 done
 iconutil -c icns -o "$ICONS_DIR/SecondBrain.icns" "$ICONSET_DIR"
 
+# 2.1 Stage release-kit style resources (core, adapters, i18n)
+# These are required by the wizard to finalize the kit config.
+STAGING_DIR="$DIST_DIR/staging"
+STAGING_RESOURCES="$STAGING_DIR/resources"
+STAGING_ENGINE="$STAGING_DIR/engine"
+STAGING_WHEELS="$STAGING_ENGINE/wheels"
+
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_RESOURCES" "$STAGING_WHEELS"
+
+echo "==> Staging resources"
+cp -R "$REPO_ROOT/../core" "$STAGING_RESOURCES/"
+cp -R "$REPO_ROOT/../adapters" "$STAGING_RESOURCES/"
+# Cleanup dev cruft
+find "$STAGING_RESOURCES" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+find "$STAGING_RESOURCES" -name "*.pyc" -delete 2>/dev/null || true
+
+echo "==> Building engine wheels"
+# Build wheels for the engine so the wizard can do an offline install.
+pip wheel --wheel-dir "$STAGING_WHEELS" "$MCP_SERVER_DIR"
+
 # 3. Run PyInstaller. CWD must be desktop-app/ so dist/ + build/ land
 #    where the rest of this script and the .iss installer expect them.
 (
@@ -109,8 +130,15 @@ iconutil -c icns -o "$ICONS_DIR/SecondBrain.icns" "$ICONSET_DIR"
         pyinstaller --noconfirm --clean "$BUILD_DIR/sb-desktop.spec"
 )
 
-# 4. PyInstaller creates the .app bundle on macOS. Keep the old manual layout
-# fallback for older spec files or non-standard PyInstaller behavior.
+# 4. PyInstaller creates the .app bundle on macOS.
+# Ensure resources/ and engine/ are available for the wizard.
+CONTENTS_DIR="$APP_BUNDLE/Contents"
+mkdir -p "$CONTENTS_DIR/resources"
+mkdir -p "$CONTENTS_DIR/engine"
+
+cp -R "$STAGING_RESOURCES/"* "$CONTENTS_DIR/resources/"
+cp -R "$STAGING_ENGINE/"* "$CONTENTS_DIR/engine/"
+
 if [[ ! -d "$APP_BUNDLE" ]]; then
     rm -rf "$APP_BUNDLE"
     mkdir -p "$APP_BUNDLE/Contents/MacOS"

@@ -518,7 +518,25 @@ class InstallLayout:
     def python_exe(self) -> Path:
         if sys.platform == "win32":
             return self.python_dir / "python.exe"
-        return self.python_dir / "bin" / "python"
+
+        bundled = self.python_dir / "bin" / "python"
+        if bundled.is_file():
+            return bundled
+
+        # Source fallback: in DEV mode, the running interpreter is the best bet.
+        if self.mode == InstallMode.DEV:
+            return Path(sys.executable)
+
+        # Production fallback on macOS/Linux: check if python3 is on PATH.
+        # This allows the wizard to run even if we didn't bundle a full
+        # portable Python distribution yet (V1 limitation).
+        import shutil
+
+        system_py = shutil.which("python3")
+        if system_py:
+            return Path(system_py)
+
+        return bundled
 
     @property
     def engine_already_bootstrapped(self) -> bool:
@@ -539,8 +557,16 @@ def find_install_layout() -> InstallLayout | None:
     """
     mode = paths.detect_install_mode()
     exe = Path(sys.executable).resolve()
+
+    # Windows layout: {install}/app/SecondBrainTray.exe
     if exe.parent.name == APP_BASENAME:
         return InstallLayout.from_install_dir(exe.parent.parent, mode=mode)
+
+    # macOS layout: {install}/SecondBrain.app/Contents/MacOS/SecondBrainTray
+    if sys.platform == "darwin" and exe.parent.name == "MacOS" and exe.parents[1].name == "Contents":
+        # On macOS, we can bundle engine/ and resources/ inside Contents/
+        return InstallLayout.from_install_dir(exe.parents[1], mode=mode)
+
     # Source checkout fallback for dev — return the desktop-app/ for tests.
     here = Path(__file__).resolve()
     return InstallLayout.from_install_dir(here.parents[3], mode=InstallMode.DEV)
