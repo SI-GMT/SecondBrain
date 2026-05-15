@@ -206,6 +206,29 @@ def _probe_pipx_once() -> tuple[str | None, str | None]:
         return _pipx_probe_cache
 
     binary_str = shutil.which("memory-kit-mcp")
+
+    if binary_str is None:
+        # If not on PATH, probe the canonical install locations directly.
+        # This avoids false warnings in GUI apps that don't source shell PATH.
+        from . import paths
+
+        candidates = [
+            paths.user_engine_scripts_dir() / "memory-kit-mcp",
+            paths.system_engine_scripts_dir() / "memory-kit-mcp",
+            paths.user_local_bin() / "memory-kit-mcp",
+            paths.system_local_bin() / "memory-kit-mcp",
+        ]
+        if sys.platform == "win32":
+            candidates = [
+                paths.user_engine_scripts_dir() / "memory-kit-mcp.exe",
+                paths.system_engine_scripts_dir() / "memory-kit-mcp.exe",
+            ]
+
+        for cand in candidates:
+            if cand.is_file():
+                binary_str = str(cand)
+                break
+
     if binary_str is None:
         _pipx_probe_cache = (None, None)
         return _pipx_probe_cache
@@ -244,17 +267,17 @@ def probe_status() -> StatusSnapshot:
     if pipx_path is None:
         return StatusSnapshot(
             level=StatusLevel.WARNING,
-            summary=(
-                "Desktop ready — but `memory-kit-mcp` is not on PATH, "
-                "so your LLM CLIs cannot use the vault yet."
-            ),
+            summary="Engine not found. Run the wizard to install the Memory Kit.",
             bundled_version=bundled,
         )
+
+    # Check if it's on the PATH of the current process
+    on_path = shutil.which("memory-kit-mcp") is not None
 
     if pipx_version is None:
         return StatusSnapshot(
             level=StatusLevel.WARNING,
-            summary="pipx binary present but its --version probe failed.",
+            summary="Engine binary present but its version probe failed.",
             bundled_version=bundled,
             pipx_binary_path=pipx_path,
         )
@@ -264,7 +287,7 @@ def probe_status() -> StatusSnapshot:
         return StatusSnapshot(
             level=StatusLevel.WARNING,
             summary=(
-                f"Desktop bundles v{bundled}, but the pipx install is "
+                f"Desktop bundles v{bundled}, but the installed engine is "
                 f"v{pipx_version}. Run an update to align them."
             ),
             bundled_version=bundled,
@@ -273,9 +296,22 @@ def probe_status() -> StatusSnapshot:
             versions_match=False,
         )
 
+    if not on_path:
+        return StatusSnapshot(
+            level=StatusLevel.OK,
+            summary=(
+                f"Engine v{bundled} ready. (Note: using absolute path as "
+                "it is not on your shell's PATH)."
+            ),
+            bundled_version=bundled,
+            pipx_binary_path=pipx_path,
+            pipx_version=pipx_version,
+            versions_match=True,
+        )
+
     return StatusSnapshot(
         level=StatusLevel.OK,
-        summary=f"Engine v{bundled} ready (desktop and pipx aligned).",
+        summary=f"Engine v{bundled} ready.",
         bundled_version=bundled,
         pipx_binary_path=pipx_path,
         pipx_version=pipx_version,

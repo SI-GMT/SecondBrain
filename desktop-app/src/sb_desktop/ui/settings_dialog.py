@@ -202,12 +202,28 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
         for label, value in (
             ("Vault:", str(kit.vault)),
             ("Engine:", str(kit.kit_repo) if kit.kit_repo else "(not set)"),
-            ("Language:", kit.language),
         ):
+            is_dev = label == "Engine:" and "Projets" in str(value)
             row = ttk.Frame(kit_box)
             row.pack(fill="x", pady=1)
             ttk.Label(row, text=label, width=14).pack(side="left")
-            ttk.Label(row, text=value, foreground="#555555").pack(side="left")
+            ttk.Label(
+                row,
+                text=value,
+                foreground="#aa3333" if is_dev else "#555555",
+            ).pack(side="left")
+            if is_dev:
+                ttk.Label(
+                    row,
+                    text=" (dev mode)",
+                    font=("", 8, "italic"),
+                    foreground="#aa3333",
+                ).pack(side="left", padx=4)
+
+        row_lang = ttk.Frame(kit_box)
+        row_lang.pack(fill="x", pady=1)
+        ttk.Label(row_lang, text="Language:", width=14).pack(side="left")
+        ttk.Label(row_lang, text=kit.language, foreground="#555555").pack(side="left")
 
     # ---- Vault structure audit ----
     if kit is not None:
@@ -420,6 +436,14 @@ def open_settings_dialog(settings: AppSettings, kit: KitConfig | None) -> AppSet
         tab_about, text="SecondBrain Desktop", font=("", 14, "bold")
     ).pack(anchor="w")
     ttk.Label(tab_about, text=f"Version {__version__}").pack(anchor="w")
+
+    layout = find_install_layout()
+    if layout:
+        ttk.Label(
+            tab_about,
+            text=f"Install mode: {layout.mode.value}",
+            foreground="#666666",
+        ).pack(anchor="w")
 
     try:
         from memory_kit_mcp import __version__ as kit_version

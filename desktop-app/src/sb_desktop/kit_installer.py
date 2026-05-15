@@ -478,34 +478,71 @@ class InstallLayout:
     resources_dir: Path
     mode: InstallMode = InstallMode.USER
 
+    # macOS/V2 decoupling: where the assets are bundled (read-only)
+    # vs where they are installed (writable).
+    source_resources_dir: Path | None = None
+    source_engine_dir: Path | None = None
+
     @classmethod
     def from_install_dir(
-        cls, install_dir: Path, mode: InstallMode | None = None
+        cls,
+        install_dir: Path,
+        mode: InstallMode | None = None,
+        source_dir: Path | None = None,
     ) -> "InstallLayout":
-        """Build a layout, auto-detecting ``mode`` from ``install_dir`` if omitted.
-
-        Auto-detection probes the canonical install roots
-        (``%ProgramFiles%[\\ SecondBrain]``, ``%LOCALAPPDATA%[\\ SecondBrain]``)
-        and falls back to a writability check on the engine directory
-        for unknown layouts (read-only → SYSTEM). This keeps callers
-        from passing the wrong mode and tripping the wizard's safety
-        rails — a real bug we hit when the wizard ran a USER-default
-        install flow against a Program Files install.
-        """
+        """Build a layout, auto-detecting ``mode`` from ``install_dir`` if omitted."""
         install_dir = install_dir.resolve()
         if mode is None:
             mode = paths.detect_install_mode(install_dir / APP_BASENAME / "ignored.exe")
+
         engine = install_dir / ENGINE_BASENAME
+        resources = install_dir / KIT_RESOURCES_BASENAME
+
+        source_engine = None
+        source_resources = None
+
+        if source_dir:
+            source_engine = source_dir / ENGINE_BASENAME
+            source_resources = source_dir / KIT_RESOURCES_BASENAME
+
+        # macOS USER install: suggested engine/resources location is in Application Support
+        # to ensure it's writable even if the .app was placed in a restricted folder
+        # or to avoid polluting the .app bundle.
+        if sys.platform == "darwin" and mode == InstallMode.USER:
+            support = paths.app_data_dir()
+            # If we were not given an explicit source_dir, the install_dir (Contents)
+            # is our asset source.
+            if not source_engine:
+                source_engine = engine
+            if not source_resources:
+                source_resources = resources
+
+            engine = support / ENGINE_BASENAME
+            resources = support / KIT_RESOURCES_BASENAME
+
+        if sys.platform == "win32":
+            scripts = engine / "Scripts"
+            site_pkgs = engine / "Lib" / "site-packages"
+        else:
+            scripts = engine / "bin"
+            # On POSIX, pip install --prefix lands in lib/pythonX.Y/site-packages
+            # but for a simplified embedded layout we might want to stay flat.
+            # However, the standard is lib/python<version>/site-packages.
+            # POC: use 'lib' for now, matching the most common layout.
+            site_pkgs = engine / "lib"
+
         return cls(
             install_dir=install_dir,
             app_dir=install_dir / APP_BASENAME,
             engine_dir=engine,
             python_dir=engine / "python",
             wheels_dir=engine / WHEELS_BASENAME,
-            scripts_dir=engine / "Scripts",
-            site_packages_dir=engine / "Lib" / "site-packages",
-            resources_dir=install_dir / KIT_RESOURCES_BASENAME,
+            scripts_dir=scripts,
+            site_packages_dir=site_pkgs,
+            resources_dir=resources,
             mode=mode,
+            source_engine_dir=source_engine,
+            source_resources_dir=source_resources,
         )
 
     @property
@@ -638,6 +675,45 @@ def _patch_pth_file(python_dir: Path) -> None:
         new_lines.append("..\\Lib\\site-packages")
         new_lines.append("..\\Scripts")
     pth.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def stage_assets(
+    layout: InstallLayout, on_progress: ProgressCallback = None
+) -> StepResult:
+    """Copy bundled assets to the target engine/resources dirs (macOS)."""
+    if not layout.source_engine_dir and not layout.source_resources_dir:
+        return StepResult(ok=True, label="Stage assets", detail="skipped (same location)")
+
+    # Engine
+    if layout.source_engine_dir and layout.source_engine_dir.is_dir():
+        if on_progress:
+            on_progress(f"Staging engine to {layout.engine_dir}…")
+        try:
+            if layout.engine_dir.exists():
+                shutil.rmtree(layout.engine_dir)
+            layout.engine_dir.parent.mkdir(parents=True, exist_ok=True)
+            # Only copy wheels for now on macOS (no full portable python yet)
+            wheels_src = layout.source_engine_dir / WHEELS_BASENAME
+            if wheels_src.is_dir():
+                layout.wheels_dir.mkdir(parents=True, exist_ok=True)
+                for whl in wheels_src.glob("*.whl"):
+                    shutil.copy2(whl, layout.wheels_dir / whl.name)
+        except OSError as exc:
+            return StepResult(ok=False, label="Stage assets", detail=f"engine copy failed: {exc}")
+
+    # Resources
+    if layout.source_resources_dir and layout.source_resources_dir.is_dir():
+        if on_progress:
+            on_progress(f"Staging resources to {layout.resources_dir}…")
+        try:
+            if layout.resources_dir.exists():
+                shutil.rmtree(layout.resources_dir)
+            layout.resources_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(layout.source_resources_dir, layout.resources_dir)
+        except OSError as exc:
+            return StepResult(ok=False, label="Stage assets", detail=f"resources copy failed: {exc}")
+
+    return StepResult(ok=True, label="Stage assets", detail="OK")
 
 
 def bootstrap_python_embeddable(
@@ -1101,6 +1177,7 @@ def run_install(
     report = InstallReport(ok=True)
 
     for step in (
+        stage_assets(layout, on_progress),
         bootstrap_python_embeddable(layout, on_progress),
         install_kit_wheels(layout, on_progress),
         register_path(layout, on_progress),
