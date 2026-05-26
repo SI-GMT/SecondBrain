@@ -47,6 +47,8 @@ def test_detect_llm_clis_no_installs(monkeypatch: pytest.MonkeyPatch, tmp_path: 
         "gemini-cli",
         "mistral-vibe",
         "copilot-cli",
+        "antigravity-cli",
+        "antigravity-desktop",
     }.issubset(identifiers)
     assert all(not r.installed for r in results)
 
@@ -139,6 +141,19 @@ def test_resolve_config_path_codex(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     cli = next(c for c in kit_installer._cli_targets() if c.identifier == "codex")
     path = kit_installer._resolve_config_path(cli)
     assert path == tmp_path / ".codex" / "config.toml"
+
+
+def test_resolve_config_path_antigravity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(kit_installer.Path, "home", classmethod(lambda cls: tmp_path))
+    
+    cli_cli = next(c for c in kit_installer._cli_targets() if c.identifier == "antigravity-cli")
+    path_cli = kit_installer._resolve_config_path(cli_cli)
+    assert path_cli == tmp_path / ".gemini" / "antigravity-cli" / "mcp_config.json"
+
+    cli_desktop = next(c for c in kit_installer._cli_targets() if c.identifier == "antigravity-desktop")
+    path_desktop = kit_installer._resolve_config_path(cli_desktop)
+    assert path_desktop == tmp_path / ".gemini" / "antigravity" / "mcp_config.json"
+
 
 
 def test_install_plan_dataclass(tmp_path: Path):

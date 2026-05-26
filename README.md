@@ -7,7 +7,7 @@
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#prérequis)
-[![CLIs](https://img.shields.io/badge/CLIs-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot-8A2BE2)](#cli-compatibles)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot%20%7C%20Antigravity-8A2BE2)](#cli-compatibles)
 [![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#sous-le-capot)
 [![i18n](https://img.shields.io/badge/conversation-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
 [![Desktop](https://img.shields.io/badge/desktop-installer%20Windows%20%7C%20DMG%20macOS-blue)](#installation)
@@ -33,7 +33,7 @@ Une **mémoire locale Markdown** que l'agent lit et écrit lui-même. Vous ne to
 |---|---|
 | « Je reprends sur le projet X. État : ... Décisions : ... Prochaine étape : ... » | « On continue. » |
 | Re-briefing manuel de 5-15 minutes | Reprise en quelques secondes |
-| Contexte coincé chez un fournisseur | Portable entre Claude, Gemini, Codex, Vibe, Copilot |
+| Contexte coincé chez un fournisseur | Portable entre Claude, Gemini, Codex, Vibe, Copilot, Antigravity |
 | L'historique se perd à chaque `/clear` | Archives horodatées immuables, recherchables |
 | Vous décidez quand sauvegarder | L'agent met à jour silencieusement à chaque décision |
 
@@ -112,6 +112,8 @@ Le vault s'audite tout seul (`/mem-health-scan`) et se répare en un clic (`/mem
 | **Gemini CLI** | Production | ✅ | ✅ |
 | **Mistral Vibe** | Production | ✅ | ✅ |
 | **GitHub Copilot CLI** | Fonctionnel | ✅ | ✅ |
+| **Antigravity CLI** | Fonctionnel | ✅ | ✅ |
+| **Antigravity Desktop** | Fonctionnel | ✅ | ✅ |
 
 Le script d'installation détecte automatiquement les CLI présentes sur votre poste et ne déploie que celles correspondantes. Aucune CLI n'est requise — installer celles dont vous vous servez suffit.
 
@@ -304,7 +306,7 @@ Documentation technique complète : [`docs/architecture/`](./docs/architecture/)
 
 | Phase | État | Portée |
 |---|---|---|
-| **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot |
+| **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot, Antigravity (CLI + Desktop) |
 | **Phase 3** | ✅ Terminée | Serveur MCP natif — 37 outils, 7 cibles auto-configurées |
 | **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit, bootstrap engine fiable + PATH cross-OS, multi-user RDP, désinstallation propre, auto-update dual-canal (moteur + desktop), détection CLI étendue (npm globals + alt dirs), wiring MCP avec path absolu (immune au PATH cache RDP), i18n EN/FR/ES/DE/RU, vault scaffold complet (`sb-desktop-v0.10.5`) |
 | **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |

@@ -148,9 +148,15 @@ Si une nouvelle CLI/app supporte MCP via un fichier de config dédié, étendre 
 
 Les templates `adapters/gemini-cli/commands/*.template.toml` doivent utiliser `prompt = '''...'''` (literal multi-line string), **jamais** `"""..."""` (basic multi-line string). Le Markdown des procédures `core/` contient des backslashes (`\/:*?"<>|`, regex, exemples de code Python/PowerShell) qui ne sont pas des séquences d'échappement TOML valides et cassent le parser Gemini (`FileCommandLoader: Failed to parse TOML`). Les literal strings ne processent rien — texte brut.
 
-## Le vault `memory/`
+## Le vault `memory/` (Bac à sable local)
 
-`memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :
+> [!CAUTION]
+> Le dossier `memory/` présent à la racine de ce dépôt de développement n'est qu'un **bac à sable local vide** destiné à exécuter les tests unitaires et à tester le déploiement du kit mémoire.
+> 
+> **Ne jamais écrire directement vos archives de session ou vos contextes dans `C:\_PROJETS\DEVOPS\SecondBrain\memory` !**
+> Le vrai vault Obsidian actif de l'utilisateur est configuré à un autre emplacement (ex: `C:\_BDC\GMT\memory`) et son chemin absolu doit impérativement être résolu à l'exécution en lisant la configuration globale `~/.memory-kit/config.json` (ou `memory-kit.json` dans les répertoires de configuration des CLI).
+
+Structure type d'un vault :
 
 - `index.md` — catalogue des projets et archives
 - `archives/` — fichiers horodatés, **immuables** (un par session complète)
@@ -158,7 +164,7 @@ Les templates `adapters/gemini-cli/commands/*.template.toml` doivent utiliser `p
 - `projets/{nom}/history.md` — fil chronologique avec liens vers les archives
 - `.obsidian/` — config Obsidian (créée automatiquement à l'ouverture du vault par Obsidian)
 
-**Fichiers Obsidian spéciaux** dans `memory/` : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec `Edit`/`Write`, passer par Obsidian.
+**Fichiers Obsidian spéciaux** : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec `Edit`/`Write`, passer par Obsidian.
 
 ## Conventions de déploiement
 

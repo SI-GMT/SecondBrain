@@ -72,6 +72,7 @@ def test_pdf_meaningful_extraction_via_reportlab_substitute(tmp_path: Path) -> N
     minimal PDF page with a Tj operator. This avoids pulling reportlab
     just for tests.
     """
+    pypdf = pytest.importorskip("pypdf")
     src = tmp_path / "real.pdf"
     # Minimal hand-rolled 1-page PDF with the literal "Hello memory kit, this is a test PDF document with enough characters to clear the scan threshold easily."
     body = (

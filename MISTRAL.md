@@ -36,9 +36,15 @@ Si une procédure doit diverger entre plateformes, c'est le signe qu'il manque u
 
 Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-projects`, `mem-search`, `mem-rename-project`, `mem-merge-projects`, `mem-digest`, `mem-rollback-archive` (gestion du vault).
 
-## Le vault `memory/`
+## Le vault `memory/` (Bac à sable local)
 
-`memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :
+> [!CAUTION]
+> Le dossier `memory/` présent à la racine de ce dépôt de développement n'est qu'un **bac à sable local vide** destiné à exécuter les tests unitaires et à tester le déploiement du kit mémoire.
+> 
+> **Ne jamais écrire directement vos archives de session ou vos contextes dans `C:\_PROJETS\DEVOPS\SecondBrain\memory` !**
+> Le vrai vault Obsidian actif de l'utilisateur est configuré à un autre emplacement (ex: `C:\_BDC\GMT\memory`) et son chemin absolu doit impérativement être résolu à l'exécution en lisant la configuration globale `~/.memory-kit/config.json` (ou `memory-kit.json` dans les répertoires de configuration des CLI).
+
+Structure type d'un vault :
 
 - `index.md` — catalogue des projets et archives
 - `archives/` — fichiers horodatés, **immuables** (un par session complète)
@@ -46,7 +52,7 @@ Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-
 - `projets/{nom}/history.md` — fil chronologique avec liens vers les archives
 - `.obsidian/` — config Obsidian (créée automatiquement à l'ouverture du vault par Obsidian)
 
-**Fichiers Obsidian spéciaux** dans `memory/` : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec des opérations texte brutes, passer par Obsidian.
+**Fichiers Obsidian spéciaux** : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec des opérations texte brutes, passer par Obsidian.
 
 ## Conventions de déploiement
 
