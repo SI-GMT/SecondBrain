@@ -140,6 +140,18 @@
     "mem_help": {
       "procedure": "mem-help.md",
       "last_synced_hash": "730694cd8501b4611a4878a2df86ec39ae4b3a2b30706b3366f27b259318e405"
+    },
+    "mem_vault_migrate": {
+      "procedure": "mem-vault-migrate.md",
+      "last_synced_hash": "509e1a5d30918a49076b9ea5ac91e0036489531510b6331b0451a4962936d162"
+    },
+    "mem_relocate_project": {
+      "procedure": "mem-relocate-project.md",
+      "last_synced_hash": "7afc7a4b2228f0aadc8bb834dda76e0dd65c1a95fbe091100c47eddcb651d946"
+    },
+    "mem_archive_rewrite_paths": {
+      "procedure": "mem-archive-rewrite-paths.md",
+      "last_synced_hash": "0ca8a077a52bccef5f56c68108c687545b9a20ff86cf27d4446818b0a27dcbfe"
     }
   }
 }

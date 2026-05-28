@@ -1,0 +1,6 @@
+---
+name: mem-archive-rewrite-paths
+description: "Convert legacy absolute paths in a project's archive bodies (and context.md/history.md) to the canonical <repo>/... sigil form. Doctrine-permitted edit since paths are infrastructure metadata, not semantic content. Dry-run by default, requires --confirm to mutate. Companion to mem-relocate-project."
+---
+
+{{PROCEDURE}}

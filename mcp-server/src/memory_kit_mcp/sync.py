@@ -91,6 +91,10 @@ TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
     ("mem_archeo_atlassian", "mem-archeo-atlassian.md"),
     # Localized help (v0.11.x)
     ("mem_help", "mem-help.md"),
+    # Vault & project relocation (v0.13.x — disk reorg / path drift recovery)
+    ("mem_vault_migrate", "mem-vault-migrate.md"),
+    ("mem_relocate_project", "mem-relocate-project.md"),
+    ("mem_archive_rewrite_paths", "mem-archive-rewrite-paths.md"),
 )
 
 
