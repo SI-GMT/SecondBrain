@@ -159,19 +159,27 @@ core_root = Path(sys.argv[2])
 config_file_ref = sys.argv[3]
 skill_name = sys.argv[4] if len(sys.argv) > 4 else ""
 
-INCLUDE_RE = re.compile(r'\{\{INCLUDE\s+(_\w+)\}\}')
+# Include names can contain hyphens (_repo-topology, _repo-paths,
+# _frontmatter-archeo, …) — match [\w-], not just \w, else the directive is
+# left unresolved (literal {{INCLUDE …}} leaks into the deployed skill).
+INCLUDE_RE = re.compile(r'\{\{INCLUDE\s+(_[\w-]+)\}\}')
 
-def resolve(content, depth=0):
-    if depth > 5:
-        sys.stderr.write("Profondeur maximale d'inclusion depassee (5). Cycle suspecte.\n")
+def resolve(content, depth=0, ancestors=()):
+    if depth > 10:
+        sys.stderr.write("Profondeur maximale d'inclusion depassee (10). Cycle suspecte.\n")
         sys.exit(1)
     def repl(match):
         name = match.group(1)
+        # Cycle guard: if the block is already being expanded up the chain,
+        # leave the directive LITERAL. Some doctrine blocks (_repo-topology,
+        # _archived, _when-to-script) cite their own name as a syntax example.
+        if name in ancestors:
+            return match.group(0)
         path = core_root / f"{name}.md"
         if not path.exists():
             sys.stderr.write(f"Bloc d'inclusion introuvable : {{{{INCLUDE {name}}}}} -> {path}\n")
             sys.exit(1)
-        return resolve(path.read_text(encoding='utf-8'), depth + 1)
+        return resolve(path.read_text(encoding='utf-8'), depth + 1, ancestors + (name,))
     return INCLUDE_RE.sub(repl, content)
 
 content = proc_path.read_text(encoding='utf-8')

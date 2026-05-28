@@ -93,6 +93,8 @@ After the router writes, **always** rewrite the entire `{VAULT}/10-episodes/{kin
 
 {{INCLUDE _linking}}
 
+{{INCLUDE _repo-paths}}
+
 ### 4.1. Wikilink resolution enforcement (v0.9.x)
 
 Per the wikilink resolution invariant in `_linking.md`: every `[[X]]` written into a persisted vault file MUST resolve to an existing target at the time of writing. `mem-archive` enforces this **before** persisting, in both modes:

@@ -322,13 +322,17 @@ function Resolve-IncludeDirectives {
     param(
         [Parameter(Mandatory=$true)][string]$Content,
         [Parameter(Mandatory=$true)][string]$BlocsRoot,
-        [int]$Depth = 0
+        [int]$Depth = 0,
+        [string[]]$Ancestors = @()
     )
-    if ($Depth -gt 5) {
-        throw "Profondeur maximale d'inclusion depassee (5). Cycle d'inclusion suspecte."
+    if ($Depth -gt 10) {
+        throw "Profondeur maximale d'inclusion depassee (10). Cycle d'inclusion suspecte."
     }
 
-    $pattern = '\{\{INCLUDE\s+(_\w+)\}\}'
+    # Include names can contain hyphens (_repo-topology, _repo-paths,
+    # _frontmatter-archeo, …) — match [\w-], not just \w, else the directive
+    # is left unresolved (literal {{INCLUDE …}} leaks into the deployed skill).
+    $pattern = '\{\{INCLUDE\s+(_[\w-]+)\}\}'
     $allMatches = [regex]::Matches($Content, $pattern)
 
     if ($allMatches.Count -eq 0) {
@@ -340,13 +344,20 @@ function Resolve-IncludeDirectives {
     $sortedMatches = @($allMatches) | Sort-Object -Property Index -Descending
     foreach ($match in $sortedMatches) {
         $blocName = $match.Groups[1].Value
+        # Cycle guard : si le bloc est deja en cours d'expansion plus haut dans
+        # la chaine, laisser la directive LITTERALE. Cas concret : certains
+        # blocs doctrine (_repo-topology, _archived, _when-to-script) citent
+        # leur propre nom comme EXEMPLE de syntaxe — il ne faut pas le resoudre.
+        if ($Ancestors -contains $blocName) {
+            continue
+        }
         $blocPath = Join-Path $BlocsRoot "$blocName.md"
         if (-not (Test-Path $blocPath)) {
             throw "Bloc d'inclusion introuvable : {{INCLUDE $blocName}} -> $blocPath manquant."
         }
         $blocContent = Get-Content -Path $blocPath -Raw
         # Resolution recursive (un bloc peut en inclure d'autres).
-        $blocContent = Resolve-IncludeDirectives -Content $blocContent -BlocsRoot $BlocsRoot -Depth ($Depth + 1)
+        $blocContent = Resolve-IncludeDirectives -Content $blocContent -BlocsRoot $BlocsRoot -Depth ($Depth + 1) -Ancestors ($Ancestors + $blocName)
         # Remplacement litteral (pas regex) : evite les soucis d'echappement
         # avec les caracteres speciaux du contenu inclus.
         $result = $result.Substring(0, $match.Index) + $blocContent + $result.Substring($match.Index + $match.Length)

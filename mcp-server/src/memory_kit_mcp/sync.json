@@ -7,7 +7,7 @@
     },
     "mem_archive": {
       "procedure": "mem-archive.md",
-      "last_synced_hash": "171e23bfc20f0e1ec07a269e8db5f70e52725cae32bdf3e492538b0f3a27abca"
+      "last_synced_hash": "2f495879535d2144d9838a029edf39f9e90d85509e88b3adada584cfb4f4c4c1"
     },
     "mem_list": {
       "procedure": "mem-list.md",
@@ -131,7 +131,7 @@
     },
     "mem_archeo_git": {
       "procedure": "mem-archeo-git.md",
-      "last_synced_hash": "d4f2f7f515817f574da3147f8ab22d163885fc1387c820b564d9904842dd0c50"
+      "last_synced_hash": "fe665020cfc6220815d2ace08833b14bc7f998f8f75efa6d19156733adc80c09"
     },
     "mem_archeo_atlassian": {
       "procedure": "mem-archeo-atlassian.md",

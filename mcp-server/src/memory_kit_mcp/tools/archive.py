@@ -233,6 +233,17 @@ def _do_full(
     _enforce_wikilinks("archive_body_md", archive_body_md, vault)
     _enforce_wikilinks("context_md", new_context_md, vault)
 
+    # Phase E doctrine: emit <repo>/... sigils, not absolute paths. Resolve
+    # repo_path from the CURRENT context.md before it gets reset below; no-op
+    # for legacy projects without a repo_path.
+    from memory_kit_mcp.vault.sigil import project_repo_path
+    from memory_kit_mcp.vault.repo_paths import rewrite_abs_paths_to_sigil
+
+    _repo_path = project_repo_path(folder)
+    if _repo_path:
+        archive_body_md, _ = rewrite_abs_paths_to_sigil(archive_body_md, _repo_path)
+        new_context_md, _ = rewrite_abs_paths_to_sigil(new_context_md, _repo_path)
+
     now = datetime.now()
     date_iso = now.date().isoformat()
     timestamp = now.strftime("%Y-%m-%d-%Hh%M")
