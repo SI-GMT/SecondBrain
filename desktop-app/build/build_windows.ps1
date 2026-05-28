@@ -321,8 +321,11 @@ if (-not $ResolvedIscc) {
     throw 'Inno Setup 6 (ISCC.exe) is required to build the installer.'
 }
 
-Write-Host "==> Compiling installer (ISCC: $ResolvedIscc)"
-& $ResolvedIscc /Q $IssFile
+Write-Host "==> Compiling installer (ISCC: $ResolvedIscc) — version $VersionLine"
+# Inject the version from pyproject.toml so the installer filename + AppVersion
+# never drift from the canonical source (installer.iss only carries a dev
+# fallback behind #ifndef).
+& $ResolvedIscc /Q "/DMyAppVersion=$VersionLine" $IssFile
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC failed with exit code $LASTEXITCODE"
 }

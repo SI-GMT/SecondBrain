@@ -27,7 +27,13 @@
 ; -----------------------------------------------------------------------------
 
 #define MyAppName        "SecondBrain Desktop"
-#define MyAppVersion     "0.10.8"
+; MyAppVersion is injected at compile time by build_windows.ps1 via
+; `ISCC /DMyAppVersion=<x.y.z>` (read from desktop-app/pyproject.toml).
+; The fallback below only applies when compiling installer.iss by hand —
+; never trust it for a release build (cf. dynamic-version doctrine).
+#ifndef MyAppVersion
+  #define MyAppVersion   "0.0.0-dev"
+#endif
 #define MyAppPublisher   "SI-GMT"
 #define MyAppURL         "https://github.com/SI-GMT/SecondBrain"
 #define MyAppExeName     "SecondBrainTray.exe"
