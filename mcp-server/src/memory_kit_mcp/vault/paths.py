@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+
+def _norm_slug(s: str) -> str:
+    """Collapse a slug to its alphanumeric skeleton for tolerant matching.
+
+    ``"Second Brain"``, ``"second-brain"`` and ``"secondbrain"`` all map to
+    ``"secondbrain"`` — so a user typing the project name with spaces, dashes
+    or mixed case still resolves to the on-disk folder instead of triggering a
+    disambiguation loop.
+    """
+    return re.sub(r"[^a-z0-9]", "", s.lower())
 
 # Canonical zone names (English, brain-centric v0.5+)
 ZONE_INBOX = "00-inbox"
@@ -94,4 +106,19 @@ def resolve_slug(vault: Path, slug: str) -> tuple[Path, str, bool] | None:
     d = domain_dir(vault, slug)
     if d.exists():
         return d, "domain", False
+
+    # Tolerant fallback: match on the alphanumeric skeleton so "Second Brain"
+    # or "second-brain" resolve to the "secondbrain" folder. Resolution order
+    # is preserved (projects → archived → domains); only an unambiguous single
+    # match is accepted to avoid silently loading the wrong project.
+    target = _norm_slug(slug)
+    if target:
+        for lister, base, kind, is_archived in (
+            (list_projects, project_dir, "project", False),
+            (list_archived, archived_dir, "project", True),
+            (list_domains, domain_dir, "domain", False),
+        ):
+            hits = [name for name in lister(vault) if _norm_slug(name) == target]
+            if len(hits) == 1:
+                return base(vault, hits[0]), kind, is_archived
     return None
