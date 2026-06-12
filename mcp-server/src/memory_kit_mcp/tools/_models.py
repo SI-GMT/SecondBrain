@@ -151,6 +151,66 @@ class DigestResult(BaseModel):
     summary_md: str
 
 
+class WorklogSession(BaseModel):
+    """One archived session collected by mem_worklog, scoped to a week."""
+
+    date: str  # YYYY-MM-DD (from the archive filename prefix)
+    time: str | None = None  # HHhMM (from the archive filename), best-effort
+    weekday: str = ""  # Mon..Sun (English short form, deterministic)
+    slug: str  # project or domain slug the archive belongs to
+    kind: str = "project"  # 'project' | 'domain'
+    filename: str
+    subject: str | None = None  # human-readable subject parsed from the filename
+    excerpt: str = ""  # head excerpt of the body (summary signal)
+    next_steps: str = ""  # extracted "Reste à faire / Prochaines étapes / Next steps" block
+
+
+class WorklogDay(BaseModel):
+    """One day of the worklog window with its naive equal-split proration."""
+
+    date: str  # YYYY-MM-DD
+    weekday: str  # Mon..Sun
+    is_weekend: bool = False
+    sessions: int = 0
+    projects: list[str] = Field(default_factory=list)
+    # Naive proration: amplitude_hours split equally across the DISTINCT
+    # projects active that day. The LLM refines this with density judgment.
+    hours_by_project: dict[str, float] = Field(default_factory=dict)
+
+
+class WorklogResult(BaseModel):
+    """Result of mem_worklog — a week's archives collected across all projects.
+
+    Deterministic collector: globs every project's (and domain's) archives/
+    folder, keeps the ones whose filename date falls in the Monday→Sunday week
+    of ``week_of``, and returns them grouped by day + a naive equal-split
+    proration over a configurable daily amplitude. The LLM caller then refines
+    the proration with density judgment and renders the final report using the
+    vault worklog template (``template_md``) when present.
+    """
+
+    week_start: str  # Monday, YYYY-MM-DD
+    week_end: str  # Sunday (or Friday when include_weekend=False), YYYY-MM-DD
+    amplitude_hours: float
+    include_weekend: bool = False
+    sessions_total: int = 0
+    projects: list[str] = Field(default_factory=list)
+    sessions: list[WorklogSession] = Field(default_factory=list)
+    days: list[WorklogDay] = Field(default_factory=list)
+    # Sum of the naive per-day proration across the week, per project.
+    hours_by_project_total: dict[str, float] = Field(default_factory=dict)
+    template_exists: bool = False
+    template_md: str = ""  # raw content of {VAULT}/99-meta/worklog-template.md when present
+    template_seeded: bool = False  # True when this call created the default template (first use)
+    # ---- persist phase (phase="persist") ----
+    persisted: bool = False  # True when this call wrote the weekly worklog archive
+    week_number: int = 0  # ISO week number of week_start (0 in collect phase output)
+    archive_path: str = ""  # vault-relative POSIX path of the persisted worklog archive
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    summary_md: str = ""
+
+
 class HealthFinding(BaseModel):
     """One finding produced by mem_health_scan."""
 

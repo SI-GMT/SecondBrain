@@ -21,6 +21,10 @@
       "procedure": "mem-digest.md",
       "last_synced_hash": "6bd318435223430c0b895bda3590b2a9c44d8bd16c7706a4ab41cf5596e8ea5a"
     },
+    "mem_worklog": {
+      "procedure": "mem-worklog.md",
+      "last_synced_hash": "d5240ddf22129d200c0b0393defe59d3e652553b0c1155622831a64de488b3b9"
+    },
     "mem_init_project": {
       "procedure": "mem-init-project.md",
       "last_synced_hash": "7019bfc616e8dceae88b77c1595d97475ed8c02ecadad9d76912e8a576f49757"

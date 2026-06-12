@@ -51,6 +51,7 @@ TOOL_PROCEDURE_MAPPING: tuple[tuple[str, str], ...] = (
     ("mem_list", "mem-list.md"),
     ("mem_search", "mem-search.md"),
     ("mem_digest", "mem-digest.md"),
+    ("mem_worklog", "mem-worklog.md"),
     # Vault management
     ("mem_init_project", "mem-init-project.md"),
     ("mem_rename", "mem-rename.md"),

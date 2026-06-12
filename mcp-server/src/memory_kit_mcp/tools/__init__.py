@@ -50,6 +50,7 @@ from memory_kit_mcp.tools import (
     search,
     update_phase,
     vault_migrate,
+    worklog,
 )
 
 
@@ -62,6 +63,7 @@ def register_all(mcp: FastMCP) -> None:
     list_tool.register(mcp)
     search.register(mcp)
     digest.register(mcp)
+    worklog.register(mcp)
     # Vault management
     init_project.register(mcp)
     rename.register(mcp)

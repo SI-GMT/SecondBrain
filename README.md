@@ -267,6 +267,7 @@ Le déclenchement automatique est très fiable sur les modèles principaux (Clau
 | `/mem-list` | Lister projets et domaines |
 | `/mem-search {requête}` | Recherche plein-texte |
 | `/mem-digest {projet}` | Synthèse des dernières sessions |
+| `/mem-worklog [date] [--amplitude H]` | Relevé d'heures + rapport d'activité hebdo (prorata multi-projets) |
 | `/mem-rename`, `/mem-merge`, `/mem-reclass` | Réorganisation du vault |
 | `/mem-health-scan`, `/mem-health-repair` | Audit + réparation automatique |
 | `/mem-vault-migrate`, `/mem-relocate-project`, `/mem-archive-rewrite-paths` | Déplacement du vault / réindexation des chemins après une réorganisation disque |
