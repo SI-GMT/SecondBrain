@@ -56,6 +56,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/memory_kit_mcp"]
 
+# Explicit allow-list so the sdist ships only the package, its tests and
+# metadata — never build/test venvs, lockfiles or caches. Without this,
+# hatchling's VCS default swept .venv-test/ (ruff.exe, pywin32…) into a 29 MB
+# sdist. Keep this list tight.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/memory_kit_mcp",
+    "tests",
+    "pyproject.toml",
+    "README.md",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

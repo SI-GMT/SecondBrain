@@ -267,7 +267,7 @@ Le déclenchement automatique est très fiable sur les modèles principaux (Clau
 | `/mem-list` | Lister projets et domaines |
 | `/mem-search {requête}` | Recherche plein-texte |
 | `/mem-digest {projet}` | Synthèse des dernières sessions |
-| `/mem-worklog [date] [--amplitude H]` | Relevé d'heures + rapport d'activité hebdo (prorata multi-projets) |
+| `/mem-worklog [date] [--amplitude H]` | Relevé d'heures + rapport d'activité hebdo (prorata multi-projets, 3 niveaux brief/digest/détaillé, archive hebdo persistée) |
 | `/mem-rename`, `/mem-merge`, `/mem-reclass` | Réorganisation du vault |
 | `/mem-health-scan`, `/mem-health-repair` | Audit + réparation automatique |
 | `/mem-vault-migrate`, `/mem-relocate-project`, `/mem-archive-rewrite-paths` | Déplacement du vault / réindexation des chemins après une réorganisation disque |
@@ -294,7 +294,7 @@ Choisie à l'installation, modifiable via `.\deploy.ps1 -Language fr` ou en édi
 
 Pour ceux que ça intéresse : SecondBrain combine trois couches complémentaires.
 
-- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 40 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (558 tests).
+- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 41 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (577 tests).
 - **Mode skills fallback** — quand le serveur n'est pas démarré (ou pour les CLI sans MCP), les CLI exécutent les procédures Markdown originales. Comportement identique côté utilisateur.
 - **App desktop SecondBrain Desktop** (optionnelle) — icône dans la zone de notification, runtime Python embarqué + wheels offline, assistant guidé, surveillance santé du vault, mise à jour confirm-then-run. Consomme l'engine en pur in-process, zéro subprocess MCP par action. Voir [`desktop-app/README.md`](./desktop-app/README.md).
 
@@ -309,7 +309,7 @@ Documentation technique complète : [`docs/architecture/`](./docs/architecture/)
 | Phase | État | Portée |
 |---|---|---|
 | **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot, Antigravity (CLI + Desktop) |
-| **Phase 3** | ✅ Terminée | Serveur MCP natif — 40 outils, 7 cibles auto-configurées |
+| **Phase 3** | ✅ Terminée | Serveur MCP natif — 41 outils, 7 cibles auto-configurées |
 | **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit, bootstrap engine fiable + PATH cross-OS, multi-user RDP, désinstallation propre, auto-update dual-canal (moteur + desktop), détection CLI étendue (npm globals + alt dirs), wiring MCP avec path absolu (immune au PATH cache RDP), i18n EN/FR/ES/DE/RU, vault scaffold complet (`sb-desktop-v0.10.5`) |
 | **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |
 
