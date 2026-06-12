@@ -63,6 +63,13 @@ GITHUB_RELEASES_URL = (
 )
 _DESKTOP_TAG_RE = re.compile(r"^sb-desktop-v(\d+\.\d+\.\d+)$")
 INSTALLER_ASSET_RE = re.compile(r"SecondBrainDesktop-[\d\.]+-setup\.exe$", re.I)
+_ENGINE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
+# Offline wheelhouse asset for in-place engine updates: a zip of memory_kit_mcp
+# + all its transitive deps as cp312 win_amd64 wheels. Built per engine release
+# (see desktop-app/build/build_engine_wheelhouse.ps1). Pinned, no PyPI needed.
+ENGINE_WHEELHOUSE_RE = re.compile(
+    r"memory_kit_mcp-[\d\.]+-wheelhouse-win_amd64\.zip$", re.I
+)
 
 
 class UpdateCheckResult(BaseModel):
@@ -156,8 +163,48 @@ def _silent_subprocess_kwargs() -> dict[str, Any]:
     }
 
 
+def _fetch_engine_asset(version: str) -> tuple[str | None, str | None]:
+    """Resolve the wheelhouse asset of the engine release ``v{version}``.
+
+    Returns ``(asset_url, asset_filename)`` or ``(None, None)`` when the
+    release has no matching wheelhouse asset (or the network call fails).
+    Best-effort — never raises: the version check stays usable even when the
+    asset lookup is unavailable.
+    """
+    import json as _json
+
+    try:
+        req = urllib.request.Request(
+            GITHUB_RELEASES_URL,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310
+            releases = _json.loads(resp.read())
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        log.warning("engine asset lookup failed: %s", exc)
+        return None, None
+
+    target_tag = f"v{version}"
+    for entry in releases or []:
+        if entry.get("tag_name") != target_tag:
+            continue
+        for asset in entry.get("assets") or []:
+            name = asset.get("name", "")
+            if ENGINE_WHEELHOUSE_RE.search(name):
+                return asset.get("browser_download_url"), name
+        break
+    return None, None
+
+
 def check_update(*, force_refresh: bool = False) -> UpdateCheckResult:
-    """In-process version probe. Cached by the engine itself (1 h default)."""
+    """In-process version probe. Cached by the engine itself (1 h default).
+
+    When an update is available, additionally resolves the release's offline
+    wheelhouse asset so the dialog can offer an in-place engine upgrade.
+    """
     try:
         from memory_kit_mcp.update_check import check_for_update
     except ImportError as exc:
@@ -175,12 +222,19 @@ def check_update(*, force_refresh: bool = False) -> UpdateCheckResult:
         .replace("+00:00", "Z")
     )
 
+    asset_url: str | None = None
+    asset_filename: str | None = None
+    if info.update_available and info.latest_version:
+        asset_url, asset_filename = _fetch_engine_asset(info.latest_version)
+
     return UpdateCheckResult(
         channel="engine",
         ok=info.error is None or info.error == "opt-out",
         update_available=info.update_available,
         current_version=info.current_version,
         latest_version=info.latest_version,
+        asset_url=asset_url,
+        asset_filename=asset_filename,
         error=info.error,
         last_checked_iso=last_checked_iso,
         summary_md=(
@@ -676,6 +730,66 @@ def install_engine_update(
     return ApplyResult(
         ok=True, detail=f"engine updated in place at {layout.engine_dir}"
     )
+
+
+def _locate_wheels_dir(root: Path) -> Path | None:
+    """Find the directory holding the ``*.whl`` files inside an extracted
+    wheelhouse. Returns ``root`` when wheels sit at the top level, else the
+    first sub-directory that contains at least one wheel, else ``None``.
+    """
+    if any(root.glob("*.whl")):
+        return root
+    for sub in sorted(p for p in root.iterdir() if p.is_dir()):
+        if any(sub.glob("*.whl")):
+            return sub
+    return None
+
+
+def download_and_install_engine(
+    asset_url: str,
+    asset_filename: str,
+    *,
+    on_download=None,
+    on_status=None,
+) -> ApplyResult:
+    """Download the offline wheelhouse, extract it, and pip-install in place.
+
+    ``on_download(received, total)`` drives the download progress bar;
+    ``on_status(message)`` surfaces the extract/install phases. Both are
+    optional and best-effort. The wheelhouse is a zip of ``memory_kit_mcp`` +
+    its transitive deps as wheels; extraction feeds ``install_engine_update``
+    which runs ``pip install --no-index --find-links`` against the embedded
+    python (offline, version-pinned).
+    """
+    import zipfile
+
+    dl = download_asset(asset_url, asset_filename, on_progress=on_download)
+    if not dl.ok or dl.path is None:
+        return ApplyResult(ok=False, error=f"download failed: {dl.error}")
+
+    if on_status is not None:
+        try:
+            on_status("Extracting wheelhouse…")
+        except Exception:
+            pass
+
+    extract_dir = _downloads_dir() / (asset_filename[:-4] if asset_filename.endswith(".zip") else asset_filename + ".d")
+    try:
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(dl.path) as zf:
+            zf.extractall(extract_dir)
+    except (OSError, zipfile.BadZipFile) as exc:
+        return ApplyResult(ok=False, error=f"wheelhouse extract failed: {exc}")
+
+    wheels_dir = _locate_wheels_dir(extract_dir)
+    if wheels_dir is None:
+        return ApplyResult(
+            ok=False, error="no .whl files found inside the wheelhouse"
+        )
+
+    return install_engine_update(wheels_dir, on_progress=on_status)
 
 
 def _quote_arg(arg: str) -> str:

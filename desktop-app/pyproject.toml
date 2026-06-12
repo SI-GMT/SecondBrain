@@ -57,6 +57,12 @@ dev = [
     "pytest-cov>=5",
     "pytest-mock>=3.12",
     "ruff>=0.6",
+    # The test suite imports the real engine (e.g. tests/test_health.py reaches
+    # into memory_kit_mcp.health). It is NOT a runtime/build dep (bundled at
+    # PyInstaller time, see [dependencies]) — only the tests need it. Pinned to
+    # the local checkout via [tool.uv.sources] so `uv run pytest` works without
+    # a manual `uv pip install -e ../mcp-server`.
+    "memory-kit-mcp",
 ]
 build = [
     "pyinstaller>=6.10",
@@ -69,6 +75,11 @@ macos = [
     "pyobjc-core>=10.0; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
 ]
+
+[tool.uv.sources]
+# Engine lives in the same repo; the test suite uses it editable. Never
+# published to PyPI, so resolve it from the sibling checkout.
+memory-kit-mcp = { path = "../mcp-server", editable = true }
 
 [build-system]
 requires = ["hatchling"]

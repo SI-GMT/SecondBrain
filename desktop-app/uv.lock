@@ -702,6 +702,34 @@ wheels = [
 ]
 
 [[package]]
+name = "memory-kit-mcp"
+version = "0.14.0"
+source = { editable = "../mcp-server" }
+dependencies = [
+    { name = "fastmcp" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beautifulsoup4", marker = "extra == 'doc-readers'", specifier = ">=4.12" },
+    { name = "fastmcp", specifier = ">=2.13" },
+    { name = "lxml", marker = "extra == 'doc-readers'", specifier = ">=5.0" },
+    { name = "openpyxl", marker = "extra == 'doc-readers'", specifier = ">=3.1" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pypdf", marker = "extra == 'doc-readers'", specifier = ">=4.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
+    { name = "python-docx", marker = "extra == 'doc-readers'", specifier = ">=1.1" },
+    { name = "python-pptx", marker = "extra == 'doc-readers'", specifier = ">=0.6.23" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+]
+provides-extras = ["dev", "doc-readers"]
+
+[[package]]
 name = "more-itertools"
 version = "11.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1437,7 +1465,7 @@ wheels = [
 
 [[package]]
 name = "sb-desktop"
-version = "0.10.8"
+version = "0.11.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
@@ -1453,6 +1481,7 @@ build = [
     { name = "pyinstaller" },
 ]
 dev = [
+    { name = "memory-kit-mcp" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1471,6 +1500,7 @@ windows = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=2.13" },
+    { name = "memory-kit-mcp", marker = "extra == 'dev'", editable = "../mcp-server" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "plyer", specifier = ">=2.1" },
     { name = "pydantic", specifier = ">=2.9" },

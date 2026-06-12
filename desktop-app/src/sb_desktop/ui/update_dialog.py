@@ -24,6 +24,7 @@ from ..update import (
     DownloadResult,
     UpdateCheckResult,
     UpdateRunResult,
+    download_and_install_engine,
     download_asset,
     install_engine_update,
     launch_desktop_installer,
@@ -249,27 +250,62 @@ def _apply_desktop(result: UpdateCheckResult, row: _ChannelRow) -> None:
 
 
 def _apply_engine(result: UpdateCheckResult, row: _ChannelRow) -> None:
-    """Engine in-place pip --upgrade against the bundled python.exe.
+    """Engine in-place upgrade via the offline wheelhouse asset.
 
-    Currently disabled in the UI when the engine GitHub release does
-    not attach a wheel asset — pure GitHub policy decision, no
-    technical blocker on the desktop side. The release pipeline
-    extension that uploads ``memory_kit_mcp-*.whl`` + a wheelhouse
-    zip is tracked separately. Once the assets land this path will
-    auto-enable for all installed users.
+    Downloads the release's ``memory_kit_mcp-*-wheelhouse-*.zip``, extracts
+    it, and runs :func:`install_engine_update` (pip ``--no-index
+    --find-links`` against the embedded ``python.exe``). When the engine lives
+    under a system install, pip re-elevates via a UAC prompt. Falls back to
+    opening the release page when no wheelhouse asset is attached.
     """
-    if not result.asset_url:
+    if not result.asset_url or not result.asset_filename:
         return _open_release_page(result, row, "engine")
 
-    # Engine wheels not yet attached to GH releases — see docstring.
-    row.master.after(
-        0,
-        lambda: row.set_status(
-            "Engine wheel asset not yet attached to the GitHub release. "
-            "Install the next SecondBrain Desktop release to refresh the "
-            "engine, or use the kit's deploy script manually."
-        ),
+    def on_download(received: int, total: int | None) -> None:
+        if total and total > 0:
+            pct = (received / total) * 100
+            row.master.after(0, lambda: row.set_progress(pct))
+            row.master.after(
+                0,
+                lambda: row.set_status(
+                    f"Downloading engine wheelhouse… "
+                    f"{received // 1024} KB / {total // 1024} KB"
+                ),
+            )
+        else:
+            row.master.after(
+                0,
+                lambda: row.set_status(
+                    f"Downloading engine wheelhouse… {received // 1024} KB"
+                ),
+            )
+
+    def on_status(message: str) -> None:
+        row.master.after(0, lambda: row.set_status(message))
+
+    row.set_status("Downloading engine wheelhouse…")
+    apply_result = download_and_install_engine(
+        result.asset_url,
+        result.asset_filename,
+        on_download=on_download,
+        on_status=on_status,
     )
+    if apply_result.ok:
+        row.master.after(
+            0,
+            lambda: row.set_status(
+                "Engine updated in place. Restart your CLI sessions to pick "
+                "up the new version."
+            ),
+        )
+        row.master.after(0, lambda: row.disable_button("Up to date"))
+    else:
+        row.master.after(
+            0,
+            lambda: row.set_status(
+                f"Engine update failed: {apply_result.error}"
+            ),
+        )
 
 
 def _open_release_page(
