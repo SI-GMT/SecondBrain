@@ -87,7 +87,10 @@ async def test_worklog_seeds_default_template_on_first_use(
     assert "Worklog template" in text
     # Format-only: it must NOT carry a project→category referential.
     assert "Mapping projet" not in text
-    assert "[CATEGORY]" in text
+    # The four email blocks (no time stats) are the canonical structure.
+    assert "LISTE DES TACHES" in text
+    assert "FAITS MARQUANTS" in text
+    assert "[project or perimeter]" in text
     # Second call is idempotent — does not re-seed.
     res2 = await client.call_tool("mem_worklog", {"week_of": _WEEK_OF})
     assert res2.data.template_seeded is False

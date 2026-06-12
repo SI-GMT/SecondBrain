@@ -55,41 +55,54 @@ Render format for `/mem-worklog` — the report STRUCTURE, not a referential.
 This file describes how the weekly report looks; it never lists fixed project
 codes or perimeters. Categories are derived at render time from the projects
 active that week (default: the project slug, upper-cased). Edit this file to fit
-your own format. Default amplitude: 7h/day (Mon–Fri, 35h).
+your own format.
 
-## Report structure
+## Email copy-paste section
 
-```
-TASK LIST
-•  [CATEGORY]
-   o  [SUBPROJECT] one line per work item
+**Big picture only**: aggregate the operational figures ("2 runs, 80->91%"
+rather than listing each), no granular detail. **No temporality** — no hours,
+days or percentages of time (tracked elsewhere, e.g. Jira). Keep it short.
 
-IN PROGRESS / DONE
-•  [CATEGORY]
-   o  [SUBPROJECT] item
-       ▪ progress note (done / in progress)
+Formatting: a nested Markdown list — **bold block title**, **bold
+`[project or perimeter]`**, detail bullets **indented** (one level) under each
+project.
 
-HIGHLIGHTS
-•  the 1–3 biggest deliverables of the week (or "none")
+    **LISTE DES TACHES**
 
-NEXT WEEK
-•  [CATEGORY]
-   o  [SUBPROJECT]  - P0|P1
-       ▪ objective (from the "next steps" of the latest archives)
-```
+    - **[<project or perimeter>]**
+        - headline 1 ... headline N
+
+    **EN COURS / RÉALISÉ**
+
+    - **[<project or perimeter>]**
+        - headline (aggregated figures)
+
+    **FAITS MARQUANTS**
+
+    - **[<project or perimeter>]**
+        - major deliverable / unlock
+
+    **SEMAINE PROCHAINE**
+
+    - **[<project or perimeter>]**
+        - next objective
+
+## Statistics (archive only)
+
+Per-project / per-day hours may still be generated and kept in the archive
+(frontmatter `hours_by_project` + a table in the detailed view), but never in
+the email section above.
 
 ## Rules
 
-- Always produce the daily hours table first (rows = weekdays, columns =
-  projects, totals + %), then the report.
-- `[CATEGORY]` = the project slug upper-cased by default; group several slugs
-  under a broader label only when the week's content clearly justifies it —
-  never from a hardcoded mapping.
+- `[project or perimeter]` = the project slug upper-cased by default; group
+  several slugs under a broader label only when the week's content justifies it
+  — never from a hardcoded mapping.
+- The user states the number of worked days per request (4-day week, day off...).
 - A session is often archived the next morning → attribute the work to the day
   it describes, not the file timestamp.
 - The proration is an estimate from archive density/timestamps, not real
-  time-tracking. State this at the end.
-- P0 (blocking/urgent) / P1 (important, non-blocking) on the next-week section.
+  time-tracking.
 """
 
 # Filename pattern: 2026-06-05-17h58-{slug}-{subject}.md
@@ -311,21 +324,25 @@ def _format_summary_md(res: WorklogResult) -> str:
     lines.append("")
     lines.append("### Rendu attendu — 3 niveaux de verbosité")
     lines.append(
-        "Affine d'abord le prorata par densité, puis produis **trois** versions "
-        "dans la langue de l'utilisateur :"
+        "Affine d'abord le prorata par densité (stats pour l'archive), puis "
+        "produis **trois** versions dans la langue de l'utilisateur :"
     )
     lines.append(
-        "- **brief** — une ligne par projet actif (scan rapide / chat). Pas de "
-        "tableau, pas de sections."
+        "- **brief** — une ligne par projet/périmètre actif (scan rapide). Sans "
+        "chiffres de temps."
     )
     lines.append(
-        "- **digest** — version courriel condensée : tableau d'heures + FAIT "
-        "MARQUANT + 1 ligne par catégorie. Auto-suffisant, court."
+        "- **digest** — section **courriel à copier-coller** : les 4 blocs "
+        "(LISTE DES TACHES, EN COURS / RÉALISÉ, FAITS MARQUANTS, SEMAINE "
+        "PROCHAINE) en **grandes lignes** (chiffres agrégés, pas de détail "
+        "granulaire). Liste Markdown imbriquée : titres + `[projet/périmètre]` "
+        "en **gras**, puces de détail **indentées**. **Sans temporalité** (ni "
+        "heures, ni jours, ni %). Suit le template."
     )
     lines.append(
-        "- **detailed** — version réunion étoffée : rapport complet (LISTE DES "
-        "TACHES, EN COURS/FAIT par session, FAIT MARQUANT, SEMAINE PROCHAINE "
-        "P0/P1). Suit le template quand présent."
+        "- **detailed** — version réunion/archive : les mêmes 4 blocs en plus "
+        "détaillé **+** les stats heures (tableau + totaux). Les stats vivent "
+        "ici et dans le frontmatter, jamais dans le digest."
     )
     lines.append("")
     lines.append(

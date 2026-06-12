@@ -15,9 +15,33 @@ Recognized options:
 
 The report is produced at three levels, all from the same collected corpus:
 
-- **brief** — one line per active project. For a quick scan / chat reply. No table, no sections.
-- **digest** — condensed **email** version: the daily hours table + a short FAIT MARQUANT + one line per category. Self-contained and short — this is what the user pastes into a weekly status email.
-- **detailed** — the full **meeting** report (LISTE DES TACHES, EN COURS/FAIT per session, FAIT MARQUANT, SEMAINE PROCHAINE with P0/P1). Follows the vault template when present. This is the version to lean on during a meeting.
+- **brief** — one line per active project / perimeter. For a quick scan / chat reply. No table, no sections, **no time figures**.
+- **digest** — the **email copy-paste** version: the four blocks below in **big-picture form** — aggregate the operational figures ("2 runs, 80→91%" rather than each run), no granular detail. It carries **no temporality** — no hours, no days, no percentages (time is tracked elsewhere, e.g. a Jira worklog). Rendered as a nested Markdown list: **bold block titles**, **bold `[project or perimeter]`**, detail bullets **indented** one level. Short and digestible — exactly what the user pastes into a status email.
+- **detailed** — the **meeting / archive** version: the same four blocks with the granular detail, **plus** the hours statistics (daily table + per-project totals). The stats and the fine-grained figures live here and in the archive frontmatter (`hours_by_project`), never in the digest.
+
+The four blocks (digest = aggregated, detailed = granular):
+
+```
+**LISTE DES TACHES**
+
+- **[<project or perimeter>]**
+    - headline 1 … headline N
+
+**EN COURS / RÉALISÉ**
+
+- **[<project or perimeter>]**
+    - headline (aggregated figures)
+
+**FAITS MARQUANTS**
+
+- **[<project or perimeter>]**
+    - major deliverable / unlock
+
+**SEMAINE PROCHAINE**
+
+- **[<project or perimeter>]**
+    - next objective
+```
 
 ## Vault path resolution
 
@@ -70,39 +94,50 @@ Render format for `/mem-worklog` — the report STRUCTURE, not a referential.
 Categories are derived at render time from the projects active that week
 (default: the project slug, upper-cased). Edit this file to fit your own format.
 
-## Report structure
+## Email copy-paste section
 
-TASK LIST / IN PROGRESS-DONE / HIGHLIGHTS / NEXT WEEK (P0|P1), grouped by
-`[CATEGORY]` then `[SUBPROJECT]`.
+Big picture only (aggregate operational figures, no granular detail), NO
+temporality (no hours, days or percentages — time is tracked elsewhere). Nested
+Markdown list: bold block titles, bold `[project or perimeter]`, detail bullets
+indented one level.
+
+    **LISTE DES TACHES**
+
+    - **[<project or perimeter>]**
+        - headline 1 … headline N
+
+    **EN COURS / RÉALISÉ**
+
+    - **[<project or perimeter>]**
+        - headline (aggregated figures)
+
+    **FAITS MARQUANTS**
+
+    - **[<project or perimeter>]**
+        - major deliverable / unlock
+
+    **SEMAINE PROCHAINE**
+
+    - **[<project or perimeter>]**
+        - next objective
+
+## Statistics (archive only)
+
+Per-project / per-day hours may still be generated and kept in the archive
+(frontmatter `hours_by_project` + a table in the detailed view), but never in
+the email section above.
 
 ## Rules
 
-- Daily hours table first (rows = weekdays, columns = projects, totals + %).
-- `[CATEGORY]` = project slug upper-cased by default; broader grouping only when
-  the week's content justifies it — never from a hardcoded mapping.
+- `[project or perimeter]` = project slug upper-cased by default; broader grouping
+  only when the week's content justifies it — never from a hardcoded mapping.
+- The user states the number of worked days per request (4-day week, day off…).
 - Proration is an estimate from archive density/timestamps, not real tracking.
-- P0 (blocking) / P1 (important, non-blocking) on the next-week section.
 ```
 
-Produce the outputs in the user's conversational language. Start with the **daily hours table** (rows = days Mon–Fri, or Mon–Sun with `--weekend`, columns = projects, totals + percentages — the timesheet input), then render the three verbosity levels described above. The **digest** and **detailed** share this table; **brief** does not.
+Produce the outputs in the user's conversational language, following the four-block skeleton (see the Verbosity levels section for the canonical bold/indented form). The **digest** is the aggregated, big-picture version of these blocks; the **detailed** view repeats them with granular figures plus the hours table.
 
-The **detailed** activity report — generic structure when no template:
-
-```
-LISTE DES TACHES
-- [CATEGORY] / [SUBPROJECT] — one line per active work item
-
-EN COURS / FAIT
-- per project, nested: what advanced, what is done, what is in progress
-  (drawn from the head excerpts of the week's archives)
-
-FAIT MARQUANT
-- the 1–3 biggest deliverables/unlocks of the week (or "RAS")
-
-SEMAINE PROCHAINE À FAIRE
-- per project, with P0/P1 priorities — drawn from the next-steps blocks
-  of the most recent archives
-```
+**Temporality rule.** The **digest** (email copy-paste) carries the four blocks **only**, in big-picture form with aggregated figures — no hours, no days, no percentages, no daily table. The hours statistics (daily table + per-project totals) and the granular figures belong to the **detailed** view and the archive frontmatter (`hours_by_project`) — never the digest. The number of worked days is a per-request input (a 4-day week, a day off…): it adjusts the stats in the detailed/archive view, but the digest is unaffected (it has no time figures anyway).
 
 **Deriving the `[CATEGORY]` label** — derive it at render time, never from a frozen lookup table:
 - Default: the project slug, upper-cased (e.g. `ecosav → [ECOSAV]`). Always works, zero config, no dependence on a project existing in advance.
