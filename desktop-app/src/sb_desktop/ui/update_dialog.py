@@ -110,11 +110,12 @@ class _ChannelRow(ttk.LabelFrame):
         # Versions line.
         line = ttk.Frame(self)
         line.pack(fill="x")
-        ttk.Label(
+        self._current_label = ttk.Label(
             line,
             text=f"Current: v{result.current_version or '—'}",
             font=("", 10),
-        ).pack(side="left")
+        )
+        self._current_label.pack(side="left")
         ttk.Label(
             line,
             text=f"Latest: v{result.latest_version or '—'}",
@@ -144,6 +145,9 @@ class _ChannelRow(ttk.LabelFrame):
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
+
+    def set_current_version(self, version: str) -> None:
+        self._current_label.configure(text=f"Current: v{version}")
 
     def set_progress(self, value: float) -> None:
         self.progress.configure(value=value)
@@ -291,11 +295,17 @@ def _apply_engine(result: UpdateCheckResult, row: _ChannelRow) -> None:
         on_status=on_status,
     )
     if apply_result.ok:
+        # Re-read the on-disk engine version so the row reflects the upgrade
+        # without a tray restart; fall back to the target (latest) version.
+        from ..update import _installed_engine_version
+
+        new_version = _installed_engine_version() or result.latest_version or ""
+        row.master.after(0, lambda: row.set_current_version(new_version))
         row.master.after(
             0,
             lambda: row.set_status(
-                "Engine updated in place. Restart your CLI sessions to pick "
-                "up the new version."
+                f"Engine updated to v{new_version}. Restart your CLI sessions "
+                "to pick up the new version."
             ),
         )
         row.master.after(0, lambda: row.disable_button("Up to date"))

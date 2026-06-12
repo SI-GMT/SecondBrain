@@ -199,11 +199,44 @@ def _fetch_engine_asset(version: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _installed_engine_version() -> str | None:
+    """Read the on-disk version of the engine that the in-place update targets.
+
+    ``check_for_update`` reports ``memory_kit_mcp.__version__`` — a module-level
+    constant resolved once at import time, which never changes for the life of
+    the tray process even after an in-place pip upgrade. That made the dialog's
+    "Current" version freeze at the pre-update value.
+
+    The engine the in-place update actually rewrites is the one under
+    ``find_install_layout().engine_dir`` (the bootstrapped engine on PATH).
+    Reading its ``dist-info`` METADATA fresh on every check makes "Current"
+    reflect what is really on disk, so the display refreshes after an update
+    (no tray restart). Returns ``None`` when there is no install layout
+    (running from source / dev), so the caller falls back to the import-time
+    version.
+    """
+    try:
+        from . import kit_installer
+        from .status import _read_version_from_metadata
+    except ImportError:
+        return None
+    try:
+        layout = kit_installer.find_install_layout()
+        if layout is None:
+            return None
+        return _read_version_from_metadata(layout.engine_dir)
+    except Exception as exc:  # never let a probe error break the version check
+        log.debug("installed engine version probe failed: %s", exc)
+        return None
+
+
 def check_update(*, force_refresh: bool = False) -> UpdateCheckResult:
     """In-process version probe. Cached by the engine itself (1 h default).
 
-    When an update is available, additionally resolves the release's offline
-    wheelhouse asset so the dialog can offer an in-place engine upgrade.
+    "Current" is read fresh from the on-disk engine the in-place update targets
+    (not the frozen import-time ``__version__``) so the display reflects an
+    applied update. When an update is available, also resolves the release's
+    offline wheelhouse asset so the dialog can offer an in-place upgrade.
     """
     try:
         from memory_kit_mcp.update_check import check_for_update
@@ -222,24 +255,31 @@ def check_update(*, force_refresh: bool = False) -> UpdateCheckResult:
         .replace("+00:00", "Z")
     )
 
+    # Prefer the on-disk engine version over the frozen import-time one, and
+    # recompute update availability against it.
+    current = _installed_engine_version() or info.current_version
+    update_available = info.update_available
+    if info.latest_version:
+        update_available = _is_newer(info.latest_version, current)
+
     asset_url: str | None = None
     asset_filename: str | None = None
-    if info.update_available and info.latest_version:
+    if update_available and info.latest_version:
         asset_url, asset_filename = _fetch_engine_asset(info.latest_version)
 
     return UpdateCheckResult(
         channel="engine",
         ok=info.error is None or info.error == "opt-out",
-        update_available=info.update_available,
-        current_version=info.current_version,
+        update_available=update_available,
+        current_version=current,
         latest_version=info.latest_version,
         asset_url=asset_url,
         asset_filename=asset_filename,
         error=info.error,
         last_checked_iso=last_checked_iso,
         summary_md=(
-            f"v{info.current_version}"
-            + (f" → v{info.latest_version}" if info.update_available else "")
+            f"v{current}"
+            + (f" → v{info.latest_version}" if update_available else "")
         ),
     )
 

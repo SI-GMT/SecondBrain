@@ -426,3 +426,65 @@ def test_version_helpers():
     assert update._is_newer("0.14.0", "0.13.2") is True
     assert update._is_newer("0.13.2", "0.14.0") is False
     assert update._is_newer("garbage", "0.1.0") is False
+
+
+# ---------------------------------------------------------------------------
+# on-disk engine version (fixes the "stuck at previous version" display)
+# ---------------------------------------------------------------------------
+
+
+def test_installed_engine_version_no_layout(monkeypatch: pytest.MonkeyPatch):
+    import sb_desktop.kit_installer as ki
+
+    monkeypatch.setattr(ki, "find_install_layout", lambda: None)
+    assert update._installed_engine_version() is None
+
+
+def test_installed_engine_version_reads_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import types
+
+    import sb_desktop.kit_installer as ki
+    import sb_desktop.status as st
+
+    monkeypatch.setattr(
+        ki, "find_install_layout", lambda: types.SimpleNamespace(engine_dir=tmp_path)
+    )
+    monkeypatch.setattr(st, "_read_version_from_metadata", lambda root: "0.14.0")
+    assert update._installed_engine_version() == "0.14.0"
+
+
+def test_check_update_prefers_installed_version(monkeypatch: pytest.MonkeyPatch):
+    # Frozen import-time version says 0.12.1, but the on-disk engine is already
+    # 0.14.0 → "Current" must reflect the disk and not offer a stale update.
+    _install_fake_check(
+        monkeypatch,
+        FakeUpdateInfo(
+            current_version="0.12.1",
+            latest_version="0.14.0",
+            update_available=True,
+            last_checked=1.0,
+        ),
+    )
+    monkeypatch.setattr(update, "_installed_engine_version", lambda: "0.14.0")
+    res = update.check_update()
+    assert res.current_version == "0.14.0"
+    assert res.update_available is False
+
+
+def test_check_update_fallback_to_import_version(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_check(
+        monkeypatch,
+        FakeUpdateInfo(
+            current_version="0.12.1",
+            latest_version="0.14.0",
+            update_available=True,
+            last_checked=1.0,
+        ),
+    )
+    monkeypatch.setattr(update, "_installed_engine_version", lambda: None)
+    monkeypatch.setattr(update, "_fetch_engine_asset", lambda v: ("u", "f"))
+    res = update.check_update()
+    assert res.current_version == "0.12.1"
+    assert res.update_available is True
