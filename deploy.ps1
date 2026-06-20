@@ -1983,7 +1983,7 @@ function Deploy-McpServer {
     $openDesignConfig = Join-Path $HOME '.od\mcp-config.json'
     $openDesignDir = Split-Path -Parent $openDesignConfig
     if (Test-Path $openDesignDir) {
-        Add-McpServerToJsonConfig -ConfigPath $openDesignConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'OpenDesign'
+        Add-McpServerToOpenDesignConfig -ConfigPath $openDesignConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'OpenDesign'
     } else {
         Write-Skip "OpenDesign non detecte ($openDesignDir absent)"
     }
