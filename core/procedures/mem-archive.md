@@ -44,6 +44,28 @@ Also detect the current Git branch:
 - Mainlines (`main`, `master`, `recette`, `dev`, `hotfix/*`, `release/*`) → archive at the global project level.
 - Other branches → archive in feature: `{VAULT}/10-episodes/projects/{slug}/features/{branch-san}/archives/`. Sanitization `/` → `--`.
 
+## Delegated execution (brief→expand) — default for full mode
+
+Doctrine: `docs/architecture/vNEXT-archive-delegation-brief-expand-cadrage.md`.
+
+**When a cheap-subagent delegation capability is available (e.g. the host can spawn a low-tier subagent), full mode runs the delegated flow by default — there is no flag.** Rationale: the legacy single-context flow re-reads the whole session (~500k tokens) on every synthesis turn; benchmarked at ~$7.5 / ~290s for one archive, 93% of which is context cost, not output. Delegation collapses that to one judgment pass on the strong model plus a cheap rendering pass on a fresh ~15k window (~10× cheaper, ~3× faster) **without lowering quality** — the judgment stays on the strong model and a deterministic gate protects substance.
+
+Three phases:
+
+1. **Phase A — orchestrator (this strong-model turn).** Read the session ONCE. Resolve project/domain + branch as below. Read the current `context.md` (for the cumulative decisions and the delta). Then produce a compact **brief** — the `ArchiveBrief` contract (`mcp-server/src/memory_kit_mcp/tools/_models.py`): all the judgment (`session_arcs`, `decisions_new`, the COMPLETE `decisions_cumulative`, `state`, `next_steps`, `derived_atoms`, `active_assets`, `verbosity`) and **zero prose** — bullets only. Do NOT write `archive_body_md` or `new_context_md` yourself; that is exactly the expensive prose the delegation avoids.
+
+2. **Phase B — expander (cheap subagent, fresh window).** Spawn a low-tier subagent and hand it the serialized brief + the path to the current `context.md` + the worklog/template if relevant. Its contract (see `adapters/claude-code/agents/mem-archive-expander.md`): expand the brief into `archive_body_md` (prose, one section per `session_arc`) and `new_context_md` (the `context.md` format in §4), decide NOTHING, then call `mem_archive` in full mode. It MUST pass `expect_decisions = brief.decisions_cumulative` so the preservation gate runs.
+
+3. **Phase C — gate (inside `mem_archive`).** The tool already enforces wikilink resolution, sigils, and archived-project refusal; the delegated flow adds the **cumulative-decision preservation gate** via `expect_decisions` (function `_enforce_cumulative_preserved`): every cumulative decision must survive into the new context body (alphanumeric-skeleton substring match — tolerant to reformatting, strict on omission). A dropped decision raises `CumulativeDecisionDroppedError` — no partial write.
+
+**Escalation cascade (quality is never sacrificed):**
+
+- Gate fails → the tool returns the structured error to the expander; it corrects in one pass (the missing decisions are listed) and re-calls.
+- Expander fails the same gate twice, dies, or is skipped → the strong model (Phase A) takes over, writes `archive_body_md` + `new_context_md` itself and calls `mem_archive` (the classic flow below). Log the escalation.
+- No MCP / no subagent capability → **skill-mode fallback**: the strong model executes the classic procedure below directly. In skill mode there is no `expect_decisions` gate, so apply the preservation discipline manually — verify every cumulative decision from the prior `context.md` is carried into the rewritten one before persisting.
+
+The steps below describe the canonical full-mode outcome. In delegated mode, the expander performs steps 2-3 (build content → invoke tool); Phase A performs step 1 (collect) as a brief; steps 4-7 run inside `mem_archive`.
+
 ## Procedure (full mode)
 
 ### 1. Collect the session context
