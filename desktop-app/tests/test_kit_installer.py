@@ -104,10 +104,16 @@ def test_install_layout_roots_under_install_dir(tmp_path: Path):
     assert layout.engine_dir == tmp_path.resolve() / "engine"
     assert layout.python_dir == tmp_path.resolve() / "engine" / "python"
     assert layout.wheels_dir == tmp_path.resolve() / "engine" / "wheels"
-    assert layout.scripts_dir == tmp_path.resolve() / "engine" / "Scripts"
+    scripts_leaf = "Scripts" if sys.platform == "win32" else "bin"
+    assert layout.scripts_dir == tmp_path.resolve() / "engine" / scripts_leaf
     assert layout.resources_dir == tmp_path.resolve() / "resources"
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="embeddable-Python bootstrap is Windows-only; on POSIX python_exe "
+    "falls back to sys.executable / system python3 in DEV mode",
+)
 def test_bootstrap_no_python_exe(tmp_path: Path):
     layout = kit_installer.InstallLayout.from_install_dir(tmp_path)
     result = kit_installer.bootstrap_python_embeddable(layout)
@@ -117,9 +123,19 @@ def test_bootstrap_no_python_exe(tmp_path: Path):
 
 def test_install_wheels_no_wheels_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     layout = kit_installer.InstallLayout.from_install_dir(tmp_path)
-    # python_exe exists but wheels dir does not
+    # python_exe exists but wheels dir does not.
+    # Write the *bundled* interpreter inside the tmp layout — NOT
+    # ``layout.python_exe``: on POSIX in DEV mode that property falls back
+    # to ``sys.executable``, so writing to it would truncate the real
+    # running interpreter (and break every subsequent test).
     layout.python_dir.mkdir(parents=True)
-    (layout.python_exe).write_text("", encoding="utf-8")
+    if sys.platform == "win32":
+        fake_python = layout.python_dir / "python.exe"
+    else:
+        fake_python = layout.python_dir / "bin" / "python"
+        fake_python.parent.mkdir(parents=True, exist_ok=True)
+    fake_python.write_text("", encoding="utf-8")
+    assert layout.python_exe == fake_python  # guard: never sys.executable
     result = kit_installer.install_kit_wheels(layout)
     assert result.ok is False
     assert "wheels directory missing" in result.detail

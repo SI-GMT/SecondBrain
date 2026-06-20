@@ -210,13 +210,13 @@ def _probe_pipx_once() -> tuple[str | None, str | None]:
     if binary_str is None:
         # If not on PATH, probe the canonical install locations directly.
         # This avoids false warnings in GUI apps that don't source shell PATH.
-        from . import paths
+        from . import path_env, paths
 
         candidates = [
             paths.user_engine_scripts_dir() / "memory-kit-mcp",
             paths.system_engine_scripts_dir() / "memory-kit-mcp",
-            paths.user_local_bin() / "memory-kit-mcp",
-            paths.system_local_bin() / "memory-kit-mcp",
+            path_env.user_local_bin() / "memory-kit-mcp",
+            path_env.system_local_bin() / "memory-kit-mcp",
         ]
         if sys.platform == "win32":
             candidates = [

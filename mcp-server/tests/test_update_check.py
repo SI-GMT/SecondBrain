@@ -58,15 +58,20 @@ def test_is_newer(remote: str, local: str, expected: bool) -> None:
 # ---- check_for_update — happy paths --------------------------------------
 
 
-def _mock_urlopen_factory(payload: dict[str, Any]) -> Any:
-    """Return a callable suitable for monkeypatching urllib.request.urlopen."""
+def _mock_urlopen_factory(payload: list[dict[str, Any]]) -> Any:
+    """Return a callable suitable for monkeypatching urllib.request.urlopen.
+
+    ``payload`` is the list of release dicts as the GitHub /releases endpoint
+    returns it. The paginated /releases URL yields that list verbatim; the
+    /latest fallback yields a single release dict (the first one).
+    """
 
     def _fake_urlopen(req, timeout=None):  # noqa: ARG001
         url = req.full_url if hasattr(req, "full_url") else str(req)
         if "releases?per_page=" in url or ("/releases" in url and not url.endswith("/latest")):
-            data = [payload]
-        else:
             data = payload
+        else:
+            data = payload[0] if isinstance(payload, list) and payload else payload
         cm = MagicMock()
         cm.__enter__ = lambda self: self
         cm.__exit__ = lambda self, *a: None

@@ -29,7 +29,7 @@ def test_pipx_absent_yields_warning(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(status, "_probe_pipx_once", lambda: (None, None))
     snap = status.probe_status()
     assert snap.level == status.StatusLevel.WARNING
-    assert "not on PATH" in snap.summary
+    assert "Engine not found" in snap.summary
     assert snap.bundled_version == "0.12.1"
 
 
@@ -96,7 +96,7 @@ def test_pipx_version_probe_failed(monkeypatch: pytest.MonkeyPatch):
     )
     snap = status.probe_status()
     assert snap.level == status.StatusLevel.WARNING
-    assert "--version probe failed" in snap.summary
+    assert "version probe failed" in snap.summary
 
 
 def test_render_text_includes_all_fields():
@@ -159,7 +159,7 @@ def test_venv_root_fallback_to_pipx_default(
 ):
     default = tmp_path / "pipx-venv"
     default.mkdir()
-    monkeypatch.setattr(status, "_pipx_default_venv", lambda: default)
+    monkeypatch.setattr(status, "_pipx_default_venvs", lambda: [default])
     # binary sits in a non-scripts dir → fall back to the pipx default.
     binary = tmp_path / "somewhere" / "memory-kit-mcp"
     assert status._venv_root_from_binary(binary) == default
@@ -169,7 +169,7 @@ def test_venv_root_none_when_no_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     monkeypatch.setattr(
-        status, "_pipx_default_venv", lambda: tmp_path / "does-not-exist"
+        status, "_pipx_default_venvs", lambda: [tmp_path / "does-not-exist"]
     )
     binary = tmp_path / "x" / "memory-kit-mcp"
     assert status._venv_root_from_binary(binary) is None
@@ -229,8 +229,19 @@ def test_read_version_no_version_line(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_probe_pipx_once_no_binary(monkeypatch: pytest.MonkeyPatch):
+def test_probe_pipx_once_no_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     monkeypatch.setattr(status.shutil, "which", lambda name: None)
+    # Isolate the on-disk candidate probing: point every canonical install
+    # dir at an empty tmp location so a real local install can't satisfy it.
+    from sb_desktop import path_env, paths
+
+    empty = tmp_path / "nowhere"
+    monkeypatch.setattr(paths, "user_engine_scripts_dir", lambda: empty)
+    monkeypatch.setattr(paths, "system_engine_scripts_dir", lambda: empty)
+    monkeypatch.setattr(path_env, "user_local_bin", lambda: empty)
+    monkeypatch.setattr(path_env, "system_local_bin", lambda: empty)
     assert status._probe_pipx_once() == (None, None)
     # Cached: a second call returns the same tuple without re-probing.
     monkeypatch.setattr(
