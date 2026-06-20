@@ -548,6 +548,31 @@ deploy_claude_code() {
         _green "Skill   : $skill_name.md"
     done
 
+    # Agents (subagents enregistres) — frontmatter du template + resolution des
+    # includes core. L'expander wrappe {{INCLUDE _archive-expander}} (le contrat
+    # partage avec la procedure mem-archive). assemble_procedure sans skill_name
+    # (4e arg vide) = includes-only, pas de prepend MCP-first : un agent n'est
+    # pas un skill. Claude Code est la seule plateforme au mecanisme d'agent
+    # enregistre connu du kit ; les autres CLI recoivent le meme contrat inline
+    # dans leur skill mem-archive (cf. _archive-expander.md).
+    local agents_source="$kit_root/adapters/claude-code/agents"
+    if [[ -d "$agents_source" ]]; then
+        local agents_target="$config_dir/agents"
+        mkdir -p "$agents_target"
+        for atpl in "$agents_source"/*.template.md; do
+            [[ -f "$atpl" ]] || continue
+            local agent_name
+            agent_name="$(basename "$atpl" .template.md)"
+            local agent_content
+            agent_content="$(assemble_procedure "$atpl" "$core_source" "" "")" || {
+                _yellow "Echec assemblage agent $agent_name (ignore)"
+                continue
+            }
+            printf '%s' "$agent_content" > "$agents_target/$agent_name.md"
+            _green "Agent   : $agent_name.md"
+        done
+    fi
+
     # memory-kit.json
     write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
 

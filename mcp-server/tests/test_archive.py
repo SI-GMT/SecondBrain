@@ -237,6 +237,139 @@ async def test_archive_full_writes_nothing_when_enforcement_aborts(
     assert before == after, "no archive must be created when enforcement aborts"
 
 
+# ---------- Cumulative-decision preservation gate (brief→expand, vNEXT) ----------
+
+
+async def test_archive_gate_passes_when_decisions_present(
+    client: Client, vault_tmp: Path
+) -> None:
+    """All expected cumulative decisions present in the body → write goes through."""
+    res = await client.call_tool(
+        "mem_archive",
+        {
+            "slug": "alpha",
+            "mode": "incremental",
+            "context_md": (
+                "# Alpha — context\n\n## Décisions cumulées\n"
+                "- Bake-at-build pour artefacts gelés\n"
+                "- Absolute path dans configs MCP\n"
+            ),
+            "expect_decisions": [
+                "Bake-at-build pour artefacts gelés",
+                "Absolute path dans configs MCP",
+            ],
+        },
+    )
+    assert res.data.success is True
+
+
+async def test_archive_gate_tolerates_reformatting(
+    client: Client, vault_tmp: Path
+) -> None:
+    """The gate matches on the alphanumeric skeleton — case/punctuation/spacing
+    differences between the expected identifier and the rendered body must NOT
+    trip it (only a true drop should)."""
+    res = await client.call_tool(
+        "mem_archive",
+        {
+            "slug": "alpha",
+            "mode": "incremental",
+            "context_md": (
+                "# Alpha\n\n1. **bake at build** — pour artefacts gelés, jamais "
+                "importlib.metadata dans un bundle.\n"
+            ),
+            "expect_decisions": ["Bake-at-build pour artefacts gelés"],
+        },
+    )
+    assert res.data.success is True
+
+
+async def test_archive_gate_rejects_dropped_decision_incremental(
+    client: Client, vault_tmp: Path
+) -> None:
+    """A cumulative decision absent from the rewritten context aborts the write."""
+    with pytest.raises(ToolError) as ei:
+        await client.call_tool(
+            "mem_archive",
+            {
+                "slug": "alpha",
+                "mode": "incremental",
+                "context_md": "# Alpha\n\n- Bake-at-build pour artefacts gelés\n",
+                "expect_decisions": [
+                    "Bake-at-build pour artefacts gelés",
+                    "Update engine desktop wheelhouse offline",
+                ],
+            },
+        )
+    assert "Update engine desktop wheelhouse offline" in str(ei.value)
+
+
+async def test_archive_gate_rejects_dropped_decision_full_writes_nothing(
+    client: Client, vault_tmp: Path
+) -> None:
+    """In full mode, a dropped cumulative decision aborts before any archive
+    file is created."""
+    archives_dir = vault_tmp / "10-episodes" / "projects" / "alpha" / "archives"
+    before = sorted(archives_dir.glob("*.md"))
+    with pytest.raises(ToolError) as ei:
+        await client.call_tool(
+            "mem_archive",
+            {
+                "slug": "alpha",
+                "mode": "full",
+                "context_md": "# Alpha\n\nNew snapshot, decisions lost.\n",
+                "archive_subject": "gate drop test",
+                "archive_body_md": "# Session\n\nClean body.\n",
+                "expect_decisions": ["Worklog digest courriel = 4 blocs sans temporalité"],
+            },
+        )
+    assert "Worklog digest courriel" in str(ei.value)
+    after = sorted(archives_dir.glob("*.md"))
+    assert before == after, "no archive must be created when the gate aborts"
+
+
+async def test_archive_gate_noop_when_expect_decisions_omitted(
+    client: Client, vault_tmp: Path
+) -> None:
+    """Classic (non-delegated) archiving passes no expect_decisions → gate is a
+    no-op even if the body mentions no decision at all."""
+    res = await client.call_tool(
+        "mem_archive",
+        {
+            "slug": "alpha",
+            "mode": "incremental",
+            "context_md": "# Alpha\n\nBare state, no decisions section.\n",
+        },
+    )
+    assert res.data.success is True
+
+
+def test_archive_brief_validates_contract() -> None:
+    """ArchiveBrief enforces the hand-off contract used by Phase A → Phase B."""
+    from pydantic import ValidationError
+
+    from memory_kit_mcp.tools._models import ArchiveBrief
+
+    brief = ArchiveBrief(
+        slug="secondbrain",
+        kind="project",
+        archive_subject="vNEXT delegation",
+        decisions_cumulative=["Bake-at-build pour artefacts gelés"],
+        verbosity="detailed",
+    )
+    # decisions_cumulative is exactly what the expander forwards as expect_decisions
+    assert brief.decisions_cumulative == ["Bake-at-build pour artefacts gelés"]
+
+    with pytest.raises(ValidationError):
+        ArchiveBrief(slug="x", archive_subject="y", verbosity="chatty")
+    with pytest.raises(ValidationError):
+        ArchiveBrief(slug="x", archive_subject="y", kind="feature")
+    with pytest.raises(ValidationError):
+        ArchiveBrief(
+            slug="x", archive_subject="y", decisions_cumulative=["ok", "  "]
+        )
+
+
 async def test_archive_full_on_domain(client: Client, vault_tmp: Path) -> None:
     res = await client.call_tool(
         "mem_archive",
