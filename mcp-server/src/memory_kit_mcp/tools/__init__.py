@@ -45,8 +45,12 @@ from memory_kit_mcp.tools import (
     reclass,
     rename,
     rollback_archive,
+    archive_rewrite_paths,
+    relocate_project,
     search,
     update_phase,
+    vault_migrate,
+    worklog,
 )
 
 
@@ -59,6 +63,7 @@ def register_all(mcp: FastMCP) -> None:
     list_tool.register(mcp)
     search.register(mcp)
     digest.register(mcp)
+    worklog.register(mcp)
     # Vault management
     init_project.register(mcp)
     rename.register(mcp)
@@ -102,3 +107,7 @@ def register_all(mcp: FastMCP) -> None:
     archeo_plan.register(mcp)
     # Localized help (v0.11.x — wraps procedure files + i18n)
     help_tool.register(mcp)
+    # Vault & project relocation (v0.13.x — disk reorg / path drift recovery)
+    vault_migrate.register(mcp)
+    relocate_project.register(mcp)
+    archive_rewrite_paths.register(mcp)

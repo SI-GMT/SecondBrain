@@ -87,6 +87,135 @@ class ChangeReport(BaseModel):
     summary_md: str
 
 
+# ---------------------------------------------------------------------------
+# mem_archive — delegated brief→expand contract (vNEXT)
+# ---------------------------------------------------------------------------
+#
+# Doctrine: docs/architecture/vNEXT-archive-delegation-brief-expand-cadrage.md.
+#
+# The brief is the interface between Phase A (orchestrator, strong model — does
+# the judgment, reads the full session once) and Phase B (expander, cheap model
+# — fresh ~15k window, renders prose + calls mem_archive). It carries 100% of
+# the judgment and 0% of the prose: every "load-bearing" field MUST be complete,
+# because Phase B fills no gaps. The whole point is to collapse the 515k×N
+# context re-reads of the legacy flow into a single judgment pass.
+
+
+class ArchiveSessionArc(BaseModel):
+    """One coherent block of work in the session — becomes one ## section of the
+    archive body. ``points`` are factual bullets, never prose: expanding them
+    into sentences is Phase B's job, not Phase A's."""
+
+    title: str = Field(..., description="Heading of the arc (e.g. 'mem-worklog finalisé').")
+    points: list[str] = Field(
+        default_factory=list,
+        description="Factual bullets — NOT prose. Phase B expands them.",
+    )
+    files: list[str] = Field(
+        default_factory=list,
+        description="Touched files, sigil form <repo>/... preferred.",
+    )
+
+
+class ArchiveDecisionNew(BaseModel):
+    """A decision NEW to this session, with its rationale."""
+
+    text: str = Field(..., description="The decision, one line.")
+    why: str = Field(default="", description="Rationale — the 'why' that makes it resumable.")
+
+
+class ArchiveDerivedAtom(BaseModel):
+    """An atom to route OUT of the episodes zone (principle / goal / knowledge)."""
+
+    zone: str = Field(
+        ...,
+        description="Target zone: '40-principles' | '50-goals' | '20-knowledge'.",
+    )
+    title: str = Field(..., description="Atom title.")
+    body_hint: str = Field(
+        default="",
+        description="Bullet/skeleton for the atom body — Phase B expands it.",
+    )
+
+
+class ArchiveState(BaseModel):
+    """Current-state snapshot for the rewritten context.md."""
+
+    phase: str = Field(default="", description="Current phase string.")
+    validated: list[str] = Field(default_factory=list)
+    in_progress: list[str] = Field(default_factory=list)
+
+
+class ArchiveBrief(BaseModel):
+    """Structured hand-off from Phase A (judgment) to Phase B (rendering).
+
+    Validated as a hard contract: ``decisions_cumulative`` is the source of the
+    deterministic preservation gate enforced by ``mem_archive`` (see
+    ``_enforce_cumulative_preserved`` in ``tools/archive.py``). Entries must be
+    SHORT, STABLE identifiers — the gate checks their presence in the rendered
+    context body via an alphanumeric-skeleton substring match, so a long
+    reworded phrase risks a false negative. Keep them terse and verbatim across
+    sessions (they are reported forward unchanged in ``context.md``).
+    """
+
+    slug: str = Field(..., description="Resolved project or domain slug.")
+    kind: str = Field(default="project", description="'project' | 'domain'.")
+    branch_context: str = Field(
+        default="main",
+        description="Current git branch — drives global vs feature archive routing.",
+    )
+    archive_subject: str = Field(..., description="Short subject for the archive filename/entry.")
+
+    # --- JUDGMENT (frozen by the strong model) ---
+    session_arcs: list[ArchiveSessionArc] = Field(default_factory=list)
+    decisions_new: list[ArchiveDecisionNew] = Field(default_factory=list)
+    decisions_cumulative: list[str] = Field(
+        default_factory=list,
+        description=(
+            "COMPLETE list of cumulative decisions to carry forward into the "
+            "rewritten context.md. Hard contract — the preservation gate "
+            "rejects the write if any is dropped. Short, stable identifiers."
+        ),
+    )
+    state: ArchiveState = Field(default_factory=ArchiveState)
+    next_steps: list[str] = Field(default_factory=list)
+    derived_atoms: list[ArchiveDerivedAtom] = Field(default_factory=list)
+    active_assets: list[str] = Field(default_factory=list)
+
+    # --- VERBOSITY (pure rendering parameter, no judgment) ---
+    verbosity: str = Field(
+        default="detailed",
+        description="'brief' | 'digest' | 'detailed' — controls Phase B expansion only.",
+    )
+
+    @field_validator("kind")
+    @classmethod
+    def _validate_kind(cls, v: str) -> str:
+        if v not in ("project", "domain"):
+            raise ValueError(f"kind must be 'project' or 'domain', got {v!r}")
+        return v
+
+    @field_validator("verbosity")
+    @classmethod
+    def _validate_verbosity(cls, v: str) -> str:
+        if v not in ("brief", "digest", "detailed"):
+            raise ValueError(
+                f"verbosity must be 'brief', 'digest' or 'detailed', got {v!r}"
+            )
+        return v
+
+    @field_validator("decisions_cumulative")
+    @classmethod
+    def _validate_cumulative(cls, v: list[str]) -> list[str]:
+        for i, d in enumerate(v):
+            if not str(d).strip():
+                raise ValueError(
+                    f"decisions_cumulative[{i}] is empty — every entry must be a "
+                    "non-empty short identifier (it is the key of the preservation gate)."
+                )
+        return v
+
+
 class ProjectListEntry(BaseModel):
     """One row in the inventory returned by mem_list."""
 
@@ -149,6 +278,66 @@ class DigestResult(BaseModel):
     archives_total: int
     archives: list[ArchiveDigest] = Field(default_factory=list)
     summary_md: str
+
+
+class WorklogSession(BaseModel):
+    """One archived session collected by mem_worklog, scoped to a week."""
+
+    date: str  # YYYY-MM-DD (from the archive filename prefix)
+    time: str | None = None  # HHhMM (from the archive filename), best-effort
+    weekday: str = ""  # Mon..Sun (English short form, deterministic)
+    slug: str  # project or domain slug the archive belongs to
+    kind: str = "project"  # 'project' | 'domain'
+    filename: str
+    subject: str | None = None  # human-readable subject parsed from the filename
+    excerpt: str = ""  # head excerpt of the body (summary signal)
+    next_steps: str = ""  # extracted "Reste à faire / Prochaines étapes / Next steps" block
+
+
+class WorklogDay(BaseModel):
+    """One day of the worklog window with its naive equal-split proration."""
+
+    date: str  # YYYY-MM-DD
+    weekday: str  # Mon..Sun
+    is_weekend: bool = False
+    sessions: int = 0
+    projects: list[str] = Field(default_factory=list)
+    # Naive proration: amplitude_hours split equally across the DISTINCT
+    # projects active that day. The LLM refines this with density judgment.
+    hours_by_project: dict[str, float] = Field(default_factory=dict)
+
+
+class WorklogResult(BaseModel):
+    """Result of mem_worklog — a week's archives collected across all projects.
+
+    Deterministic collector: globs every project's (and domain's) archives/
+    folder, keeps the ones whose filename date falls in the Monday→Sunday week
+    of ``week_of``, and returns them grouped by day + a naive equal-split
+    proration over a configurable daily amplitude. The LLM caller then refines
+    the proration with density judgment and renders the final report using the
+    vault worklog template (``template_md``) when present.
+    """
+
+    week_start: str  # Monday, YYYY-MM-DD
+    week_end: str  # Sunday (or Friday when include_weekend=False), YYYY-MM-DD
+    amplitude_hours: float
+    include_weekend: bool = False
+    sessions_total: int = 0
+    projects: list[str] = Field(default_factory=list)
+    sessions: list[WorklogSession] = Field(default_factory=list)
+    days: list[WorklogDay] = Field(default_factory=list)
+    # Sum of the naive per-day proration across the week, per project.
+    hours_by_project_total: dict[str, float] = Field(default_factory=dict)
+    template_exists: bool = False
+    template_md: str = ""  # raw content of {VAULT}/99-meta/worklog-template.md when present
+    template_seeded: bool = False  # True when this call created the default template (first use)
+    # ---- persist phase (phase="persist") ----
+    persisted: bool = False  # True when this call wrote the weekly worklog archive
+    week_number: int = 0  # ISO week number of week_start (0 in collect phase output)
+    archive_path: str = ""  # vault-relative POSIX path of the persisted worklog archive
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    summary_md: str = ""
 
 
 class HealthFinding(BaseModel):

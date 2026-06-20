@@ -159,19 +159,27 @@ core_root = Path(sys.argv[2])
 config_file_ref = sys.argv[3]
 skill_name = sys.argv[4] if len(sys.argv) > 4 else ""
 
-INCLUDE_RE = re.compile(r'\{\{INCLUDE\s+(_\w+)\}\}')
+# Include names can contain hyphens (_repo-topology, _repo-paths,
+# _frontmatter-archeo, …) — match [\w-], not just \w, else the directive is
+# left unresolved (literal {{INCLUDE …}} leaks into the deployed skill).
+INCLUDE_RE = re.compile(r'\{\{INCLUDE\s+(_[\w-]+)\}\}')
 
-def resolve(content, depth=0):
-    if depth > 5:
-        sys.stderr.write("Profondeur maximale d'inclusion depassee (5). Cycle suspecte.\n")
+def resolve(content, depth=0, ancestors=()):
+    if depth > 10:
+        sys.stderr.write("Profondeur maximale d'inclusion depassee (10). Cycle suspecte.\n")
         sys.exit(1)
     def repl(match):
         name = match.group(1)
+        # Cycle guard: if the block is already being expanded up the chain,
+        # leave the directive LITERAL. Some doctrine blocks (_repo-topology,
+        # _archived, _when-to-script) cite their own name as a syntax example.
+        if name in ancestors:
+            return match.group(0)
         path = core_root / f"{name}.md"
         if not path.exists():
             sys.stderr.write(f"Bloc d'inclusion introuvable : {{{{INCLUDE {name}}}}} -> {path}\n")
             sys.exit(1)
-        return resolve(path.read_text(encoding='utf-8'), depth + 1)
+        return resolve(path.read_text(encoding='utf-8'), depth + 1, ancestors + (name,))
     return INCLUDE_RE.sub(repl, content)
 
 content = proc_path.read_text(encoding='utf-8')
@@ -370,6 +378,8 @@ get_existing_vault_paths() {
         "Gemini CLI|$HOME/.gemini/memory-kit.json"
         "Codex|$HOME/.codex/memory-kit.json"
         "Copilot CLI|$copilot_config/memory-kit.json"
+        "Antigravity CLI|$HOME/.gemini/antigravity-cli/memory-kit.json"
+        "Antigravity Desktop|$HOME/.gemini/antigravity/memory-kit.json"
     )
 
     EXISTING_VAULTS=()
@@ -380,13 +390,13 @@ get_existing_vault_paths() {
         if command -v python3 &>/dev/null; then
             local vault
             vault="$(python3 -c "
-import json, sys
+import json, sys, os
 try:
     with open('$config_file') as f:
         c = json.load(f)
     v = c.get('vault', '')
     if v:
-        print(v)
+        print(os.path.normpath(v))
 except Exception:
     pass
 " 2>/dev/null)" || true
@@ -466,6 +476,13 @@ remove_deprecated_v04_files() {
                         count=$((count+1))
                     fi
                     ;;
+                antigravity-cli|antigravity-desktop)
+                    if [[ -d "$config/skills/$name" ]]; then
+                        rm -rf "$config/skills/$name"
+                        _green "Cleanup v0.4 : $cli/skills/$name/ supprime"
+                        count=$((count+1))
+                    fi
+                    ;;
             esac
         done
     done
@@ -530,6 +547,31 @@ deploy_claude_code() {
         printf '%s' "$assembled" > "$skills_target/$skill_name.md"
         _green "Skill   : $skill_name.md"
     done
+
+    # Agents (subagents enregistres) — frontmatter du template + resolution des
+    # includes core. L'expander wrappe {{INCLUDE _archive-expander}} (le contrat
+    # partage avec la procedure mem-archive). assemble_procedure sans skill_name
+    # (4e arg vide) = includes-only, pas de prepend MCP-first : un agent n'est
+    # pas un skill. Claude Code est la seule plateforme au mecanisme d'agent
+    # enregistre connu du kit ; les autres CLI recoivent le meme contrat inline
+    # dans leur skill mem-archive (cf. _archive-expander.md).
+    local agents_source="$kit_root/adapters/claude-code/agents"
+    if [[ -d "$agents_source" ]]; then
+        local agents_target="$config_dir/agents"
+        mkdir -p "$agents_target"
+        for atpl in "$agents_source"/*.template.md; do
+            [[ -f "$atpl" ]] || continue
+            local agent_name
+            agent_name="$(basename "$atpl" .template.md)"
+            local agent_content
+            agent_content="$(assemble_procedure "$atpl" "$core_source" "" "")" || {
+                _yellow "Echec assemblage agent $agent_name (ignore)"
+                continue
+            }
+            printf '%s' "$agent_content" > "$agents_target/$agent_name.md"
+            _green "Agent   : $agent_name.md"
+        done
+    fi
 
     # memory-kit.json
     write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
@@ -1041,6 +1083,113 @@ ${block_content}"
 }
 
 # ============================================================
+# Adapter : Antigravity (CLI + Desktop)
+# ============================================================
+# Antigravity (CLI et Desktop) charge skills + MCP via un layout plugin :
+#   {config_dir}/plugins/memory-kit/
+#     plugin.json                       ← {"name": "memory-kit"}
+#     skills/{nom}/SKILL.md             ← Anthropic-style frontmatter
+# Le mcp_config.json plugin-side n'est pas honore par Antigravity Desktop ;
+# la declaration MCP doit aller dans le fichier global ~/.gemini/config/mcp_config.json
+# (cf. deploy_mcp_server).
+
+_deploy_antigravity_plugin_layout() {
+    local kit_root="$1"
+    local config_dir="$2"
+    local config_file_ref="$3"
+
+    local plugin_dir="$config_dir/plugins/memory-kit"
+    local skills_target="$plugin_dir/skills"
+    mkdir -p "$skills_target"
+
+    printf '{\n  "name": "memory-kit"\n}\n' > "$plugin_dir/plugin.json"
+
+    # Cleanup legacy layout (skills ecrits directement dans {config_dir}/skills
+    # par les versions <= v0.12.x : Antigravity les ignore).
+    local legacy_skills="$config_dir/skills"
+    if [[ -d "$legacy_skills" ]]; then
+        find "$legacy_skills" -mindepth 1 -maxdepth 1 -type d -name 'mem*' -exec rm -rf {} + 2>/dev/null || true
+        rmdir "$legacy_skills" 2>/dev/null || true
+    fi
+    local legacy_mcp="$config_dir/mcp_config.json"
+    if [[ -f "$legacy_mcp" ]]; then
+        rm -f "$legacy_mcp"
+    fi
+
+    local adapter_dir="$kit_root/adapters/codex"
+    local core_source="$kit_root/core/procedures"
+    local skills_source="$adapter_dir/skills"
+    [[ -d "$skills_source" ]] || return 0
+
+    for skill_dir in "$skills_source"/*/; do
+        [[ -d "$skill_dir" ]] || continue
+        local name
+        name="$(basename "$skill_dir")"
+        local tpl_file="$skill_dir/SKILL.md.template"
+        if [[ ! -f "$tpl_file" ]]; then
+            _yellow "SKILL.md.template manquant pour $name (ignore)"
+            continue
+        fi
+        local proc_path="$core_source/$name.md"
+        if [[ ! -f "$proc_path" ]]; then
+            _yellow "Procedure core manquante pour skill $name (ignore)"
+            continue
+        fi
+        local tpl_content
+        tpl_content="$(cat "$tpl_file")"
+        local proc
+        proc="$(assemble_procedure "$proc_path" "$core_source" "$config_file_ref" "$name")" || {
+            _yellow "Echec assemblage procedure $name (ignore)"
+            continue
+        }
+        local assembled="${tpl_content//\{\{PROCEDURE\}\}/$proc}"
+        local dest_dir="$skills_target/$name"
+        mkdir -p "$dest_dir"
+        printf '%s' "$assembled" > "$dest_dir/SKILL.md"
+        _green "Skill   : $name/SKILL.md"
+    done
+}
+
+deploy_antigravity_cli() {
+    local kit_root="$1"
+    local config_dir="$2"
+    local vault_path="$3"
+
+    echo ""
+    _cyan "> Deploiement : Antigravity CLI"
+
+    if [[ ! -d "$config_dir" ]]; then
+        _yellow "Dossier Antigravity CLI introuvable ($config_dir). Lance 'agy' au moins une fois."
+        return 1
+    fi
+
+    _deploy_antigravity_plugin_layout "$kit_root" "$config_dir" '`~/.gemini/antigravity-cli/memory-kit.json`'
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
+
+    return 0
+}
+
+deploy_antigravity_desktop() {
+    local kit_root="$1"
+    local config_dir="$2"
+    local vault_path="$3"
+
+    echo ""
+    _cyan "> Deploiement : Antigravity Desktop"
+
+    if [[ ! -d "$config_dir" ]]; then
+        _yellow "Dossier Antigravity Desktop introuvable ($config_dir)."
+        return 1
+    fi
+
+    _deploy_antigravity_plugin_layout "$kit_root" "$config_dir" '`~/.gemini/antigravity/memory-kit.json`'
+    write_memory_kit_json "$config_dir/memory-kit.json" "$vault_path" "$kit_root" "work" "$LANGUAGE"
+
+    return 0
+}
+
+
+# ============================================================
 # Deploy-McpServer (v0.8.0) — install pipx + sync configs MCP
 # ============================================================
 # Installe le serveur Python memory-kit-mcp via pipx (fallback pip --user),
@@ -1523,8 +1672,11 @@ add_mcp_server_to_toml_config() {
 
     local start_marker='# MEMORY-KIT:START'
     local end_marker='# MEMORY-KIT:END'
+    # TOML literal string (single-quote) pour le path Windows : sinon les
+    # backslashes sont interpretes comme escapes par le parser TOML strict de
+    # Codex (`\U` -> unicode escape attendu, parse error).
     local block
-    block="$(printf '%s\n[mcp_servers.%s]\ncommand = "%s"\nargs = []\n%s' \
+    block="$(printf "%s\n[mcp_servers.%s]\ncommand = '%s'\nargs = []\n%s" \
         "$start_marker" "$section_name" "$command_name" "$end_marker")"
 
     if [[ ! -f "$config_path" ]]; then
@@ -1545,9 +1697,20 @@ add_mcp_server_to_toml_config() {
     # produiraient un duplicate-key TOML refuse par Codex. On retire d'abord le
     # bloc fenced (s'il existe) du contenu temporaire, puis on supprime tout
     # `[mcp_servers.SECTION]` ou `[mcp_servers.SECTION.foo.bar]` orphelin.
+    # Extraire le bloc MEMORY-KIT-PERMS (auto-approve par outil) avant
+    # detection orphan, pour qu'il ne soit ni traite comme orphelin (sous-tables
+    # [mcp_servers.SECTION.tools.X]) ni perdu lors de la reconstruction.
+    local perms_start='# MEMORY-KIT-PERMS:START'
+    local perms_end='# MEMORY-KIT-PERMS:END'
+    local perms_block
+    perms_block="$(perl -0777 -ne '
+        if (/(\Q'"$perms_start"'\E[\s\S]*?\Q'"$perms_end"'\E)/) { print $1 }
+    ' <<< "$existing")"
+
     local existing_no_fenced
-    existing_no_fenced="$(BLOCK="" perl -0777 -pe '
+    existing_no_fenced="$(perl -0777 -pe '
         s/\Q'"$start_marker"'\E[\s\S]*?\Q'"$end_marker"'\E//g;
+        s/\Q'"$perms_start"'\E[\s\S]*?\Q'"$perms_end"'\E//g;
     ' <<< "$existing")"
 
     local cleaned
@@ -1580,10 +1743,15 @@ add_mcp_server_to_toml_config() {
     fi
 
     # Soit pas de fenced, soit on a detecte une orpheline a purger : on
-    # reconstruit le fichier proprement avec une seule section fenced finale.
+    # reconstruit le fichier proprement avec une seule section fenced finale,
+    # suivie du bloc MEMORY-KIT-PERMS preserve s'il existait.
     local sep=""
     [[ -n "$cleaned" ]] && sep=$'\n\n'
-    printf '%s%s%s\n' "$cleaned" "$sep" "$block" > "$config_path"
+    if [[ -n "$perms_block" ]]; then
+        printf '%s%s%s\n\n%s\n' "$cleaned" "$sep" "$block" "$perms_block" > "$config_path"
+    else
+        printf '%s%s%s\n' "$cleaned" "$sep" "$block" > "$config_path"
+    fi
     if [[ "$had_orphan" == "true" ]]; then
         _green "$config_path$label_tag : section orpheline [mcp_servers.$section_name] purgee + section MEMORY-KIT injectee"
     else
@@ -1822,6 +1990,16 @@ deploy_mcp_server() {
     # Inject MCP server dans les configs CLI compatibles
     local server_name='secondbrain-memory-kit'
     local server_command='memory-kit-mcp'
+    if command -v memory-kit-mcp &>/dev/null; then
+        server_command="$(command -v memory-kit-mcp)"
+    else
+        local pipx_bin_dir=""
+        pipx_bin_dir="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+        [[ -z "$pipx_bin_dir" ]] && pipx_bin_dir="$HOME/.local/bin"
+        if [[ -f "$pipx_bin_dir/memory-kit-mcp" ]]; then
+            server_command="$pipx_bin_dir/memory-kit-mcp"
+        fi
+    fi
 
     # Claude Code (~/.claude.json — note : different de ~/.claude/memory-kit.json)
     for i in "${DETECTED_IDX[@]}"; do
@@ -1841,8 +2019,25 @@ deploy_mcp_server() {
             gemini-cli)
                 add_mcp_server_to_json_config "${PLATFORM_CONFIGS[$i]}/settings.json" "$server_name" "$server_command" "Gemini CLI" "memory-kit"
                 ;;
+            antigravity-cli|antigravity-desktop)
+                # Antigravity (CLI et Desktop) lit ses serveurs MCP depuis le
+                # fichier partage ~/.gemini/config/mcp_config.json (cf. log
+                # language_server : "Failed to load JSON config file
+                # C:\Users\bdubois\.gemini\config\mcp_config.json"). Les paths
+                # per-app ~/.gemini/antigravity{,-cli}/mcp_config.json sont
+                # ignores par Antigravity Desktop. Une seule ecriture suffit ;
+                # on garde l'idempotence en s'appuyant sur le marker dejaInjecte
+                # du config JSON.
+                if [[ -z "${_antigravity_mcp_done:-}" ]]; then
+                    local shared_mcp="$HOME/.gemini/config/mcp_config.json"
+                    mkdir -p "$(dirname "$shared_mcp")"
+                    add_mcp_server_to_json_config "$shared_mcp" "$server_name" "$server_command" "Antigravity (shared config)" "memory-kit"
+                    _antigravity_mcp_done=1
+                fi
+                ;;
         esac
     done
+    unset _antigravity_mcp_done
 
     # Cibles desktop : detection independante des CLI command-line.
     local claude_desktop_config
@@ -1878,6 +2073,218 @@ deploy_mcp_server() {
     # Codex Desktop : herite automatiquement de Codex CLI via le meme
     # fichier ~/.codex/config.toml (confirme par utilisateur). Pas d'action
     # supplementaire requise.
+
+    # Pre-seed des allow-lists / auto-approve pour reduire les prompts MCP
+    # au strict minimum sur les 37 outils mem* du serveur secondbrain-memory-kit.
+    set_mcp_auto_approve_permissions
+}
+
+# ============================================================
+# set_mcp_auto_approve_permissions — patch idempotent allow-lists/auto-approve
+# par client pour minimiser les prompts utilisateur sur les outils MCP du
+# serveur secondbrain-memory-kit. Liste statique des 37 outils.
+# ============================================================
+
+_secondbrain_mcp_tool_names() {
+    cat <<'EOF'
+mem
+mem_archeo
+mem_archeo_atlassian
+mem_archeo_context
+mem_archeo_context_finalize
+mem_archeo_git
+mem_archeo_index_files
+mem_archeo_plan
+mem_archeo_project_topology
+mem_archeo_stack
+mem_archive
+mem_check_update
+mem_digest
+mem_doc
+mem_get_topology
+mem_goal
+mem_health_repair
+mem_health_scan
+mem_help
+mem_historize
+mem_init_project
+mem_list
+mem_merge
+mem_migrate
+mem_note
+mem_person
+mem_principle
+mem_promote_domain
+mem_read_archive
+mem_read_context
+mem_read_history
+mem_recall
+mem_reclass
+mem_rename
+mem_rollback_archive
+mem_search
+mem_update_phase
+EOF
+}
+
+add_claude_mcp_allow_pattern() {
+    local config_path="$1"
+    [[ -f "$config_path" ]] || return 0
+    python3 - "$config_path" <<'PY' || _yellow "Claude allow pattern : echec patch"
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+allow = d.setdefault("permissions", {}).setdefault("allow", [])
+pat = "mcp__secondbrain-memory-kit__*"
+if pat in allow:
+    print(f"[--] {p} (Claude Code) : pattern allow {pat} deja present")
+else:
+    allow.append(pat)
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    print(f"[OK] {p} (Claude Code) : permissions.allow += {pat}")
+PY
+}
+
+enable_gemini_permanent_approval() {
+    local config_path="$1"
+    local label="$2"
+    [[ -f "$config_path" ]] || return 0
+    python3 - "$config_path" "$label" <<'PY' || _yellow "Gemini permanent approval : echec patch"
+import json, sys
+p, label = sys.argv[1], sys.argv[2]
+d = json.load(open(p, encoding="utf-8"))
+sec = d.setdefault("security", {})
+if sec.get("enablePermanentToolApproval") is True:
+    print(f"[--] {p} ({label}) : enablePermanentToolApproval deja true")
+else:
+    sec["enablePermanentToolApproval"] = True
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    print(f"[OK] {p} ({label}) : security.enablePermanentToolApproval = true")
+PY
+}
+
+set_copilot_mcp_tools_wildcard() {
+    local config_path="$1"
+    [[ -f "$config_path" ]] || return 0
+    python3 - "$config_path" <<'PY' || _yellow "Copilot MCP wildcard : echec patch"
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+sb = d.get("mcpServers", {}).get("secondbrain-memory-kit")
+if sb is None:
+    sys.exit(0)
+if sb.get("tools") == ["*"]:
+    print(f"[--] {p} (Copilot CLI) : tools=['*'] deja present")
+else:
+    sb["tools"] = ["*"]
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+    print(f"[OK] {p} (Copilot CLI) : secondbrain-memory-kit.tools = ['*']")
+PY
+}
+
+set_vibe_mcp_auto_approve() {
+    local config_path="$1"
+    [[ -f "$config_path" ]] || return 0
+    local tools
+    tools="$(_secondbrain_mcp_tool_names | tr '\n' ',' | sed 's/,$//')"
+    python3 - "$config_path" "$tools" <<'PY' || _yellow "Vibe auto_approve : echec patch"
+import re, sys
+p, tools_csv = sys.argv[1], sys.argv[2]
+tools = [t for t in tools_csv.split(",") if t]
+with open(p, encoding="utf-8") as f:
+    txt = f.read()
+m = re.search(r"(\[mcp\.auto_approve\]\s*\ntools\s*=\s*\[)([^\]]*)(\])", txt, re.M)
+if not m:
+    print(f"[--] {p} (Mistral Vibe) : [mcp.auto_approve] tools = [...] introuvable")
+    sys.exit(0)
+existing = set(re.findall(r'"([^"]+)"', m.group(2)))
+to_add = [t for t in tools if t not in existing]
+if not to_add:
+    print(f"[--] {p} (Mistral Vibe) : mem_* deja dans [mcp.auto_approve]")
+    sys.exit(0)
+new_inner = m.group(2).rstrip().rstrip(",")
+for t in to_add:
+    new_inner += f',\n    "{t}"'
+new_inner += "\n"
+new = txt[:m.start()] + m.group(1) + new_inner + m.group(3) + txt[m.end():]
+with open(p, "w", encoding="utf-8", newline="\n") as f:
+    f.write(new)
+print(f"[OK] {p} (Mistral Vibe) : +{len(to_add)} outils mem_* dans [mcp.auto_approve]")
+PY
+}
+
+set_codex_mcp_tool_approval_block() {
+    local config_path="$1"
+    [[ -f "$config_path" ]] || return 0
+    local tools
+    tools="$(_secondbrain_mcp_tool_names | tr '\n' ',' | sed 's/,$//')"
+    python3 - "$config_path" "$tools" <<'PY' || _yellow "Codex MEMORY-KIT-PERMS : echec patch"
+import sys
+p, tools_csv = sys.argv[1], sys.argv[2]
+tools = [t for t in tools_csv.split(",") if t]
+marker_start = "# MEMORY-KIT-PERMS:START"
+marker_end = "# MEMORY-KIT-PERMS:END"
+lines = [marker_start]
+for t in tools:
+    lines.append(f"[mcp_servers.secondbrain-memory-kit.tools.{t}]")
+    lines.append('approval_mode = "auto"')
+    lines.append("")
+lines.append(marker_end)
+block = "\n".join(lines)
+with open(p, encoding="utf-8") as f:
+    txt = f.read()
+start = txt.find(marker_start)
+if start >= 0:
+    end_search = txt.find(marker_end, start)
+    if end_search < 0:
+        # Marker START orphelin (END perdu par un cleanup precedent).
+        # Recovery : retirer la ligne START seule, puis reinjecter en fin.
+        import re as _re
+        txt = _re.sub(r'(?m)^[ \t]*' + _re.escape(marker_start) + r'[ \t]*\r?\n?', '', txt)
+        if not txt.endswith("\n"):
+            txt += "\n"
+        txt += "\n" + block + "\n"
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(txt)
+        print(f"[OK] {p} (Codex) : marker START orphelin nettoye + bloc MEMORY-KIT-PERMS reinsere ({len(tools)} outils)")
+        sys.exit(0)
+    end = end_search + len(marker_end)
+    new = txt[:start] + block + txt[end:]
+    if new == txt:
+        print(f"[--] {p} (Codex) : bloc MEMORY-KIT-PERMS deja a jour")
+        sys.exit(0)
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        f.write(new)
+    print(f"[OK] {p} (Codex) : bloc MEMORY-KIT-PERMS refresh ({len(tools)} outils)")
+else:
+    if not txt.endswith("\n"):
+        txt += "\n"
+    txt += "\n" + block + "\n"
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        f.write(txt)
+    print(f"[OK] {p} (Codex) : bloc MEMORY-KIT-PERMS insere ({len(tools)} outils)")
+PY
+}
+
+set_mcp_auto_approve_permissions() {
+    echo ""
+    _cyan "> Pre-seed auto-approve / allow-lists MCP secondbrain-memory-kit"
+    local i
+    for i in "${!PLATFORM_NAMES[@]}"; do
+        local platform="${PLATFORM_NAMES[$i]}"
+        local cfg="${PLATFORM_CONFIGS[$i]}"
+        [[ -d "$cfg" ]] || continue
+        case "$platform" in
+            claude-code)  add_claude_mcp_allow_pattern "$cfg/settings.json" ;;
+            gemini-cli)   enable_gemini_permanent_approval "$cfg/settings.json" "Gemini CLI / Antigravity Desktop" ;;
+            copilot-cli)  set_copilot_mcp_tools_wildcard "$cfg/mcp-config.json" ;;
+            mistral-vibe) set_vibe_mcp_auto_approve "$cfg/config.toml" ;;
+            codex)        set_codex_mcp_tool_approval_block "$cfg/config.toml" ;;
+        esac
+    done
 }
 
 # ============================================================
@@ -2088,17 +2495,19 @@ _cyan "Detection des CLI IA..."
 echo ""
 
 # Plateformes : nom|affichage|binaire|config_dir|fonction
-declare -a PLATFORM_NAMES=("claude-code" "gemini-cli" "codex" "mistral-vibe" "copilot-cli")
-declare -a PLATFORM_DISPLAY=("Claude Code" "Gemini CLI" "Codex (OpenAI)" "Mistral Vibe" "GitHub Copilot CLI")
-declare -a PLATFORM_BINARIES=("claude" "gemini" "codex" "vibe" "copilot")
+declare -a PLATFORM_NAMES=("claude-code" "gemini-cli" "codex" "mistral-vibe" "copilot-cli" "antigravity-cli" "antigravity-desktop")
+declare -a PLATFORM_DISPLAY=("Claude Code" "Gemini CLI" "Codex (OpenAI)" "Mistral Vibe" "GitHub Copilot CLI" "Antigravity CLI" "Antigravity Desktop")
+declare -a PLATFORM_BINARIES=("claude" "gemini" "codex" "vibe" "copilot" "agy" "")
 declare -a PLATFORM_CONFIGS=(
     "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
     "$HOME/.gemini"
     "$HOME/.codex"
     "$HOME/.vibe"
     "${COPILOT_HOME:-$HOME/.copilot}"
+    "$HOME/.gemini/antigravity-cli"
+    "$HOME/.gemini/antigravity"
 )
-declare -a PLATFORM_FUNCS=("deploy_claude_code" "deploy_gemini_cli" "deploy_codex" "deploy_mistral_vibe" "deploy_copilot_cli")
+declare -a PLATFORM_FUNCS=("deploy_claude_code" "deploy_gemini_cli" "deploy_codex" "deploy_mistral_vibe" "deploy_copilot_cli" "deploy_antigravity_cli" "deploy_antigravity_desktop")
 
 declare -a DETECTED_IDX=()
 

@@ -7,7 +7,7 @@
 [![License: AGPL v3+](https://img.shields.io/badge/license-AGPL%20v3%2B-blue)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/SI-GMT/SecondBrain)](https://github.com/SI-GMT/SecondBrain/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#prérequis)
-[![CLIs](https://img.shields.io/badge/CLIs-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot-8A2BE2)](#cli-compatibles)
+[![CLIs](https://img.shields.io/badge/CLIs-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Vibe%20%7C%20Copilot%20%7C%20Antigravity-8A2BE2)](#cli-compatibles)
 [![MCP](https://img.shields.io/badge/MCP-secondbrain--memory--kit-success)](#sous-le-capot)
 [![i18n](https://img.shields.io/badge/conversation-EN%20%7C%20FR%20%7C%20ES%20%7C%20DE%20%7C%20RU-orange)](#langues-supportées)
 [![Desktop](https://img.shields.io/badge/desktop-installer%20Windows%20%7C%20DMG%20macOS-blue)](#installation)
@@ -33,7 +33,7 @@ Une **mémoire locale Markdown** que l'agent lit et écrit lui-même. Vous ne to
 |---|---|
 | « Je reprends sur le projet X. État : ... Décisions : ... Prochaine étape : ... » | « On continue. » |
 | Re-briefing manuel de 5-15 minutes | Reprise en quelques secondes |
-| Contexte coincé chez un fournisseur | Portable entre Claude, Gemini, Codex, Vibe, Copilot |
+| Contexte coincé chez un fournisseur | Portable entre Claude, Gemini, Codex, Vibe, Copilot, Antigravity |
 | L'historique se perd à chaque `/clear` | Archives horodatées immuables, recherchables |
 | Vous décidez quand sauvegarder | L'agent met à jour silencieusement à chaque décision |
 
@@ -56,6 +56,8 @@ Vous tapez `/mem-recall` (ou simplement « on continue », « tu te rappelles ? 
 ### Archivage silencieux pendant la session
 
 L'agent met à jour le contexte du projet **dès qu'une décision structurante émerge**, sans intervention. Vous ne sauvegardez pas — c'est fait pour vous. À la fin de session, `/mem-archive` produit un résumé horodaté immuable + met à jour le contexte vif.
+
+Sur les hôtes capables de déléguer à un sous-agent (Claude Code et tout CLI équivalent), `/mem-archive` **délègue le rendu de l'archive à un sous-agent économique** : le modèle fort décide *quoi* archiver (le jugement), un modèle léger rédige sur cette base. Un filet déterministe garantit qu'aucune décision cumulée n'est perdue. Résultat mesuré : archivage **~3× plus rapide et ~10× moins coûteux**, à qualité égale. Transparent et auto-activé ; repli automatique sur le modèle fort si besoin.
 
 ### Archeo de vos dépôts Git existants
 
@@ -112,6 +114,8 @@ Le vault s'audite tout seul (`/mem-health-scan`) et se répare en un clic (`/mem
 | **Gemini CLI** | Production | ✅ | ✅ |
 | **Mistral Vibe** | Production | ✅ | ✅ |
 | **GitHub Copilot CLI** | Fonctionnel | ✅ | ✅ |
+| **Antigravity CLI** | Fonctionnel | ✅ | ✅ |
+| **Antigravity Desktop** | Fonctionnel | ✅ | ✅ |
 
 Le script d'installation détecte automatiquement les CLI présentes sur votre poste et ne déploie que celles correspondantes. Aucune CLI n'est requise — installer celles dont vous vous servez suffit.
 
@@ -265,8 +269,10 @@ Le déclenchement automatique est très fiable sur les modèles principaux (Clau
 | `/mem-list` | Lister projets et domaines |
 | `/mem-search {requête}` | Recherche plein-texte |
 | `/mem-digest {projet}` | Synthèse des dernières sessions |
+| `/mem-worklog [date] [--amplitude H]` | Relevé d'heures + rapport d'activité hebdo (prorata multi-projets, 3 niveaux brief/digest/détaillé, archive hebdo persistée) |
 | `/mem-rename`, `/mem-merge`, `/mem-reclass` | Réorganisation du vault |
 | `/mem-health-scan`, `/mem-health-repair` | Audit + réparation automatique |
+| `/mem-vault-migrate`, `/mem-relocate-project`, `/mem-archive-rewrite-paths` | Déplacement du vault / réindexation des chemins après une réorganisation disque |
 
 Liste complète et options détaillées : voir [`docs/`](./docs/).
 
@@ -290,7 +296,7 @@ Choisie à l'installation, modifiable via `.\deploy.ps1 -Language fr` ou en édi
 
 Pour ceux que ça intéresse : SecondBrain combine trois couches complémentaires.
 
-- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 37 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (484 tests).
+- **Mode MCP** (recommandé) — un serveur `secondbrain-memory-kit` (Python, FastMCP) expose 41 outils que toute CLI compatible MCP appelle directement. Logique métier déterministe en Python, économe en tokens, testée (577 tests).
 - **Mode skills fallback** — quand le serveur n'est pas démarré (ou pour les CLI sans MCP), les CLI exécutent les procédures Markdown originales. Comportement identique côté utilisateur.
 - **App desktop SecondBrain Desktop** (optionnelle) — icône dans la zone de notification, runtime Python embarqué + wheels offline, assistant guidé, surveillance santé du vault, mise à jour confirm-then-run. Consomme l'engine en pur in-process, zéro subprocess MCP par action. Voir [`desktop-app/README.md`](./desktop-app/README.md).
 
@@ -304,8 +310,9 @@ Documentation technique complète : [`docs/architecture/`](./docs/architecture/)
 
 | Phase | État | Portée |
 |---|---|---|
-| **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot |
-| **Phase 3** | ✅ Terminée | Serveur MCP natif — 37 outils, 7 cibles auto-configurées |
+| **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot, Antigravity (CLI + Desktop) |
+| **Phase 3** | ✅ Terminée | Serveur MCP natif — 41 outils, 7 cibles auto-configurées |
+| **Archivage délégué** | ✅ Terminée | Délégation `brief→expand` de `/mem-archive` à un sous-agent économique + gate déterministe de préservation des décisions (~3× plus rapide, ~10× moins coûteux, qualité préservée). 4ᵉ classe d'asset : sous-agents enregistrés, agnostique multi-CLI (`engine v0.15.0`) |
 | **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit, bootstrap engine fiable + PATH cross-OS, multi-user RDP, désinstallation propre, auto-update dual-canal (moteur + desktop), détection CLI étendue (npm globals + alt dirs), wiring MCP avec path absolu (immune au PATH cache RDP), i18n EN/FR/ES/DE/RU, vault scaffold complet (`sb-desktop-v0.10.5`) |
 | **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |
 

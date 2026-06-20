@@ -399,6 +399,8 @@ Same logic as `mem-archeo-context` step 7, but updating:
 
 {{INCLUDE _linking}}
 
+{{INCLUDE _repo-paths}}
+
 ### 9. Final report
 
 Display:

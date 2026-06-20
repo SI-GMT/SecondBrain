@@ -25,6 +25,7 @@ from ..update import (
     DownloadResult,
     UpdateCheckResult,
     UpdateRunResult,
+    download_and_install_engine,
     download_asset,
     install_engine_update,
     launch_desktop_installer,
@@ -110,11 +111,12 @@ class _ChannelRow(ttk.LabelFrame):
         # Versions line.
         line = ttk.Frame(self)
         line.pack(fill="x")
-        ttk.Label(
+        self._current_label = ttk.Label(
             line,
             text=f"Current: v{result.current_version or '—'}",
             font=("", 10),
-        ).pack(side="left")
+        )
+        self._current_label.pack(side="left")
         ttk.Label(
             line,
             text=f"Latest: v{result.latest_version or '—'}",
@@ -144,6 +146,9 @@ class _ChannelRow(ttk.LabelFrame):
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
+
+    def set_current_version(self, version: str) -> None:
+        self._current_label.configure(text=f"Current: v{version}")
 
     def set_progress(self, value: float) -> None:
         self.progress.configure(value=value)
@@ -260,27 +265,68 @@ def _apply_desktop(result: UpdateCheckResult, row: _ChannelRow) -> None:
 
 
 def _apply_engine(result: UpdateCheckResult, row: _ChannelRow) -> None:
-    """Engine in-place pip --upgrade against the bundled python.exe.
+    """Engine in-place upgrade via the offline wheelhouse asset.
 
-    Currently disabled in the UI when the engine GitHub release does
-    not attach a wheel asset — pure GitHub policy decision, no
-    technical blocker on the desktop side. The release pipeline
-    extension that uploads ``memory_kit_mcp-*.whl`` + a wheelhouse
-    zip is tracked separately. Once the assets land this path will
-    auto-enable for all installed users.
+    Downloads the release's ``memory_kit_mcp-*-wheelhouse-*.zip``, extracts
+    it, and runs :func:`install_engine_update` (pip ``--no-index
+    --find-links`` against the embedded ``python.exe``). When the engine lives
+    under a system install, pip re-elevates via a UAC prompt. Falls back to
+    opening the release page when no wheelhouse asset is attached.
     """
-    if not result.asset_url:
+    if not result.asset_url or not result.asset_filename:
         return _open_release_page(result, row, "engine")
 
-    # Engine wheels not yet attached to GH releases — see docstring.
-    row.master.after(
-        0,
-        lambda: row.set_status(
-            "Engine wheel asset not yet attached to the GitHub release. "
-            "Install the next SecondBrain Desktop release to refresh the "
-            "engine, or use the kit's deploy script manually."
-        ),
+    def on_download(received: int, total: int | None) -> None:
+        if total and total > 0:
+            pct = (received / total) * 100
+            row.master.after(0, lambda: row.set_progress(pct))
+            row.master.after(
+                0,
+                lambda: row.set_status(
+                    f"Downloading engine wheelhouse… "
+                    f"{received // 1024} KB / {total // 1024} KB"
+                ),
+            )
+        else:
+            row.master.after(
+                0,
+                lambda: row.set_status(
+                    f"Downloading engine wheelhouse… {received // 1024} KB"
+                ),
+            )
+
+    def on_status(message: str) -> None:
+        row.master.after(0, lambda: row.set_status(message))
+
+    row.set_status("Downloading engine wheelhouse…")
+    apply_result = download_and_install_engine(
+        result.asset_url,
+        result.asset_filename,
+        on_download=on_download,
+        on_status=on_status,
     )
+    if apply_result.ok:
+        # Re-read the on-disk engine version so the row reflects the upgrade
+        # without a tray restart; fall back to the target (latest) version.
+        from ..update import _installed_engine_version
+
+        new_version = _installed_engine_version() or result.latest_version or ""
+        row.master.after(0, lambda: row.set_current_version(new_version))
+        row.master.after(
+            0,
+            lambda: row.set_status(
+                f"Engine updated to v{new_version}. Restart your CLI sessions "
+                "to pick up the new version."
+            ),
+        )
+        row.master.after(0, lambda: row.disable_button("Up to date"))
+    else:
+        row.master.after(
+            0,
+            lambda: row.set_status(
+                f"Engine update failed: {apply_result.error}"
+            ),
+        )
 
 
 def _open_release_page(

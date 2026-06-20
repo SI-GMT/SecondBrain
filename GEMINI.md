@@ -43,16 +43,22 @@ Commandes disponibles : `mem-archive`, `mem-recall` (cycle session) + `mem-list-
 - Les commandes sont définies dans des fichiers `.toml` qui sont interprétés par la CLI.
 - Le fichier `GEMINI.md` de l'extension contient les instructions de base pour le déclenchement automatique via langage naturel.
 
-## Le vault `memory/`
+## Le vault `memory/` (Bac à sable local)
 
-`memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :
+> [!CAUTION]
+> Le dossier `memory/` présent à la racine de ce dépôt de développement n'est qu'un **bac à sable local vide** destiné à exécuter les tests unitaires et à tester le déploiement du kit mémoire.
+> 
+> **Ne jamais écrire directement vos archives de session ou vos contextes dans `C:\_PROJETS\DEVOPS\SecondBrain\memory` !**
+> Le vrai vault Obsidian actif de l'utilisateur est configuré à un autre emplacement (ex: `C:\_BDC\GMT\memory`) et son chemin absolu doit impérativement être résolu à l'exécution en lisant la configuration globale `~/.memory-kit/config.json` (ou `memory-kit.json` dans les répertoires de configuration des CLI).
+
+Structure type d'un vault :
 
 - `index.md` — catalogue des projets et archives
 - `archives/` — fichiers horodatés, **immuables** (un par session complète)
 - `projets/{nom}/context.md` — snapshot mutable du projet
 - `projets/{nom}/history.md` — fil chronologique avec liens vers les archives
 
-**Note importante** : Pour les opérations sur le vault (souvent situé hors du workspace), utiliser `run_shell_command` avec des commandes PowerShell (`cat`, `ls`, `mkdir`, etc.).
+**Note importante** : Pour les opérations sur le vault (situé hors du workspace de développement), ne jamais écrire manuellement dans `memory/` du dépôt, mais utiliser les scripts du kit (comme `rebuild-vault-index.py`) ou des commandes PowerShell en ciblant le vrai chemin absolu configuré.
 
 ## Conventions de déploiement
 

@@ -127,6 +127,23 @@ Discipline pour modifier `desktop-app/` :
 
 Créer `adapters/{plateforme}/` avec la structure propre à cette plateforme, puis étendre **les deux scripts de déploiement** (`deploy.ps1` et `deploy.sh`) pour détecter l'installation de la plateforme et y déployer. **Ne jamais modifier `core/`** pour accommoder une plateforme — `core/` reste neutre.
 
+## Subagents (délégation brief→expand) — classe d'asset `agents/`
+
+Depuis la feature d'archivage délégué, le kit déploie une 4ᵉ classe d'asset (après skills, commands, MCP) : des **subagents enregistrés**. Discipline et design agnostique :
+
+- **Source de vérité unique = un bloc `core/procedures/_X.md`** (ex : `_archive-expander.md`), exactement comme les autres blocs `{{INCLUDE _bloc}}`. Le contrat du subagent (son system prompt) vit là, en anglais, neutre vis-à-vis de la plateforme — **jamais de nom d'outil Claude-Code-spécifique dans la prose du bloc**.
+- **Deux consommateurs, zéro duplication** :
+  1. La procédure `core/procedures/mem-X.md` inline le bloc via `{{INCLUDE _X}}` → le contrat se retrouve dans le skill déployé de **chaque** plateforme. L'orchestrateur le passe au subagent que son hôte sait spawner. **C'est le chemin universel** : fonctionne sur tout CLI ayant une capacité de subagent, sans config par plateforme.
+  2. `adapters/claude-code/agents/{name}.template.md` (frontmatter `name`/`description`/`model`/`tools` + `{{INCLUDE _X}}`) → agent enregistré Claude Code, déployé vers `~/.claude/agents/` par le pas « Agents » de `Deploy-ClaudeCode` / `deploy_claude_code` (résolution des includes uniquement, **pas** de `{{PROCEDURE}}` ni de bloc MCP-first).
+- **Capability-gating, pas d'invention** : Claude Code est aujourd'hui la seule plateforme dont le mécanisme d'agent enregistré est connu et vérifié. **On n'invente pas** de format d'agent pour Codex/Gemini/Vibe/Copilot/Antigravity — ils reçoivent le contrat inline via leur skill (chemin universel). On ajoutera un `adapters/{plateforme}/agents/` + son pas de deploy **uniquement quand le mécanisme natif de cette plateforme est vérifié**.
+- **Cohérence `deploy.ps1` ↔ `deploy.sh`** : le pas Agents existe dans les deux (PowerShell `Resolve-IncludeDirectives` ; Bash `assemble_procedure` avec `skill_name` vide = includes-only). Tout ajout co-commité.
+
+Pour ajouter un nouveau subagent `mem-Z-helper` :
+1. Écrire le contrat dans `core/procedures/_z-helper.md` (prose host-agnostique).
+2. Référencer `{{INCLUDE _z-helper}}` dans la procédure `mem-Z.md` qui le spawne (chemin universel).
+3. Pour Claude Code : `adapters/claude-code/agents/mem-z-helper.template.md` (frontmatter + `{{INCLUDE _z-helper}}`). Le pas Agents existant le déploie automatiquement (glob `*.template.md`).
+4. Vérifier la résolution (l'include ne doit pas fuiter en sortie) et le parse des deux scripts.
+
 ## Ajouter un nouvel outil MCP
 
 Pour qu'un nouveau skill `mem-Y` apparaisse aussi côté MCP server :
@@ -148,9 +165,15 @@ Si une nouvelle CLI/app supporte MCP via un fichier de config dédié, étendre 
 
 Les templates `adapters/gemini-cli/commands/*.template.toml` doivent utiliser `prompt = '''...'''` (literal multi-line string), **jamais** `"""..."""` (basic multi-line string). Le Markdown des procédures `core/` contient des backslashes (`\/:*?"<>|`, regex, exemples de code Python/PowerShell) qui ne sont pas des séquences d'échappement TOML valides et cassent le parser Gemini (`FileCommandLoader: Failed to parse TOML`). Les literal strings ne processent rien — texte brut.
 
-## Le vault `memory/`
+## Le vault `memory/` (Bac à sable local)
 
-`memory/` est le vault Obsidian **local** à ce poste (non versionné avec le kit, voir `.gitignore`). Structure :
+> [!CAUTION]
+> Le dossier `memory/` présent à la racine de ce dépôt de développement n'est qu'un **bac à sable local vide** destiné à exécuter les tests unitaires et à tester le déploiement du kit mémoire.
+> 
+> **Ne jamais écrire directement vos archives de session ou vos contextes dans `C:\_PROJETS\DEVOPS\SecondBrain\memory` !**
+> Le vrai vault Obsidian actif de l'utilisateur est configuré à un autre emplacement (ex: `C:\_BDC\GMT\memory`) et son chemin absolu doit impérativement être résolu à l'exécution en lisant la configuration globale `~/.memory-kit/config.json` (ou `memory-kit.json` dans les répertoires de configuration des CLI).
+
+Structure type d'un vault :
 
 - `index.md` — catalogue des projets et archives
 - `archives/` — fichiers horodatés, **immuables** (un par session complète)
@@ -158,7 +181,7 @@ Les templates `adapters/gemini-cli/commands/*.template.toml` doivent utiliser `p
 - `projets/{nom}/history.md` — fil chronologique avec liens vers les archives
 - `.obsidian/` — config Obsidian (créée automatiquement à l'ouverture du vault par Obsidian)
 
-**Fichiers Obsidian spéciaux** dans `memory/` : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec `Edit`/`Write`, passer par Obsidian.
+**Fichiers Obsidian spéciaux** : `.excalidraw.md`, `.canvas`, `.base` — ne pas éditer avec `Edit`/`Write`, passer par Obsidian.
 
 ## Conventions de déploiement
 

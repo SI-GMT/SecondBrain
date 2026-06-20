@@ -143,6 +143,225 @@ def test_check_desktop_update_selects_windows_setup(monkeypatch: pytest.MonkeyPa
     assert result.update_available
     assert result.asset_filename == "SecondBrainDesktop-0.10.9-setup.exe"
     assert result.asset_url == "https://example.test/setup.exe"
+# ---------------------------------------------------------------------------
+# engine wheelhouse asset resolution + in-place install
+# ---------------------------------------------------------------------------
+
+
+class _FakeResp:
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _fake_releases_json(*entries) -> bytes:
+    import json
+
+    return json.dumps(list(entries)).encode()
+
+
+def test_fetch_engine_asset_picks_wheelhouse(monkeypatch: pytest.MonkeyPatch):
+    payload = _fake_releases_json(
+        {
+            "tag_name": "v0.14.0",
+            "assets": [
+                {
+                    "name": "memory_kit_mcp-0.14.0-py3-none-any.whl",
+                    "browser_download_url": "http://x/wheel.whl",
+                },
+                {
+                    "name": "memory_kit_mcp-0.14.0-wheelhouse-win_amd64.zip",
+                    "browser_download_url": "http://x/wheelhouse.zip",
+                },
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        update.urllib.request,
+        "urlopen",
+        lambda req, timeout=0: _FakeResp(payload),
+    )
+    url, name = update._fetch_engine_asset("0.14.0")
+    assert url == "http://x/wheelhouse.zip"
+    assert name == "memory_kit_mcp-0.14.0-wheelhouse-win_amd64.zip"
+
+
+def test_fetch_engine_asset_none_when_absent(monkeypatch: pytest.MonkeyPatch):
+    payload = _fake_releases_json(
+        {
+            "tag_name": "v0.14.0",
+            "assets": [
+                {
+                    "name": "memory_kit_mcp-0.14.0-py3-none-any.whl",
+                    "browser_download_url": "http://x/wheel.whl",
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        update.urllib.request,
+        "urlopen",
+        lambda req, timeout=0: _FakeResp(payload),
+    )
+    assert update._fetch_engine_asset("0.14.0") == (None, None)
+
+
+def test_fetch_engine_asset_network_error_is_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def boom(req, timeout=0):
+        raise OSError("offline")
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", boom)
+    assert update._fetch_engine_asset("0.14.0") == (None, None)
+
+
+def test_check_update_populates_wheelhouse_asset(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_check(
+        monkeypatch,
+        FakeUpdateInfo(
+            current_version="0.13.2",
+            latest_version="0.14.0",
+            update_available=True,
+            last_checked=1_700_000_000.0,
+        ),
+    )
+    monkeypatch.setattr(
+        update,
+        "_fetch_engine_asset",
+        lambda v: ("http://x/wh.zip", f"memory_kit_mcp-{v}-wheelhouse-win_amd64.zip"),
+    )
+    result = update.check_update()
+    assert result.update_available
+    assert result.asset_url == "http://x/wh.zip"
+    assert result.asset_filename == "memory_kit_mcp-0.14.0-wheelhouse-win_amd64.zip"
+
+
+def test_check_update_no_asset_lookup_when_up_to_date(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_fake_check(
+        monkeypatch,
+        FakeUpdateInfo(
+            current_version="0.14.0",
+            latest_version="0.14.0",
+            update_available=False,
+            last_checked=1_700_000_000.0,
+        ),
+    )
+
+    def fail(_v):  # must not be called
+        raise AssertionError("asset lookup ran while up to date")
+
+    monkeypatch.setattr(update, "_fetch_engine_asset", fail)
+    result = update.check_update()
+    assert result.update_available is False
+    assert result.asset_url is None
+
+
+def _make_wheelhouse_zip(path: Path, *, nested: bool = False) -> None:
+    import zipfile
+
+    arc = "wheelhouse/dep.whl" if nested else "dep.whl"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(arc, b"fake wheel bytes")
+
+
+def test_download_and_install_engine_happy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    zip_path = tmp_path / "wh.zip"
+    _make_wheelhouse_zip(zip_path)
+
+    monkeypatch.setattr(update, "_downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        update,
+        "download_asset",
+        lambda url, name, **kw: update.DownloadResult(ok=True, path=zip_path),
+    )
+
+    captured: dict = {}
+
+    def fake_install(wheels_dir, *, on_progress=None):
+        captured["wheels_dir"] = wheels_dir
+        return update.ApplyResult(ok=True, detail="installed")
+
+    monkeypatch.setattr(update, "install_engine_update", fake_install)
+
+    res = update.download_and_install_engine(
+        "http://x/wh.zip", "memory_kit_mcp-0.14.0-wheelhouse-win_amd64.zip"
+    )
+    assert res.ok
+    assert list(captured["wheels_dir"].glob("*.whl"))
+
+
+def test_download_and_install_engine_nested_wheels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    zip_path = tmp_path / "wh.zip"
+    _make_wheelhouse_zip(zip_path, nested=True)
+    monkeypatch.setattr(update, "_downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        update,
+        "download_asset",
+        lambda url, name, **kw: update.DownloadResult(ok=True, path=zip_path),
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        update,
+        "install_engine_update",
+        lambda wheels_dir, *, on_progress=None: (
+            captured.update(wheels_dir=wheels_dir)
+            or update.ApplyResult(ok=True)
+        ),
+    )
+    res = update.download_and_install_engine(
+        "http://x/wh.zip", "memory_kit_mcp-0.14.0-wheelhouse-win_amd64.zip"
+    )
+    assert res.ok
+    assert captured["wheels_dir"].name == "wheelhouse"
+
+
+def test_download_and_install_engine_download_fail(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        update,
+        "download_asset",
+        lambda url, name, **kw: update.DownloadResult(ok=False, error="404"),
+    )
+    res = update.download_and_install_engine("http://x/wh.zip", "wh.zip")
+    assert res.ok is False
+    assert "download failed" in (res.error or "")
+
+
+def test_download_and_install_engine_empty_wheelhouse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import zipfile
+
+    zip_path = tmp_path / "wh.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("README.txt", b"no wheels here")
+    monkeypatch.setattr(update, "_downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        update,
+        "download_asset",
+        lambda url, name, **kw: update.DownloadResult(ok=True, path=zip_path),
+    )
+    res = update.download_and_install_engine(
+        "http://x/wh.zip", "memory_kit_mcp-0.14.0-wheelhouse-win_amd64.zip"
+    )
+    assert res.ok is False
+    assert "no .whl" in (res.error or "")
 
 
 def test_plan_missing_kit_repo(monkeypatch: pytest.MonkeyPatch):
@@ -218,3 +437,134 @@ def test_run_invokes_subprocess(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     # The deploy script path is always the second-to-last argument:
     # [interpreter, …flags, script, autoupdate_flag]
     assert script_name in captured["cmd"][-2]
+
+
+# ---------------------------------------------------------------------------
+# desktop channel check + cache + version helpers
+# ---------------------------------------------------------------------------
+
+
+def test_check_desktop_update_picks_installer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.setattr(update.paths, "app_cache_dir", lambda: tmp_path)
+    payload = _fake_releases_json(
+        {
+            "tag_name": "sb-desktop-v9.9.9",
+            "assets": [
+                {
+                    "name": "SecondBrainDesktop-9.9.9-setup.exe",
+                    "browser_download_url": "http://x/setup.exe",
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        update.urllib.request,
+        "urlopen",
+        lambda req, timeout=0: _FakeResp(payload),
+    )
+    res = update.check_desktop_update(force_refresh=True)
+    assert res.update_available is True
+    assert res.asset_filename == "SecondBrainDesktop-9.9.9-setup.exe"
+    assert res.asset_url == "http://x/setup.exe"
+
+
+def test_check_desktop_update_no_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(update.paths, "app_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        update.urllib.request,
+        "urlopen",
+        lambda req, timeout=0: _FakeResp(_fake_releases_json()),
+    )
+    res = update.check_desktop_update(force_refresh=True)
+    assert res.update_available is False
+    assert "no desktop release" in (res.error or "")
+
+
+def test_desktop_cache_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(update.paths, "app_cache_dir", lambda: tmp_path)
+    assert update._read_desktop_cache(3600) is None  # nothing cached yet
+    res = update.UpdateCheckResult(
+        channel="desktop",
+        ok=True,
+        current_version="0.11.2",
+        latest_version="0.12.0",
+        update_available=True,
+    )
+    update._write_desktop_cache(res)
+    cached = update._read_desktop_cache(3600)
+    assert cached is not None
+    assert cached.latest_version == "0.12.0"
+
+
+def test_version_helpers():
+    assert update._parse_version("v1.2.3") == (1, 2, 3)
+    assert update._is_newer("0.14.0", "0.13.2") is True
+    assert update._is_newer("0.13.2", "0.14.0") is False
+    assert update._is_newer("garbage", "0.1.0") is False
+
+
+# ---------------------------------------------------------------------------
+# on-disk engine version (fixes the "stuck at previous version" display)
+# ---------------------------------------------------------------------------
+
+
+def test_installed_engine_version_no_layout(monkeypatch: pytest.MonkeyPatch):
+    import sb_desktop.kit_installer as ki
+
+    monkeypatch.setattr(ki, "find_install_layout", lambda: None)
+    assert update._installed_engine_version() is None
+
+
+def test_installed_engine_version_reads_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    import types
+
+    import sb_desktop.kit_installer as ki
+    import sb_desktop.status as st
+
+    monkeypatch.setattr(
+        ki, "find_install_layout", lambda: types.SimpleNamespace(engine_dir=tmp_path)
+    )
+    monkeypatch.setattr(st, "_read_version_from_metadata", lambda root: "0.14.0")
+    assert update._installed_engine_version() == "0.14.0"
+
+
+def test_check_update_prefers_installed_version(monkeypatch: pytest.MonkeyPatch):
+    # Frozen import-time version says 0.12.1, but the on-disk engine is already
+    # 0.14.0 → "Current" must reflect the disk and not offer a stale update.
+    _install_fake_check(
+        monkeypatch,
+        FakeUpdateInfo(
+            current_version="0.12.1",
+            latest_version="0.14.0",
+            update_available=True,
+            last_checked=1.0,
+        ),
+    )
+    monkeypatch.setattr(update, "_installed_engine_version", lambda: "0.14.0")
+    res = update.check_update()
+    assert res.current_version == "0.14.0"
+    assert res.update_available is False
+
+
+def test_check_update_fallback_to_import_version(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_check(
+        monkeypatch,
+        FakeUpdateInfo(
+            current_version="0.12.1",
+            latest_version="0.14.0",
+            update_available=True,
+            last_checked=1.0,
+        ),
+    )
+    monkeypatch.setattr(update, "_installed_engine_version", lambda: None)
+    monkeypatch.setattr(update, "_fetch_engine_asset", lambda v: ("u", "f"))
+    res = update.check_update()
+    assert res.current_version == "0.12.1"
+    assert res.update_available is True

@@ -111,3 +111,157 @@ def test_render_text_includes_all_fields():
     text = snap.render_text()
     assert "Bundled engine: v0.12.1" in text
     assert "pipx version:  v0.12.1" in text
+
+
+def test_render_text_drift_and_error():
+    snap = status.StatusSnapshot(
+        level=status.StatusLevel.WARNING,
+        summary="drift",
+        versions_match=False,
+        error="boom",
+    )
+    text = snap.render_text()
+    assert "versions differ" in text
+    assert "Error: boom" in text
+
+
+# ---------------------------------------------------------------------------
+# _looks_like_install_root
+# ---------------------------------------------------------------------------
+
+
+def test_looks_like_install_root_pyvenv(tmp_path: Path):
+    (tmp_path / "pyvenv.cfg").write_text("x", encoding="utf-8")
+    assert status._looks_like_install_root(tmp_path) is True
+
+
+def test_looks_like_install_root_win_site_packages(tmp_path: Path):
+    (tmp_path / "Lib" / "site-packages").mkdir(parents=True)
+    assert status._looks_like_install_root(tmp_path) is True
+
+
+def test_looks_like_install_root_posix_lib_python(tmp_path: Path):
+    (tmp_path / "lib" / "python3.12" / "site-packages").mkdir(parents=True)
+    assert status._looks_like_install_root(tmp_path) is True
+
+
+def test_looks_like_install_root_false(tmp_path: Path):
+    assert status._looks_like_install_root(tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# _venv_root_from_binary fallback
+# ---------------------------------------------------------------------------
+
+
+def test_venv_root_fallback_to_pipx_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    default = tmp_path / "pipx-venv"
+    default.mkdir()
+    monkeypatch.setattr(status, "_pipx_default_venv", lambda: default)
+    # binary sits in a non-scripts dir → fall back to the pipx default.
+    binary = tmp_path / "somewhere" / "memory-kit-mcp"
+    assert status._venv_root_from_binary(binary) == default
+
+
+def test_venv_root_none_when_no_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(
+        status, "_pipx_default_venv", lambda: tmp_path / "does-not-exist"
+    )
+    binary = tmp_path / "x" / "memory-kit-mcp"
+    assert status._venv_root_from_binary(binary) is None
+
+
+# ---------------------------------------------------------------------------
+# _read_version_from_metadata (Windows layout)
+# ---------------------------------------------------------------------------
+
+
+def _make_dist_info(venv_root: Path, version: str) -> None:
+    sp = venv_root / "Lib" / "site-packages"
+    dist = sp / "memory_kit_mcp-0.0.0.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: memory-kit-mcp\nVersion: {version}\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="Windows site-packages layout"
+)
+def test_read_version_from_metadata_happy(tmp_path: Path):
+    _make_dist_info(tmp_path, "0.14.0")
+    assert status._read_version_from_metadata(tmp_path) == "0.14.0"
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="Windows site-packages layout"
+)
+def test_read_version_no_site_packages(tmp_path: Path):
+    assert status._read_version_from_metadata(tmp_path) is None
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="Windows site-packages layout"
+)
+def test_read_version_no_dist_info(tmp_path: Path):
+    (tmp_path / "Lib" / "site-packages").mkdir(parents=True)
+    assert status._read_version_from_metadata(tmp_path) is None
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform != "win32", reason="Windows site-packages layout"
+)
+def test_read_version_no_version_line(tmp_path: Path):
+    sp = tmp_path / "Lib" / "site-packages"
+    dist = sp / "memory_kit_mcp-0.0.0.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text("Name: memory-kit-mcp\n", encoding="utf-8")
+    assert status._read_version_from_metadata(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# _probe_pipx_once
+# ---------------------------------------------------------------------------
+
+
+def test_probe_pipx_once_no_binary(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(status.shutil, "which", lambda name: None)
+    assert status._probe_pipx_once() == (None, None)
+    # Cached: a second call returns the same tuple without re-probing.
+    monkeypatch.setattr(
+        status.shutil,
+        "which",
+        lambda name: (_ for _ in ()).throw(AssertionError("re-probed")),
+    )
+    assert status._probe_pipx_once() == (None, None)
+
+
+def test_probe_pipx_once_happy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    binary = tmp_path / "Scripts" / "memory-kit-mcp.exe"
+    monkeypatch.setattr(status.shutil, "which", lambda name: str(binary))
+    monkeypatch.setattr(status, "_venv_root_from_binary", lambda b: tmp_path)
+    monkeypatch.setattr(status, "_read_version_from_metadata", lambda r: "0.14.0")
+    assert status._probe_pipx_once() == (str(binary), "0.14.0")
+
+
+def test_probe_pipx_once_venv_unresolved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    binary = tmp_path / "bin" / "memory-kit-mcp"
+    monkeypatch.setattr(status.shutil, "which", lambda name: str(binary))
+    monkeypatch.setattr(status, "_venv_root_from_binary", lambda b: None)
+    assert status._probe_pipx_once() == (str(binary), None)
+
+
+def test_bundled_version_import_error(monkeypatch: pytest.MonkeyPatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "memory_kit_mcp", None)
+    version, err = status._bundled_version()
+    assert version is None
+    assert "import failed" in (err or "")

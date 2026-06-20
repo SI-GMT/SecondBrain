@@ -107,3 +107,14 @@ async def test_recall_empty_vault_returns_helpful_message(
         assert "No project/domain found" in d.message
 
     get_config.cache_clear()
+
+
+async def test_recall_resolves_tolerant_slug_variants(client: Client) -> None:
+    """"ALPHA", "al-pha", "al pha" all resolve to the on-disk "alpha" folder
+    instead of triggering disambiguation (regression: spaced/dashed/mixed-case
+    project names used to fall through to the inventory list)."""
+    for spelling in ("ALPHA", "al-pha", "al pha", "Alpha"):
+        res = await client.call_tool("mem_recall", {"slug": spelling})
+        assert res.data.project == spelling, spelling
+        assert res.data.kind == "project", spelling
+        assert res.data.phase == "in-progress (demo fixture)", spelling

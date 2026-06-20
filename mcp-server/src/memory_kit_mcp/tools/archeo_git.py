@@ -2259,6 +2259,13 @@ def _write_archive(
     main perf win on repos with many milestones.
     """
     body = _build_body(repo, slug, info, ai_cache=ai_cache)
+    # Phase E doctrine: emit <repo>/... sigils for paths under the analysed
+    # repo. Sigilize BEFORE hashing so the content_hash idempotency check
+    # operates on the final (written) body. The analysed repo root is known
+    # here (``repo``), so no context.md round-trip is needed.
+    from memory_kit_mcp.vault.sigil import sigilize_with_root
+
+    body, _ = sigilize_with_root(body, str(repo))
     new_hash = hash_content(body)
 
     archives_dir = vault / "10-episodes" / "projects" / slug / "archives"

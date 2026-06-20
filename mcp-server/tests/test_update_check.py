@@ -62,10 +62,15 @@ def _mock_urlopen_factory(payload: dict[str, Any]) -> Any:
     """Return a callable suitable for monkeypatching urllib.request.urlopen."""
 
     def _fake_urlopen(req, timeout=None):  # noqa: ARG001
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "releases?per_page=" in url or ("/releases" in url and not url.endswith("/latest")):
+            data = [payload]
+        else:
+            data = payload
         cm = MagicMock()
         cm.__enter__ = lambda self: self
         cm.__exit__ = lambda self, *a: None
-        cm.read = lambda: json.dumps(payload).encode("utf-8")
+        cm.read = lambda: json.dumps(data).encode("utf-8")
         return cm
 
     return _fake_urlopen

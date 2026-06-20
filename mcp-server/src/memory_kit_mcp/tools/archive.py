@@ -76,6 +76,71 @@ class ArcheoFrontmatterIncompleteError(ValueError):
     """
 
 
+class CumulativeDecisionDroppedError(ValueError):
+    """Raised when a rewritten ``context.md`` body drops one or more of the
+    cumulative decisions the caller declared via ``expect_decisions``.
+
+    This is the deterministic quality gate of the delegated brief→expand flow
+    (doctrine: docs/architecture/vNEXT-archive-delegation-brief-expand-cadrage.md
+    §7). The cheap Phase B expander renders the new context from a brief; this
+    gate guarantees it didn't silently lose a cumulative decision while
+    reformatting. No partial write happens — the context is not persisted if
+    any expected decision is missing. The error lists every dropped decision so
+    the caller can correct the body (or escalate to the strong model) in one
+    pass.
+    """
+
+
+_DECISION_SIG_RE = re.compile(r"[^a-z0-9]")
+
+
+def _decision_signature(text: str) -> str:
+    """Collapse a decision string to its alphanumeric skeleton.
+
+    Mirrors ``paths._norm_slug`` (decision #18, tolerant matching): lowercase,
+    strip every non-alphanumeric character. ``"Bake-at-build pour artefacts"``
+    and ``"bake at build, pour artefacts"`` both map to the same signature, so
+    the preservation check tolerates reformatting/punctuation/case while still
+    catching a true drop. Order-preserving — a reordered phrase will NOT match,
+    which is why ``decisions_cumulative`` entries must be short stable identifiers.
+    """
+    return _DECISION_SIG_RE.sub("", text.lower())
+
+
+def _enforce_cumulative_preserved(
+    body: str, expect_decisions: list[str] | None
+) -> None:
+    """Raise ``CumulativeDecisionDroppedError`` if any expected cumulative
+    decision is absent from ``body``.
+
+    No-op when ``expect_decisions`` is falsy (classic, non-delegated archiving)
+    or when every signature is found. Each expected decision is collapsed to its
+    alphanumeric skeleton and looked up as a substring of the body's skeleton —
+    tolerant to reformatting, strict on actual omission. Empty/whitespace-only
+    expectations are skipped defensively (the model contract already rejects
+    them upstream, but the gate must not crash on a stray one).
+    """
+    if not expect_decisions:
+        return
+    body_sig = _decision_signature(body)
+    dropped = [
+        d
+        for d in expect_decisions
+        if _decision_signature(d) and _decision_signature(d) not in body_sig
+    ]
+    if not dropped:
+        return
+    listed = "; ".join(f"{d!r}" for d in dropped)
+    raise CumulativeDecisionDroppedError(
+        f"The rewritten context.md dropped {len(dropped)} cumulative "
+        f"decision(s) declared in expect_decisions: {listed}. Per the "
+        "brief→expand preservation gate (vNEXT doctrine §7), every cumulative "
+        "decision MUST survive into the new context body. Resolution: add the "
+        "missing decision(s) back to the context body verbatim, or escalate "
+        "the rendering to the strong model."
+    )
+
+
 def _enforce_wikilinks(field_name: str, body: str, vault: Path) -> None:
     """Raise ``DanglingWikilinkError`` if ``body`` contains any dangling wikilinks.
 
@@ -131,10 +196,12 @@ def _do_incremental(
     slug: str,
     context_md: str,
     phase: str | None,
+    expect_decisions: list[str] | None = None,
 ) -> ChangeReport:
     """Mid-session update — rewrite context.md only."""
     folder, kind = _resolve_active(vault, slug)
     _enforce_wikilinks("context_md", context_md, vault)
+    _enforce_cumulative_preserved(context_md, expect_decisions)
     ctx = folder / "context.md"
 
     fm: dict[str, Any] = {}
@@ -227,11 +294,24 @@ def _do_full(
     phase: str | None,
     archive_extra_fm: dict[str, Any] | None = None,
     source_hint: str | None = None,
+    expect_decisions: list[str] | None = None,
 ) -> ChangeReport:
     """End-of-session — create a new archive + update history.md + reset context.md."""
     folder, kind = _resolve_active(vault, slug)
     _enforce_wikilinks("archive_body_md", archive_body_md, vault)
     _enforce_wikilinks("context_md", new_context_md, vault)
+    _enforce_cumulative_preserved(new_context_md, expect_decisions)
+
+    # Phase E doctrine: emit <repo>/... sigils, not absolute paths. Resolve
+    # repo_path from the CURRENT context.md before it gets reset below; no-op
+    # for legacy projects without a repo_path.
+    from memory_kit_mcp.vault.sigil import project_repo_path
+    from memory_kit_mcp.vault.repo_paths import rewrite_abs_paths_to_sigil
+
+    _repo_path = project_repo_path(folder)
+    if _repo_path:
+        archive_body_md, _ = rewrite_abs_paths_to_sigil(archive_body_md, _repo_path)
+        new_context_md, _ = rewrite_abs_paths_to_sigil(new_context_md, _repo_path)
 
     now = datetime.now()
     date_iso = now.date().isoformat()
@@ -391,6 +471,20 @@ def register(mcp: FastMCP) -> None:
                 "if any MUST key is missing — no partial write."
             ),
         ),
+        expect_decisions: list[str] | None = Field(
+            None,
+            description=(
+                "Quality gate for the delegated brief→expand flow (vNEXT). Pass "
+                "the brief's `decisions_cumulative` list (short, stable "
+                "identifiers). Before persisting the new context.md, the tool "
+                "verifies every entry survives into the body (alphanumeric-"
+                "skeleton substring match — tolerant to reformatting, strict on "
+                "omission). Any dropped decision raises "
+                "CumulativeDecisionDroppedError listing them — no partial write. "
+                "Omit (None) for classic, non-delegated archiving — the check is "
+                "then a no-op."
+            ),
+        ),
     ) -> ChangeReport:
         """Archive the current session into the vault.
 
@@ -416,7 +510,9 @@ def register(mcp: FastMCP) -> None:
         vault = config.vault
 
         if mode == "incremental":
-            return _do_incremental(vault, slug, context_md, phase)
+            return _do_incremental(
+                vault, slug, context_md, phase, expect_decisions=expect_decisions
+            )
 
         # full mode — validate required fields
         if not archive_subject or not archive_body_md:
@@ -432,4 +528,5 @@ def register(mcp: FastMCP) -> None:
             phase,
             archive_extra_fm=archive_extra_fm,
             source_hint=source_hint,
+            expect_decisions=expect_decisions,
         )

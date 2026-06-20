@@ -322,13 +322,17 @@ function Resolve-IncludeDirectives {
     param(
         [Parameter(Mandatory=$true)][string]$Content,
         [Parameter(Mandatory=$true)][string]$BlocsRoot,
-        [int]$Depth = 0
+        [int]$Depth = 0,
+        [string[]]$Ancestors = @()
     )
-    if ($Depth -gt 5) {
-        throw "Profondeur maximale d'inclusion depassee (5). Cycle d'inclusion suspecte."
+    if ($Depth -gt 10) {
+        throw "Profondeur maximale d'inclusion depassee (10). Cycle d'inclusion suspecte."
     }
 
-    $pattern = '\{\{INCLUDE\s+(_\w+)\}\}'
+    # Include names can contain hyphens (_repo-topology, _repo-paths,
+    # _frontmatter-archeo, …) — match [\w-], not just \w, else the directive
+    # is left unresolved (literal {{INCLUDE …}} leaks into the deployed skill).
+    $pattern = '\{\{INCLUDE\s+(_[\w-]+)\}\}'
     $allMatches = [regex]::Matches($Content, $pattern)
 
     if ($allMatches.Count -eq 0) {
@@ -340,13 +344,20 @@ function Resolve-IncludeDirectives {
     $sortedMatches = @($allMatches) | Sort-Object -Property Index -Descending
     foreach ($match in $sortedMatches) {
         $blocName = $match.Groups[1].Value
+        # Cycle guard : si le bloc est deja en cours d'expansion plus haut dans
+        # la chaine, laisser la directive LITTERALE. Cas concret : certains
+        # blocs doctrine (_repo-topology, _archived, _when-to-script) citent
+        # leur propre nom comme EXEMPLE de syntaxe — il ne faut pas le resoudre.
+        if ($Ancestors -contains $blocName) {
+            continue
+        }
         $blocPath = Join-Path $BlocsRoot "$blocName.md"
         if (-not (Test-Path $blocPath)) {
             throw "Bloc d'inclusion introuvable : {{INCLUDE $blocName}} -> $blocPath manquant."
         }
         $blocContent = Get-Content -Path $blocPath -Raw
         # Resolution recursive (un bloc peut en inclure d'autres).
-        $blocContent = Resolve-IncludeDirectives -Content $blocContent -BlocsRoot $BlocsRoot -Depth ($Depth + 1)
+        $blocContent = Resolve-IncludeDirectives -Content $blocContent -BlocsRoot $BlocsRoot -Depth ($Depth + 1) -Ancestors ($Ancestors + $blocName)
         # Remplacement litteral (pas regex) : evite les soucis d'echappement
         # avec les caracteres speciaux du contenu inclus.
         $result = $result.Substring(0, $match.Index) + $blocContent + $result.Substring($match.Index + $match.Length)
@@ -398,9 +409,10 @@ function Add-McpFirstBlock {
 
 function Test-CliInstalled {
     param([string]$Binary, [string]$ConfigDir)
-    # CLI consideree installee si le binaire est sur le PATH OU si le dossier
-    # de config existe (= elle a deja tourne sur ce poste).
-    $hasBinary = $null -ne (Get-Command $Binary -ErrorAction SilentlyContinue)
+    $hasBinary = $false
+    if ($Binary) {
+        $hasBinary = $null -ne (Get-Command $Binary -ErrorAction SilentlyContinue)
+    }
     $hasConfig = $ConfigDir -and (Test-Path $ConfigDir)
     return $hasBinary -or $hasConfig
 }
@@ -442,6 +454,14 @@ function Get-ExistingVaultPath {
             } else {
                 Join-Path $HOME '.copilot\memory-kit.json'
             }
+        },
+        @{
+            Source     = 'Antigravity CLI'
+            ConfigFile = Join-Path $HOME '.gemini\antigravity-cli\memory-kit.json'
+        },
+        @{
+            Source     = 'Antigravity Desktop'
+            ConfigFile = Join-Path $HOME '.gemini\antigravity\memory-kit.json'
         }
     )
 
@@ -451,10 +471,11 @@ function Get-ExistingVaultPath {
         try {
             $config = Get-Content -Path $s.ConfigFile -Raw | ConvertFrom-Json
             if ($config.vault) {
+                $normalizedVault = [System.IO.Path]::GetFullPath($config.vault)
                 $found += [PSCustomObject]@{
                     Source     = $s.Source
                     ConfigFile = $s.ConfigFile
-                    Vault      = $config.vault
+                    Vault      = $normalizedVault
                 }
             }
         } catch {
@@ -565,6 +586,27 @@ function Deploy-ClaudeCode {
         $assembled = $templateContent.Replace('{{PROCEDURE}}', $procedureContent)
         Set-Content -Path (Join-Path $skillsTarget "$skillName.md") -Value $assembled -Encoding utf8NoBOM -NoNewline
         Write-Ok "Skill   : $skillName.md"
+    }
+
+    # Agents (subagents enregistres) — template frontmatter + resolution des
+    # includes core. L'expander wrappe {{INCLUDE _archive-expander}} (le contrat
+    # partage avec la procedure mem-archive). Pas de {{PROCEDURE}}, pas de bloc
+    # MCP-first : un agent n'est pas un skill. Claude Code est la seule plateforme
+    # au mecanisme d'agent enregistre connu du kit ; les autres CLI recoivent le
+    # meme contrat inline dans leur skill mem-archive (cf. _archive-expander.md).
+    $agentsSource = Join-Path $KitRoot 'adapters\claude-code\agents'
+    if (Test-Path $agentsSource) {
+        $agentsTarget = Join-Path $ConfigDir 'agents'
+        if (-not (Test-Path $agentsTarget)) {
+            New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
+        }
+        Get-ChildItem -Path $agentsSource -Filter '*.template.md' | ForEach-Object {
+            $agentName = $_.Name -replace '\.template\.md$', ''
+            $agentContent = Get-Content -Path $_.FullName -Raw
+            $agentContent = Resolve-IncludeDirectives -Content $agentContent -BlocsRoot $coreSource
+            Set-Content -Path (Join-Path $agentsTarget "$agentName.md") -Value $agentContent -Encoding utf8NoBOM -NoNewline
+            Write-Ok "Agent   : $agentName.md"
+        }
     }
 
     # memory-kit.json
@@ -1553,10 +1595,13 @@ function Add-McpServerToTomlConfig {
     # commentaires TOML #.
     $startMarker = '# MEMORY-KIT:START'
     $endMarker   = '# MEMORY-KIT:END'
+    # TOML literal string (single-quote) pour le path Windows : sinon les
+    # backslashes sont interpretes comme escapes (`\U` -> unicode escape attendu,
+    # parse error Codex). Les literal strings ne traitent aucune escape.
     $block = @"
 $startMarker
 [mcp_servers.$SectionName]
-command = "$Command"
+command = '$Command'
 args = []
 $endMarker
 "@
@@ -1584,7 +1629,20 @@ $endMarker
     # (s'il existe) du contenu temporaire pour que les regex de detection
     # n'incluent pas les sections fenced legitimes, puis on supprime tout
     # `[mcp_servers.SECTION]` ou `[mcp_servers.SECTION.foo.bar]` orphelin.
+    # Extraire le bloc MEMORY-KIT-PERMS (auto-approve par outil) avant
+    # detection orphan, pour qu'il ne soit ni traite comme orphelin (il contient
+    # des sous-tables [mcp_servers.SECTION.tools.X]) ni perdu lors de la
+    # reconstruction.
+    $permsStart = '# MEMORY-KIT-PERMS:START'
+    $permsEnd   = '# MEMORY-KIT-PERMS:END'
+    $permsPattern = [regex]::Escape($permsStart) + '[\s\S]*?' + [regex]::Escape($permsEnd)
+    $permsMatch = [regex]::Match($existing, $permsPattern)
+    $permsBlock = if ($permsMatch.Success) { $permsMatch.Value } else { $null }
+
     $existingWithoutFenced = [regex]::Replace($existing, $pattern, '')
+    if ($permsBlock) {
+        $existingWithoutFenced = [regex]::Replace($existingWithoutFenced, $permsPattern, '')
+    }
     $orphanPattern = '(?m)^[ \t]*\[mcp_servers\.' + [regex]::Escape($SectionName) + '(\.[^\]\r\n]*)?\][\s\S]*?(?=(\r?\n[ \t]*\[)|\Z)'
     $cleaned = [regex]::Replace($existingWithoutFenced, $orphanPattern, '').TrimEnd()
     $hadOrphan = $cleaned -ne $existingWithoutFenced.TrimEnd()
@@ -1603,9 +1661,13 @@ $endMarker
     }
 
     # Soit pas de fenced, soit on a detecte une orpheline a purger : on
-    # reconstruit le fichier proprement avec une seule section fenced finale.
+    # reconstruit le fichier proprement avec une seule section fenced finale,
+    # suivie du bloc MEMORY-KIT-PERMS preserve s'il existait.
     $separator = if ($cleaned.Length -gt 0) { "`n`n" } else { '' }
     $merged = $cleaned + $separator + $block + "`n"
+    if ($permsBlock) {
+        $merged += "`n" + $permsBlock + "`n"
+    }
     Set-Content -Path $ConfigPath -Value $merged -Encoding utf8NoBOM -NoNewline
     if ($hadOrphan) {
         Write-Ok "$ConfigPath$labelTag : section orpheline [mcp_servers.$SectionName] purgee + section MEMORY-KIT injectee"
@@ -1667,6 +1729,130 @@ $endMarker
     }
 }
 
+function Deploy-AntigravityPluginLayout {
+    # Antigravity (CLI et Desktop) charge skills + MCP via un layout plugin :
+    #   {ConfigDir}\plugins\memory-kit\
+    #     plugin.json                       ← {"name": "memory-kit"}
+    #     skills\{nom}\SKILL.md             ← Anthropic-style frontmatter
+    # Le mcp_config.json plugin-side n'est pas honore par Antigravity Desktop ;
+    # la declaration MCP doit aller dans le fichier global ~/.gemini/config/mcp_config.json
+    # (cf. Add-McpServerToJsonConfig dans Deploy-McpServer).
+    param(
+        [string]$KitRoot,
+        [string]$ConfigDir,
+        [string]$ConfigFileRef,
+        [string]$Label
+    )
+
+    $pluginDir = Join-Path $ConfigDir 'plugins\memory-kit'
+    $skillsTarget = Join-Path $pluginDir 'skills'
+    if (-not (Test-Path $skillsTarget)) {
+        New-Item -ItemType Directory -Path $skillsTarget -Force | Out-Null
+    }
+
+    Set-Content -Path (Join-Path $pluginDir 'plugin.json') -Value "{`n  `"name`": `"memory-kit`"`n}`n" -Encoding utf8NoBOM -NoNewline
+
+    # Cleanup legacy layout (skills ecrits directement dans {ConfigDir}\skills par
+    # les versions <= v0.12.x : Antigravity les ignore, autant les retirer pour
+    # eviter la confusion).
+    $legacySkills = Join-Path $ConfigDir 'skills'
+    if (Test-Path $legacySkills) {
+        $legacyEntries = Get-ChildItem -Path $legacySkills -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^mem(-|$)' }
+        foreach ($entry in $legacyEntries) {
+            Remove-Item -Path $entry.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ((Get-ChildItem -Path $legacySkills -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0) {
+            Remove-Item -Path $legacySkills -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $legacyMcp = Join-Path $ConfigDir 'mcp_config.json'
+    if (Test-Path $legacyMcp) {
+        Remove-Item -Path $legacyMcp -Force -ErrorAction SilentlyContinue
+    }
+
+    $adapterDir = Join-Path $KitRoot 'adapters\codex'
+    $coreSource = Join-Path $KitRoot 'core\procedures'
+    $skillsSource = Join-Path $adapterDir 'skills'
+    if (-not (Test-Path $skillsSource)) {
+        return
+    }
+
+    Get-ChildItem -Path $skillsSource -Directory | ForEach-Object {
+        $name = $_.Name
+        $tplFile = Join-Path $_.FullName 'SKILL.md.template'
+        if (-not (Test-Path $tplFile)) {
+            Write-Warn2 "SKILL.md.template manquant pour $name (ignore)"
+            return
+        }
+        $tpl = Get-Content -Path $tplFile -Raw
+        $procPath = Join-Path $coreSource "$name.md"
+        if (-not (Test-Path $procPath)) {
+            Write-Warn2 "Procedure core manquante pour skill $name (ignore)"
+            return
+        }
+        $proc = Get-Content -Path $procPath -Raw
+        $proc = Resolve-IncludeDirectives -Content $proc -BlocsRoot $coreSource
+        $proc = $proc -replace '\{\{CONFIG_FILE\}\}', $ConfigFileRef
+        $proc = Add-McpFirstBlock -ProcedureContent $proc -SkillName $name -BlocsRoot $coreSource
+        $assembled = $tpl.Replace('{{PROCEDURE}}', $proc)
+        $destDir = Join-Path $skillsTarget $name
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        Set-Content -Path (Join-Path $destDir 'SKILL.md') -Value $assembled -Encoding utf8NoBOM -NoNewline
+        Write-Ok "Skill   : $name/SKILL.md"
+    }
+}
+
+function Deploy-AntigravityCli {
+    param(
+        [string]$KitRoot,
+        [string]$ConfigDir,
+        [string]$VaultPath,
+        [switch]$Force
+    )
+
+    Write-Host ''
+    Write-Step "> Deploiement : Antigravity CLI"
+
+    if (-not (Test-Path $ConfigDir)) {
+        Write-Warn2 "Dossier Antigravity CLI introuvable ($ConfigDir). Lance 'agy' au moins une fois."
+        return $false
+    }
+
+    Deploy-AntigravityPluginLayout -KitRoot $KitRoot -ConfigDir $ConfigDir `
+        -ConfigFileRef '`~/.gemini/antigravity-cli/memory-kit.json`' -Label 'Antigravity CLI'
+
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
+
+    return $true
+}
+
+function Deploy-AntigravityDesktop {
+    param(
+        [string]$KitRoot,
+        [string]$ConfigDir,
+        [string]$VaultPath,
+        [switch]$Force
+    )
+
+    Write-Host ''
+    Write-Step "> Deploiement : Antigravity Desktop"
+
+    if (-not (Test-Path $ConfigDir)) {
+        Write-Warn2 "Dossier Antigravity Desktop introuvable ($ConfigDir)."
+        return $false
+    }
+
+    Deploy-AntigravityPluginLayout -KitRoot $KitRoot -ConfigDir $ConfigDir `
+        -ConfigFileRef '`~/.gemini/antigravity/memory-kit.json`' -Label 'Antigravity Desktop'
+
+    Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
+
+    return $true
+}
+
 function Deploy-McpServer {
     param(
         [Parameter(Mandatory=$true)][string]$KitRoot,
@@ -1724,25 +1910,41 @@ function Deploy-McpServer {
 
     Write-McpServerConfig -VaultPath $VaultPath -KitRepo $KitRoot -Language $script:Language
 
+    # Resolution dynamique du chemin absolu du binaire memory-kit-mcp
+    $serverCommand = 'memory-kit-mcp'
+    $mcpBinary = Get-Command memory-kit-mcp -ErrorAction SilentlyContinue
+    if ($mcpBinary) {
+        $serverCommand = $mcpBinary.Source
+    } else {
+        $pipxBinDir = & pipx environment --value PIPX_BIN_DIR 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $pipxBinDir) {
+            $pipxBinDir = Join-Path $HOME '.local\bin'
+        }
+        $fallbackBinary = Join-Path $pipxBinDir 'memory-kit-mcp.exe'
+        if (Test-Path $fallbackBinary) {
+            $serverCommand = $fallbackBinary
+        }
+    }
+
     # Inject MCP server dans les configs CLI compatibles
     if ($DetectedConfigs.ContainsKey('Claude')) {
         $claudeConfig = Join-Path $HOME '.claude.json'
-        Add-McpServerToJsonConfig -ConfigPath $claudeConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Claude Code'
+        Add-McpServerToJsonConfig -ConfigPath $claudeConfig -ServerName 'secondbrain-memory-kit' -Command $serverCommand -LegacyServerNames @('memory-kit') -Label 'Claude Code'
     }
     if ($DetectedConfigs.ContainsKey('Codex')) {
         $codexConfig = Join-Path $DetectedConfigs['Codex'] 'config.toml'
-        Add-McpServerToTomlConfig -ConfigPath $codexConfig -SectionName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -Label 'Codex'
+        Add-McpServerToTomlConfig -ConfigPath $codexConfig -SectionName 'secondbrain-memory-kit' -Command $serverCommand -Label 'Codex'
     }
     if ($DetectedConfigs.ContainsKey('Copilot')) {
         $copilotMcpConfig = Join-Path $DetectedConfigs['Copilot'] 'mcp-config.json'
-        Add-McpServerToJsonConfig -ConfigPath $copilotMcpConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Copilot CLI'
+        Add-McpServerToJsonConfig -ConfigPath $copilotMcpConfig -ServerName 'secondbrain-memory-kit' -Command $serverCommand -LegacyServerNames @('memory-kit') -Label 'Copilot CLI'
     }
     if ($DetectedConfigs.ContainsKey('Vibe')) {
         # Mistral Vibe supporte MCP via ~/.vibe/config.toml (format
         # [[mcp_servers]] table d'arrays). Pattern verifie en lisant le
         # config existant de mcp-iris-connector qui s'y installe deja.
         $vibeConfig = Join-Path $DetectedConfigs['Vibe'] 'config.toml'
-        Add-McpServerToVibeTomlConfig -ConfigPath $vibeConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -Label 'Mistral Vibe'
+        Add-McpServerToVibeTomlConfig -ConfigPath $vibeConfig -ServerName 'secondbrain-memory-kit' -Command $serverCommand -Label 'Mistral Vibe'
     }
 
     if ($DetectedConfigs.ContainsKey('Gemini')) {
@@ -1751,15 +1953,29 @@ function Deploy-McpServer {
         # Copilot CLI, Claude Desktop). Champs extras 'trust' et 'description'
         # acceptes mais non injectes (l'utilisateur peut les ajouter manuellement).
         $geminiSettings = Join-Path $DetectedConfigs['Gemini'] 'settings.json'
-        Add-McpServerToJsonConfig -ConfigPath $geminiSettings -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Gemini CLI'
+        Add-McpServerToJsonConfig -ConfigPath $geminiSettings -ServerName 'secondbrain-memory-kit' -Command $serverCommand -LegacyServerNames @('memory-kit') -Label 'Gemini CLI'
+    }
+
+    if ($DetectedConfigs.ContainsKey('AntigravityCli') -or $DetectedConfigs.ContainsKey('AntigravityDesktop')) {
+        # Antigravity (CLI et Desktop) lit ses serveurs MCP depuis le fichier
+        # partage ~/.gemini/config/mcp_config.json (cf. log language_server :
+        # "Failed to load JSON config file C:\Users\bdubois\.gemini\config\mcp_config.json").
+        # Les paths per-app ~/.gemini/antigravity-cli/mcp_config.json et
+        # ~/.gemini/antigravity/mcp_config.json sont ignores par Antigravity Desktop.
+        $config = Join-Path $HOME '.gemini\config\mcp_config.json'
+        $configDir = Split-Path -Parent $config
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        }
+        Add-McpServerToJsonConfig -ConfigPath $config -ServerName 'secondbrain-memory-kit' -Command $serverCommand -LegacyServerNames @('memory-kit') -Label 'Antigravity (shared config)'
     }
 
     # Cibles desktop : detection independante des CLI command-line. Leur config
-    # MCP est lue par les apps desktop, pas par les binaires CLI.
+    # MCP est lue by les apps desktop, pas par les binaires CLI.
     $claudeDesktopConfig = Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'
     $claudeDesktopDir = Split-Path -Parent $claudeDesktopConfig
     if (Test-Path $claudeDesktopDir) {
-        Add-McpServerToJsonConfig -ConfigPath $claudeDesktopConfig -ServerName 'secondbrain-memory-kit' -Command 'memory-kit-mcp' -LegacyServerNames @('memory-kit') -Label 'Claude Desktop'
+        Add-McpServerToJsonConfig -ConfigPath $claudeDesktopConfig -ServerName 'secondbrain-memory-kit' -Command $serverCommand -LegacyServerNames @('memory-kit') -Label 'Claude Desktop'
     } else {
         Write-Skip "Claude Desktop non detecte ($claudeDesktopDir absent)"
     }
@@ -1774,6 +1990,191 @@ function Deploy-McpServer {
 
     # Codex Desktop : chemin a investiguer (pas detecte sur ce poste, attente
     # info utilisateur sur le bon emplacement).
+
+    # Pre-seed des allow-lists / auto-approve pour reduire les prompts MCP au
+    # strict minimum. Une fois ces patches appliques, les 36 outils mem* du
+    # serveur secondbrain-memory-kit sont auto-approuves sur Claude Code,
+    # Codex, Vibe, Copilot ; Gemini/Antigravity persistent la 1ere approbation.
+    Set-McpAutoApprovePermissions -DetectedConfigs $DetectedConfigs
+}
+
+# ============================================================
+# Set-McpAutoApprovePermissions — patch idempotent allow-lists/auto-approve
+# par client pour minimiser les prompts utilisateur sur les outils MCP du
+# serveur secondbrain-memory-kit. Liste des 37 outils encodee statiquement
+# (mem + 36 mem_*).
+# ============================================================
+
+function Get-SecondbrainMcpToolNames {
+    return @(
+        'mem','mem_archeo','mem_archeo_atlassian','mem_archeo_context',
+        'mem_archeo_context_finalize','mem_archeo_git','mem_archeo_index_files',
+        'mem_archeo_plan','mem_archeo_project_topology','mem_archeo_stack',
+        'mem_archive','mem_check_update','mem_digest','mem_doc',
+        'mem_get_topology','mem_goal','mem_health_repair','mem_health_scan',
+        'mem_help','mem_historize','mem_init_project','mem_list','mem_merge',
+        'mem_migrate','mem_note','mem_person','mem_principle',
+        'mem_promote_domain','mem_read_archive','mem_read_context',
+        'mem_read_history','mem_recall','mem_reclass','mem_rename',
+        'mem_rollback_archive','mem_search','mem_update_phase'
+    )
+}
+
+function Add-ClaudeMcpAllowPattern {
+    param([string]$ConfigPath)
+    if (-not (Test-Path $ConfigPath)) { return }
+    $json = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    if ($null -eq $json.permissions) {
+        $json | Add-Member -NotePropertyName 'permissions' -NotePropertyValue ([pscustomobject]@{ allow = @() })
+    }
+    if ($null -eq $json.permissions.allow) {
+        $json.permissions | Add-Member -NotePropertyName 'allow' -NotePropertyValue @()
+    }
+    $allow = @($json.permissions.allow)
+    $pat = 'mcp__secondbrain-memory-kit__*'
+    if ($allow -notcontains $pat) {
+        $json.permissions.allow = $allow + $pat
+        ($json | ConvertTo-Json -Depth 64) | Set-Content -Path $ConfigPath -Encoding utf8NoBOM
+        Write-Ok "$ConfigPath (Claude Code) : permissions.allow += $pat"
+    } else {
+        Write-Skip "$ConfigPath (Claude Code) : pattern allow $pat deja present"
+    }
+}
+
+function Enable-GeminiPermanentApproval {
+    param([string]$ConfigPath, [string]$Label)
+    if (-not (Test-Path $ConfigPath)) { return }
+    $json = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    if ($null -eq $json.security) {
+        $json | Add-Member -NotePropertyName 'security' -NotePropertyValue ([pscustomobject]@{})
+    }
+    if ($json.security.enablePermanentToolApproval -eq $true) {
+        Write-Skip "$ConfigPath ($Label) : enablePermanentToolApproval deja true"
+        return
+    }
+    if ($null -ne $json.security.enablePermanentToolApproval) {
+        $json.security.enablePermanentToolApproval = $true
+    } else {
+        $json.security | Add-Member -NotePropertyName 'enablePermanentToolApproval' -NotePropertyValue $true
+    }
+    ($json | ConvertTo-Json -Depth 64) | Set-Content -Path $ConfigPath -Encoding utf8NoBOM
+    Write-Ok "$ConfigPath ($Label) : security.enablePermanentToolApproval = true"
+}
+
+function Set-CopilotMcpToolsWildcard {
+    param([string]$ConfigPath)
+    if (-not (Test-Path $ConfigPath)) { return }
+    $json = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $sb = $json.mcpServers.'secondbrain-memory-kit'
+    if ($null -eq $sb) { return }
+    $current = @($sb.tools)
+    if ($current.Count -eq 1 -and $current[0] -eq '*') {
+        Write-Skip "$ConfigPath (Copilot CLI) : tools=['*'] deja present"
+        return
+    }
+    if ($null -ne $sb.tools) {
+        $sb.tools = @('*')
+    } else {
+        $sb | Add-Member -NotePropertyName 'tools' -NotePropertyValue @('*')
+    }
+    ($json | ConvertTo-Json -Depth 64) | Set-Content -Path $ConfigPath -Encoding utf8NoBOM
+    Write-Ok "$ConfigPath (Copilot CLI) : secondbrain-memory-kit.tools = ['*']"
+}
+
+function Set-VibeMcpAutoApprove {
+    param([string]$ConfigPath, [string[]]$Tools)
+    if (-not (Test-Path $ConfigPath)) { return }
+    $txt = Get-Content -Path $ConfigPath -Raw
+    $regex = [regex]'(\[mcp\.auto_approve\]\s*\r?\ntools\s*=\s*\[)([^\]]*)(\])'
+    $m = $regex.Match($txt)
+    if (-not $m.Success) {
+        Write-Skip "$ConfigPath (Mistral Vibe) : [mcp.auto_approve] tools = [...] introuvable"
+        return
+    }
+    $inner = $m.Groups[2].Value
+    $existing = [regex]::Matches($inner, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
+    $existingSet = @{}
+    foreach ($e in $existing) { $existingSet[$e] = $true }
+    $toAdd = @($Tools | Where-Object { -not $existingSet.ContainsKey($_) })
+    if ($toAdd.Count -eq 0) {
+        Write-Skip "$ConfigPath (Mistral Vibe) : mem_* deja dans [mcp.auto_approve]"
+        return
+    }
+    $newInner = $inner.TrimEnd().TrimEnd(',')
+    foreach ($t in $toAdd) {
+        $newInner += ",`n    `"$t`""
+    }
+    $newInner += "`n"
+    $new = $txt.Substring(0, $m.Index) + $m.Groups[1].Value + $newInner + $m.Groups[3].Value + $txt.Substring($m.Index + $m.Length)
+    Set-Content -Path $ConfigPath -Value $new -Encoding utf8NoBOM -NoNewline
+    Write-Ok "$ConfigPath (Mistral Vibe) : +$($toAdd.Count) outils mem_* dans [mcp.auto_approve]"
+}
+
+function Set-CodexMcpToolApprovalBlock {
+    param([string]$ConfigPath, [string[]]$Tools)
+    if (-not (Test-Path $ConfigPath)) { return }
+    $markerStart = '# MEMORY-KIT-PERMS:START'
+    $markerEnd = '# MEMORY-KIT-PERMS:END'
+    $blockLines = @($markerStart)
+    foreach ($t in $Tools) {
+        $blockLines += "[mcp_servers.secondbrain-memory-kit.tools.$t]"
+        $blockLines += 'approval_mode = "auto"'
+        $blockLines += ''
+    }
+    $blockLines += $markerEnd
+    $block = ($blockLines -join "`n")
+    $txt = Get-Content -Path $ConfigPath -Raw
+    $startIdx = $txt.IndexOf($markerStart)
+    if ($startIdx -ge 0) {
+        $endSearch = $txt.IndexOf($markerEnd, $startIdx)
+        if ($endSearch -lt 0) {
+            # Marker START orphelin (END perdu par un cleanup precedent qui
+            # purgeait les sous-tables [mcp_servers.secondbrain-memory-kit.tools.X]).
+            # Recovery : retirer la ligne START seule, puis reinjecter en fin.
+            $txt = [regex]::Replace($txt, '(?m)^[ \t]*' + [regex]::Escape($markerStart) + '[ \t]*\r?\n?', '')
+            if (-not $txt.EndsWith("`n")) { $txt += "`n" }
+            $txt += "`n" + $block + "`n"
+            Set-Content -Path $ConfigPath -Value $txt -Encoding utf8NoBOM -NoNewline
+            Write-Ok "$ConfigPath (Codex) : marker START orphelin nettoye + bloc MEMORY-KIT-PERMS reinsere ($($Tools.Count) outils)"
+            return
+        }
+        $endIdx = $endSearch + $markerEnd.Length
+        $new = $txt.Substring(0, $startIdx) + $block + $txt.Substring($endIdx)
+        if ($new -eq $txt) {
+            Write-Skip "$ConfigPath (Codex) : bloc MEMORY-KIT-PERMS deja a jour"
+            return
+        }
+        Set-Content -Path $ConfigPath -Value $new -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath (Codex) : bloc MEMORY-KIT-PERMS refresh ($($Tools.Count) outils)"
+    } else {
+        if (-not $txt.EndsWith("`n")) { $txt += "`n" }
+        $txt += "`n" + $block + "`n"
+        Set-Content -Path $ConfigPath -Value $txt -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath (Codex) : bloc MEMORY-KIT-PERMS insere ($($Tools.Count) outils)"
+    }
+}
+
+function Set-McpAutoApprovePermissions {
+    param([Parameter(Mandatory=$true)][hashtable]$DetectedConfigs)
+    Write-Host ''
+    Write-Step "> Pre-seed auto-approve / allow-lists MCP secondbrain-memory-kit"
+    $tools = Get-SecondbrainMcpToolNames
+
+    if ($DetectedConfigs.ContainsKey('Claude')) {
+        Add-ClaudeMcpAllowPattern -ConfigPath (Join-Path $DetectedConfigs['Claude'] 'settings.json')
+    }
+    if ($DetectedConfigs.ContainsKey('Gemini')) {
+        Enable-GeminiPermanentApproval -ConfigPath (Join-Path $DetectedConfigs['Gemini'] 'settings.json') -Label 'Gemini CLI / Antigravity Desktop'
+    }
+    if ($DetectedConfigs.ContainsKey('Copilot')) {
+        Set-CopilotMcpToolsWildcard -ConfigPath (Join-Path $DetectedConfigs['Copilot'] 'mcp-config.json')
+    }
+    if ($DetectedConfigs.ContainsKey('Vibe')) {
+        Set-VibeMcpAutoApprove -ConfigPath (Join-Path $DetectedConfigs['Vibe'] 'config.toml') -Tools $tools
+    }
+    if ($DetectedConfigs.ContainsKey('Codex')) {
+        Set-CodexMcpToolApprovalBlock -ConfigPath (Join-Path $DetectedConfigs['Codex'] 'config.toml') -Tools $tools
+    }
 }
 
 # ============================================================
@@ -1963,6 +2364,20 @@ $platforms = @(
         Binary      = 'copilot'
         ConfigDir   = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
         DeployFunc  = 'Deploy-CopilotCli'
+    },
+    [ordered]@{
+        Name        = 'antigravity-cli'
+        DisplayName = 'Antigravity CLI'
+        Binary      = 'agy'
+        ConfigDir   = Join-Path $HOME '.gemini\antigravity-cli'
+        DeployFunc  = 'Deploy-AntigravityCli'
+    },
+    [ordered]@{
+        Name        = 'antigravity-desktop'
+        DisplayName = 'Antigravity Desktop'
+        Binary      = ''
+        ConfigDir   = Join-Path $HOME '.gemini\antigravity'
+        DeployFunc  = 'Deploy-AntigravityDesktop'
     }
 )
 
@@ -2009,7 +2424,9 @@ foreach ($p in $detected) {
         'gemini-cli'    { $configMap['Gemini']  = $p.ConfigDir }
         'codex'         { $configMap['Codex']   = $p.ConfigDir }
         'mistral-vibe'  { $configMap['Vibe']    = $p.ConfigDir }
-        'copilot-cli'   { $configMap['Copilot'] = $p.ConfigDir }
+        'copilot-cli'         { $configMap['Copilot'] = $p.ConfigDir }
+        'antigravity-cli'     { $configMap['AntigravityCli'] = $p.ConfigDir }
+        'antigravity-desktop' { $configMap['AntigravityDesktop'] = $p.ConfigDir }
     }
 }
 Remove-DeprecatedV04Files -ConfigDirs $configMap

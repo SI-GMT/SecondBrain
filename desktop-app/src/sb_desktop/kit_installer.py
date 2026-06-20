@@ -225,6 +225,24 @@ def _cli_targets() -> list[LlmCliInfo]:
             config_path_segments=(".od", "mcp-config.json"),
             detection_segments=((".od",),),
         ),
+        LlmCliInfo(
+            identifier="antigravity-cli",
+            label="Antigravity CLI",
+            description="Gemini-based terminal LLM (`agy` command).",
+            config_writer="json",
+            config_path_segments=(".gemini", "antigravity-cli", "mcp_config.json"),
+            binary_name="agy",
+            binary_aliases=("agy.cmd", "agy.exe", "agy.ps1"),
+            detection_segments=((".gemini", "antigravity-cli"),),
+        ),
+        LlmCliInfo(
+            identifier="antigravity-desktop",
+            label="Antigravity Desktop",
+            description="Gemini-based desktop agent app.",
+            config_writer="json",
+            config_path_segments=(".gemini", "antigravity", "mcp_config.json"),
+            detection_segments=((".gemini", "antigravity"),),
+        ),
     ]
 
 

@@ -104,7 +104,7 @@ def test_finalize_routes_per_category(
         vault=vault_tmp, project="alpha", repo_path=repo_with_doc,
         scope="work", spans=spans, today="2026-05-06",
     )
-    paths = {s.span_subject: s.written_path for s in result.spans}
+    paths = {s.span_subject: s.written_path.replace("\\", "/") for s in result.spans}
     assert "40-principles/work/methodology" in paths["W1"]
     assert "40-principles/work/security" in paths["S1"]
     assert "20-knowledge/architecture/decisions" in paths["A1"]

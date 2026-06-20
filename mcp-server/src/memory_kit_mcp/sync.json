@@ -7,7 +7,7 @@
     },
     "mem_archive": {
       "procedure": "mem-archive.md",
-      "last_synced_hash": "171e23bfc20f0e1ec07a269e8db5f70e52725cae32bdf3e492538b0f3a27abca"
+      "last_synced_hash": "32af30ef570f9503292576ce11235bbcda154697f3de73cf498cdf9eb08b5220"
     },
     "mem_list": {
       "procedure": "mem-list.md",
@@ -20,6 +20,10 @@
     "mem_digest": {
       "procedure": "mem-digest.md",
       "last_synced_hash": "6bd318435223430c0b895bda3590b2a9c44d8bd16c7706a4ab41cf5596e8ea5a"
+    },
+    "mem_worklog": {
+      "procedure": "mem-worklog.md",
+      "last_synced_hash": "1dfb167af01a8ca4aa59121b63d1dab3d3b5a6f5d39e46d9ba250f56433579d5"
     },
     "mem_init_project": {
       "procedure": "mem-init-project.md",
@@ -131,7 +135,7 @@
     },
     "mem_archeo_git": {
       "procedure": "mem-archeo-git.md",
-      "last_synced_hash": "d4f2f7f515817f574da3147f8ab22d163885fc1387c820b564d9904842dd0c50"
+      "last_synced_hash": "fe665020cfc6220815d2ace08833b14bc7f998f8f75efa6d19156733adc80c09"
     },
     "mem_archeo_atlassian": {
       "procedure": "mem-archeo-atlassian.md",
@@ -140,6 +144,18 @@
     "mem_help": {
       "procedure": "mem-help.md",
       "last_synced_hash": "730694cd8501b4611a4878a2df86ec39ae4b3a2b30706b3366f27b259318e405"
+    },
+    "mem_vault_migrate": {
+      "procedure": "mem-vault-migrate.md",
+      "last_synced_hash": "509e1a5d30918a49076b9ea5ac91e0036489531510b6331b0451a4962936d162"
+    },
+    "mem_relocate_project": {
+      "procedure": "mem-relocate-project.md",
+      "last_synced_hash": "7afc7a4b2228f0aadc8bb834dda76e0dd65c1a95fbe091100c47eddcb651d946"
+    },
+    "mem_archive_rewrite_paths": {
+      "procedure": "mem-archive-rewrite-paths.md",
+      "last_synced_hash": "0ca8a077a52bccef5f56c68108c687545b9a20ff86cf27d4446818b0a27dcbfe"
     }
   }
 }

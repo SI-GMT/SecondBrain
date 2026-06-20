@@ -83,6 +83,7 @@ _CATEGORY_OF: dict[str, str] = {
     "mem-init-project": "vault",
     "mem-update-phase": "vault",
     "mem-digest": "vault",
+    "mem-worklog": "vault",
     "mem-rollback-archive": "vault",
     "mem-read-archive": "vault",
     "mem-read-context": "vault",
