@@ -163,15 +163,16 @@ Phase A **n'écrit jamais** `archive_body_md` ni `new_context_md`. Si elle le fa
 
 ---
 
-## 6. Phase B — expander (subagent cheap)
+## 6. Phase B — expander (subagent cheap) — design agnostique
 
-Nouvel agent dédié, fenêtre fraîche, contexte ~15 k (brief + `context.md` actuel + `99-meta/*-template.md`). Tier cheap (Haiku). Tools : `Read`, `mem_archive` (MCP), `mem_read_context`. **Pas** `Write`/`Edit` direct vers le vault — toute écriture passe par `mem_archive` (le persist déterministe + gate).
+Subagent à fenêtre fraîche, contexte ~15 k (brief + `context.md` actuel + template). Tier cheap (Haiku). Tools : `Read`, `mem_archive` (MCP), `mem_read_context`. **Pas** `Write`/`Edit` direct vers le vault — toute écriture passe par `mem_archive` (persist déterministe + gate).
 
-Contrat (system prompt de l'agent) :
+**Le contrat de l'expander = un bloc `core/` unique** (`core/procedures/_archive-expander.md`), prose host-agnostique. Deux consommateurs, zéro duplication :
 
-> Tu reçois un brief structuré déjà décidé. Ta seule tâche : expanser en prose dense et appeler `mem_archive`. Tu ne décides RIEN — pas de tri décision/remarque, pas d'ajout, pas d'omission. Tout `decisions_cumulative` du brief DOIT apparaître dans `new_context_md`. Tout `session_arcs` DOIT apparaître dans `archive_body_md`. Verbosité selon `verbosity`. Format `context.md` : cf. `mem-archive.md` §4.
+1. **Chemin universel** — la procédure `mem-archive.md` l'inline via `{{INCLUDE _archive-expander}}` → le contrat est dans le skill `mem-archive` déployé de **chaque** plateforme. L'orchestrateur le passe au subagent que son hôte sait spawner. Fonctionne sur **tout CLI ayant une capacité de subagent**, sans config par plateforme. (C'est ce chemin qu'a validé le dogfood : spawn inline d'un agent Haiku avec le contrat.)
+2. **Agent enregistré Claude Code** — `adapters/claude-code/agents/mem-archive-expander.template.md` (frontmatter `model: haiku` + tools restreints + `{{INCLUDE _archive-expander}}`), déployé vers `~/.claude/agents/` par le pas « Agents » de `deploy.ps1`/`deploy.sh`. `subagent_type` first-class, modèle/tools forcés.
 
-Sortie : appel `mem_archive(slug, mode="full", archive_subject, archive_body_md, context_md=new_context_md, phase, archive_extra_fm?, source_hint?)`.
+**Capability-gating, pas d'invention** : Claude Code est la seule plateforme dont le mécanisme d'agent enregistré est vérifié. Les autres (Codex/Gemini/Vibe/Copilot/Antigravity) reçoivent le contrat **inline** via leur skill (chemin 1) — on ne fabrique pas de format d'agent non vérifié. Un `adapters/{plateforme}/agents/` sera ajouté quand son mécanisme natif sera confirmé.
 
 Le rendu prose à partir d'un squelette complet est faiblement « reasoning » : c'est de la mise en forme. La qualité tient parce que (a) le jugement est pré-figé dans le brief, (b) le gate rattrape les omissions de substance (pas le style).
 
@@ -187,7 +188,7 @@ Le gate vit **dans `mem_archive`** (et son équivalent skill-mode). Trois invari
 | Sigils `<repo>/...` | `rewrite_abs_paths_to_sigil` | existant |
 | MUST keys archeo-git | `_validate_archeo_git_archive_fm` | existant |
 | Refus projet archivé | `_resolve_active` | existant |
-| **Préservation décisions cumulées** | **NOUVEAU** `_enforce_cumulative_preserved` | à écrire |
+| **Préservation décisions cumulées** | `_enforce_cumulative_preserved` (param `expect_decisions`) | livré |
 
 ### Nouvel invariant — préservation des décisions cumulées
 
@@ -218,12 +219,16 @@ La contrainte « qualité = thinking-high » est tenue par construction : tout c
 
 ## 9. Découpage d'implémentation
 
-1. **Schéma brief** : modèle Pydantic `ArchiveBrief` dans `mcp-server/src/memory_kit_mcp/tools/_models.py`. Pas un tool MCP — c'est un contrat partagé Phase A ↔ Phase B.
-2. **Gate `_enforce_cumulative_preserved`** + paramètre `expect_decisions` dans `archive.py`. Tests `test_archive.py` : décision présente OK, décision droppée → `CumulativeDecisionDroppedError`, `None` → no-op.
-3. **Agent expander** : `adapters/claude-code/agents/mem-archive-expander.md` (ou équivalent par plateforme) — frontmatter `model: haiku`, tools restreints, system prompt = contrat §6. Discipline : ne pas dupliquer la procédure, référencer `core/procedures/mem-archive.md`.
-4. **Procédure `mem-archive.md`** : ajouter une section « Mode délégué (brief→expand) » décrivant Phase A comme **le chemin par défaut** du mode full quand la capacité subagent-cheap existe. Pas de flag. Le skill-mode (sans MCP / sans subagent) reste le fallback. Source de vérité fonctionnelle.
-5. **Module Python `tools/archive.py`** co-modifié dans le même commit (discipline `sync.json`, recalcul du hash via `sync update`).
-6. **Bench de validation** : un vrai `/mem-archive --delegate` mesuré (output Opus, cache-read, latence) vs le baseline §1. Confirmer ~10×/~3×.
+Statut : 1-5 et 7-8 **livrés** (commits `feat/sub-agent-archiving`). 6 (bench formel) reste.
+
+1. ✅ **Schéma brief** : `ArchiveBrief` + sous-modèles + validators dans `tools/_models.py`. Pas un tool MCP — contrat partagé Phase A ↔ Phase B.
+2. ✅ **Gate** : `CumulativeDecisionDroppedError` + `_decision_signature` + `_enforce_cumulative_preserved` + param `expect_decisions` câblé (incremental + full) dans `archive.py`. 6 tests (`test_archive.py`), suite 583 passed / 83.23 %.
+3. ✅ **Contrat expander = bloc core** `core/procedures/_archive-expander.md` (source unique, host-agnostique).
+4. ✅ **Procédure `mem-archive.md`** : section « Delegated execution » (défaut full, pas de flag), Phase B agnostique (agent enregistré OU spawn inline), `{{INCLUDE _archive-expander}}` embarque le contrat dans le skill de chaque plateforme. Skill-mode = fallback.
+5. ✅ **Agent Claude Code + deploy** : `adapters/claude-code/agents/mem-archive-expander.template.md` (frontmatter + include) + pas « Agents » dans `Deploy-ClaudeCode` / `deploy_claude_code` (includes-only, ni `{{PROCEDURE}}` ni MCP-first). `sync.json` recalculé via `sync update`.
+6. ⏳ **Bench de validation** : un vrai `/mem-archive` délégué mesuré (output Opus, cache-read, latence) vs baseline §1. Data point dogfood : 51 s / 41 k tokens Haiku, 4 tool-uses, gate passé — à transformer en mesure propre.
+7. ✅ **CLAUDE.md** : discipline classe d'asset `agents/` + capability-gating + procédure d'ajout d'un subagent.
+8. ✅ **Vérif deploy** : parse `deploy.ps1` (Parser) + `bash -n deploy.sh` OK ; include résolu sans fuite (agent template ET procédure).
 
 ---
 
@@ -231,7 +236,8 @@ La contrainte « qualité = thinking-high » est tenue par construction : tout c
 
 - **`core/procedures/mem-archive.md` ↔ `tools/archive.py`** : tout changement du gate ou du contrat brief co-commité, `sync.json` recalculé (cf. CLAUDE.md §manifest spec-drift).
 - **Skill-mode ≡ MCP-mode** : le gate de préservation doit aussi être appliqué (checklist manuelle) par le caller skill-mode sans MCP. Documenter dans la procédure.
-- **`deploy.ps1` ↔ `deploy.sh`** : si l'agent expander introduit un nouveau type d'asset à déployer (`agents/`), étendre les deux scripts.
+- **`deploy.ps1` ↔ `deploy.sh`** : le pas « Agents » (classe d'asset `agents/`) existe dans les deux (PowerShell `Resolve-IncludeDirectives` ; Bash `assemble_procedure` `skill_name` vide = includes-only). Tout subagent ajouté = co-commit + parse des deux scripts. Détail dans CLAUDE.md §Subagents.
+- **Contrat = bloc core unique** : `_archive-expander.md` consommé par la procédure (inline, universel) ET l'agent claude-code. Jamais dupliquer le contrat dans un adapter.
 - **Verbosité = pur rendu LLM** (décision #20) : `verbosity` dans le brief ne change que l'expansion de Phase B, jamais la mécanique ni le jugement.
 
 ---
@@ -242,7 +248,7 @@ La contrainte « qualité = thinking-high » est tenue par construction : tout c
 |---|---|---|
 | 1 | **Brief incomplet** → perte de jugement silencieuse. | Responsabilité Phase A. Le gate ne couvre que `decisions_cumulative` ; les autres champs (arcs, next-steps) ne sont pas vérifiés mécaniquement. Atténuation : prompt Phase A exigeant + revue manuelle initiale. |
 | 2 | **Phase B reformule mal** (prose dégradée mais substance présente). | Gate lexical ne l'attrape pas. Accepté : la qualité prose d'archive est secondaire à la complétude/resumabilité. Si insuffisant → option « gate Opus court » : 1 passe Opus de relecture sur la sortie ~6k (~+$0.30, reste 5-10× gagnant). |
-| 3 | **Estimation latence** (~80-110 s) non mesurée. | À valider §9.6. Haiku ~2-3× tok/s d'Opus + sortie hors high-effort. |
+| 3 | **Latence** : estimée ~80-110 s, dogfood mesuré à **51 s** (Phase B Haiku, 41 k tokens, 4 tool-uses) vs baseline 292 s. | Confirmé ~3×+ sur un run réel. Bench formel §9.6 pour figer (incl. coût Phase A Opus). |
 | 4 | **Nombre de turns Phase A** (hypothèse 1-2). | Si la synthèse du brief demande N turns Opus, Phase A ≈ N × $0.28. À 5 turns → total ~$1.5 (encore ~5×). Le gain dégrade gracieusement. |
 | 5 | **Dépendance discipline incrémentale.** | Le brief est moins cher à produire si `context.md` est déjà tenu (mode silent-incremental). Pré-requis souhaitable, pas bloquant. |
 | 6 | **Activation** : flag vs seuil vs défaut. | **Tranché : auto direct, pas de flag.** Le gain est avéré (~10×/~3×) et le filet d'escalade (§8) garantit qu'aucun chemin ne dégrade la qualité — fonctionner sans délégation n'a pas d'intérêt. Le mode full délègue **par défaut** dès que la capacité subagent-cheap est présente ; sinon skill-mode fallback (Phase A écrit directement). Pas de `--delegate`, pas de seuil. |

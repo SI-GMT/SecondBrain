@@ -54,7 +54,13 @@ Three phases:
 
 1. **Phase A — orchestrator (this strong-model turn).** Read the session ONCE. Resolve project/domain + branch as below. Read the current `context.md` (for the cumulative decisions and the delta). Then produce a compact **brief** — the `ArchiveBrief` contract (`mcp-server/src/memory_kit_mcp/tools/_models.py`): all the judgment (`session_arcs`, `decisions_new`, the COMPLETE `decisions_cumulative`, `state`, `next_steps`, `derived_atoms`, `active_assets`, `verbosity`) and **zero prose** — bullets only. Do NOT write `archive_body_md` or `new_context_md` yourself; that is exactly the expensive prose the delegation avoids.
 
-2. **Phase B — expander (cheap subagent, fresh window).** Spawn a low-tier subagent and hand it the serialized brief + the path to the current `context.md` + the worklog/template if relevant. Its contract (see `adapters/claude-code/agents/mem-archive-expander.md`): expand the brief into `archive_body_md` (prose, one section per `session_arc`) and `new_context_md` (the `context.md` format in §4), decide NOTHING, then call `mem_archive` in full mode. It MUST pass `expect_decisions = brief.decisions_cumulative` so the preservation gate runs.
+2. **Phase B — expander (cheap subagent, fresh window).** Spawn a low-tier subagent and hand it the serialized brief + the slug + (optionally) the worklog/template. Use whichever subagent mechanism your host provides:
+   - If your host registers named subagents (e.g. Claude Code's `mem-archive-expander`), invoke that registered agent — it already carries the contract below and pins the cheap model + restricted tools.
+   - Otherwise, spawn a fresh low-tier subagent inline and pass the **expander contract** (reproduced verbatim below) as its instructions. This is the universal path — it works on any host that can spawn a subagent, with no platform-specific registration.
+
+   The contract is the single source of truth (`core/procedures/_archive-expander.md`); both paths use exactly the same text:
+
+{{INCLUDE _archive-expander}}
 
 3. **Phase C — gate (inside `mem_archive`).** The tool already enforces wikilink resolution, sigils, and archived-project refusal; the delegated flow adds the **cumulative-decision preservation gate** via `expect_decisions` (function `_enforce_cumulative_preserved`): every cumulative decision must survive into the new context body (alphanumeric-skeleton substring match — tolerant to reformatting, strict on omission). A dropped decision raises `CumulativeDecisionDroppedError` — no partial write.
 

@@ -588,6 +588,27 @@ function Deploy-ClaudeCode {
         Write-Ok "Skill   : $skillName.md"
     }
 
+    # Agents (subagents enregistres) — template frontmatter + resolution des
+    # includes core. L'expander wrappe {{INCLUDE _archive-expander}} (le contrat
+    # partage avec la procedure mem-archive). Pas de {{PROCEDURE}}, pas de bloc
+    # MCP-first : un agent n'est pas un skill. Claude Code est la seule plateforme
+    # au mecanisme d'agent enregistre connu du kit ; les autres CLI recoivent le
+    # meme contrat inline dans leur skill mem-archive (cf. _archive-expander.md).
+    $agentsSource = Join-Path $KitRoot 'adapters\claude-code\agents'
+    if (Test-Path $agentsSource) {
+        $agentsTarget = Join-Path $ConfigDir 'agents'
+        if (-not (Test-Path $agentsTarget)) {
+            New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
+        }
+        Get-ChildItem -Path $agentsSource -Filter '*.template.md' | ForEach-Object {
+            $agentName = $_.Name -replace '\.template\.md$', ''
+            $agentContent = Get-Content -Path $_.FullName -Raw
+            $agentContent = Resolve-IncludeDirectives -Content $agentContent -BlocsRoot $coreSource
+            Set-Content -Path (Join-Path $agentsTarget "$agentName.md") -Value $agentContent -Encoding utf8NoBOM -NoNewline
+            Write-Ok "Agent   : $agentName.md"
+        }
+    }
+
     # memory-kit.json
     Write-MemoryKitJson -Path (Join-Path $ConfigDir 'memory-kit.json') -Vault $VaultPath -KitRepo $KitRoot -Language $script:Language -Force:$Force
 
