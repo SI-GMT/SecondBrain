@@ -160,6 +160,36 @@ fi
 if [[ $DO_SIGN -eq 1 ]]; then
     echo "==> Signing with $DEV_ID"
 
+    # 5.0 Sign the native extensions bundled *inside* the offline engine
+    #     wheels. The notary service unzips each .whl and rejects any
+    #     unsigned Mach-O (caio, pyyaml, cffi, cryptography, …). We unpack
+    #     each wheel, sign every .so/.dylib with a hardened runtime +
+    #     secure timestamp, then repack — done BEFORE the .app is sealed so
+    #     the bundle's CodeResources hash matches the rewritten wheels.
+    WHEELS_DIR="$APP_BUNDLE/Contents/engine/wheels"
+    if [[ -d "$WHEELS_DIR" ]]; then
+        echo "==> Signing native extensions inside engine wheels"
+        for whl in "$WHEELS_DIR"/*.whl; do
+            [[ -e "$whl" ]] || continue
+            whl_tmp="$(mktemp -d)"
+            unzip -q -o "$whl" -d "$whl_tmp"
+            whl_signed=0
+            while IFS= read -r -d '' macho; do
+                if file "$macho" | grep -q "Mach-O"; then
+                    codesign --force --options runtime --timestamp \
+                        --sign "$DEV_ID" \
+                        "$macho"
+                    whl_signed=1
+                fi
+            done < <(find "$whl_tmp" -type f \( -name '*.so' -o -name '*.dylib' \) -print0)
+            if [[ $whl_signed -eq 1 ]]; then
+                rm -f "$whl"
+                ( cd "$whl_tmp" && zip -q -r -X "$whl" . )
+            fi
+            rm -rf "$whl_tmp"
+        done
+    fi
+
     while IFS= read -r -d '' payload_path; do
         if file "$payload_path" | grep -q "Mach-O"; then
             codesign --force --options runtime --timestamp \
