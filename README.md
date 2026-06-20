@@ -57,6 +57,8 @@ Vous tapez `/mem-recall` (ou simplement « on continue », « tu te rappelles ? 
 
 L'agent met à jour le contexte du projet **dès qu'une décision structurante émerge**, sans intervention. Vous ne sauvegardez pas — c'est fait pour vous. À la fin de session, `/mem-archive` produit un résumé horodaté immuable + met à jour le contexte vif.
 
+Sur les hôtes capables de déléguer à un sous-agent (Claude Code et tout CLI équivalent), `/mem-archive` **délègue le rendu de l'archive à un sous-agent économique** : le modèle fort décide *quoi* archiver (le jugement), un modèle léger rédige sur cette base. Un filet déterministe garantit qu'aucune décision cumulée n'est perdue. Résultat mesuré : archivage **~3× plus rapide et ~10× moins coûteux**, à qualité égale. Transparent et auto-activé ; repli automatique sur le modèle fort si besoin.
+
 ### Archeo de vos dépôts Git existants
 
 Pointez SecondBrain sur n'importe quel dépôt Git. L'agent reconstruit son historique en archives narratives :
@@ -310,6 +312,7 @@ Documentation technique complète : [`docs/architecture/`](./docs/architecture/)
 |---|---|---|
 | **Phase 1** | ✅ Terminée | Multi-CLI individuel — Claude, Gemini, Codex, Vibe, Copilot, Antigravity (CLI + Desktop) |
 | **Phase 3** | ✅ Terminée | Serveur MCP natif — 41 outils, 7 cibles auto-configurées |
+| **Archivage délégué** | ✅ Terminée | Délégation `brief→expand` de `/mem-archive` à un sous-agent économique + gate déterministe de préservation des décisions (~3× plus rapide, ~10× moins coûteux, qualité préservée). 4ᵉ classe d'asset : sous-agents enregistrés, agnostique multi-CLI (`engine v0.15.0`) |
 | **Phase Desktop** | ✅ Windows livré, macOS en cours | Installateur self-contained + assistant guidé, runtime Python embarqué, surveillance vault, en-process kit, bootstrap engine fiable + PATH cross-OS, multi-user RDP, désinstallation propre, auto-update dual-canal (moteur + desktop), détection CLI étendue (npm globals + alt dirs), wiring MCP avec path absolu (immune au PATH cache RDP), i18n EN/FR/ES/DE/RU, vault scaffold complet (`sb-desktop-v0.10.5`) |
 | **Phase 2** | À venir | Vault partagé en équipe, promotion `CollectiveBrain` |
 
