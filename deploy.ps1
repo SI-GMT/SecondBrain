@@ -2010,13 +2010,14 @@ function Get-SecondbrainMcpToolNames {
         'mem','mem_archeo','mem_archeo_atlassian','mem_archeo_context',
         'mem_archeo_context_finalize','mem_archeo_git','mem_archeo_index_files',
         'mem_archeo_plan','mem_archeo_project_topology','mem_archeo_stack',
-        'mem_archive','mem_check_update','mem_digest','mem_doc',
-        'mem_get_topology','mem_goal','mem_health_repair','mem_health_scan',
-        'mem_help','mem_historize','mem_init_project','mem_list','mem_merge',
-        'mem_migrate','mem_note','mem_person','mem_principle',
-        'mem_promote_domain','mem_read_archive','mem_read_context',
-        'mem_read_history','mem_recall','mem_reclass','mem_rename',
-        'mem_rollback_archive','mem_search','mem_update_phase'
+        'mem_archive','mem_archive_rewrite_paths','mem_check_update',
+        'mem_digest','mem_doc','mem_get_topology','mem_goal',
+        'mem_health_repair','mem_health_scan','mem_help','mem_historize',
+        'mem_init_project','mem_list','mem_merge','mem_migrate','mem_note',
+        'mem_person','mem_principle','mem_promote_domain','mem_read_archive',
+        'mem_read_context','mem_read_history','mem_recall','mem_reclass',
+        'mem_relocate_project','mem_rename','mem_rollback_archive','mem_search',
+        'mem_update_phase','mem_vault_migrate','mem_worklog'
     )
 }
 
@@ -2084,30 +2085,52 @@ function Set-CopilotMcpToolsWildcard {
 function Set-VibeMcpAutoApprove {
     param([string]$ConfigPath, [string[]]$Tools)
     if (-not (Test-Path $ConfigPath)) { return }
+    # Schema reel de Vibe (vibe/core/config/_settings.py) : il N'EXISTE PAS de
+    # section [mcp.auto_approve] ni [mcp.tools] -- ces cles, vues dans de vieux
+    # configs, sont silencieusement ignorees. Les permissions par outil vivent
+    # dans des tables [tools.<cle>] avec permission = always|ask|never. La cle
+    # d'un outil MCP = "<nom_serveur_normalise>_<nom_outil>". La normalisation
+    # (regex [^a-zA-Z0-9_-] -> _ puis strip _- aux extremites) PRESERVE les
+    # tirets de 'secondbrain-memory-kit' -> cle [tools.secondbrain-memory-kit_<outil>].
+    # On emet un bloc fence idempotent (meme pattern que le writer Codex).
+    $markerStart = '# MEMORY-KIT-PERMS:START'
+    $markerEnd = '# MEMORY-KIT-PERMS:END'
+    $blockLines = @($markerStart)
+    foreach ($t in $Tools) {
+        $blockLines += "[tools.secondbrain-memory-kit_$t]"
+        $blockLines += 'permission = "always"'
+        $blockLines += ''
+    }
+    $blockLines += $markerEnd
+    $block = ($blockLines -join "`n")
     $txt = Get-Content -Path $ConfigPath -Raw
-    $regex = [regex]'(\[mcp\.auto_approve\]\s*\r?\ntools\s*=\s*\[)([^\]]*)(\])'
-    $m = $regex.Match($txt)
-    if (-not $m.Success) {
-        Write-Skip "$ConfigPath (Mistral Vibe) : [mcp.auto_approve] tools = [...] introuvable"
-        return
+    $startIdx = $txt.IndexOf($markerStart)
+    if ($startIdx -ge 0) {
+        $endSearch = $txt.IndexOf($markerEnd, $startIdx)
+        if ($endSearch -lt 0) {
+            # Marker START orphelin (END perdu par un cleanup precedent) : on
+            # retire la ligne START seule puis on reinjecte en fin de fichier.
+            $txt = [regex]::Replace($txt, '(?m)^[ \t]*' + [regex]::Escape($markerStart) + '[ \t]*\r?\n?', '')
+            if (-not $txt.EndsWith("`n")) { $txt += "`n" }
+            $txt += "`n" + $block + "`n"
+            Set-Content -Path $ConfigPath -Value $txt -Encoding utf8NoBOM -NoNewline
+            Write-Ok "$ConfigPath (Mistral Vibe) : marker START orphelin nettoye + bloc MEMORY-KIT-PERMS reinsere ($($Tools.Count) outils)"
+            return
+        }
+        $endIdx = $endSearch + $markerEnd.Length
+        $new = $txt.Substring(0, $startIdx) + $block + $txt.Substring($endIdx)
+        if ($new -eq $txt) {
+            Write-Skip "$ConfigPath (Mistral Vibe) : bloc MEMORY-KIT-PERMS deja a jour"
+            return
+        }
+        Set-Content -Path $ConfigPath -Value $new -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath (Mistral Vibe) : bloc MEMORY-KIT-PERMS refresh ($($Tools.Count) outils)"
+    } else {
+        if (-not $txt.EndsWith("`n")) { $txt += "`n" }
+        $txt += "`n" + $block + "`n"
+        Set-Content -Path $ConfigPath -Value $txt -Encoding utf8NoBOM -NoNewline
+        Write-Ok "$ConfigPath (Mistral Vibe) : bloc MEMORY-KIT-PERMS insere ($($Tools.Count) outils)"
     }
-    $inner = $m.Groups[2].Value
-    $existing = [regex]::Matches($inner, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
-    $existingSet = @{}
-    foreach ($e in $existing) { $existingSet[$e] = $true }
-    $toAdd = @($Tools | Where-Object { -not $existingSet.ContainsKey($_) })
-    if ($toAdd.Count -eq 0) {
-        Write-Skip "$ConfigPath (Mistral Vibe) : mem_* deja dans [mcp.auto_approve]"
-        return
-    }
-    $newInner = $inner.TrimEnd().TrimEnd(',')
-    foreach ($t in $toAdd) {
-        $newInner += ",`n    `"$t`""
-    }
-    $newInner += "`n"
-    $new = $txt.Substring(0, $m.Index) + $m.Groups[1].Value + $newInner + $m.Groups[3].Value + $txt.Substring($m.Index + $m.Length)
-    Set-Content -Path $ConfigPath -Value $new -Encoding utf8NoBOM -NoNewline
-    Write-Ok "$ConfigPath (Mistral Vibe) : +$($toAdd.Count) outils mem_* dans [mcp.auto_approve]"
 }
 
 function Set-CodexMcpToolApprovalBlock {

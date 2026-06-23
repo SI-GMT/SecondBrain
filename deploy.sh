@@ -2098,6 +2098,7 @@ mem_archeo_plan
 mem_archeo_project_topology
 mem_archeo_stack
 mem_archive
+mem_archive_rewrite_paths
 mem_check_update
 mem_digest
 mem_doc
@@ -2120,10 +2121,13 @@ mem_read_context
 mem_read_history
 mem_recall
 mem_reclass
+mem_relocate_project
 mem_rename
 mem_rollback_archive
 mem_search
 mem_update_phase
+mem_vault_migrate
+mem_worklog
 EOF
 }
 
@@ -2190,29 +2194,55 @@ set_vibe_mcp_auto_approve() {
     [[ -f "$config_path" ]] || return 0
     local tools
     tools="$(_secondbrain_mcp_tool_names | tr '\n' ',' | sed 's/,$//')"
-    python3 - "$config_path" "$tools" <<'PY' || _yellow "Vibe auto_approve : echec patch"
-import re, sys
+    python3 - "$config_path" "$tools" <<'PY' || _yellow "Vibe MEMORY-KIT-PERMS : echec patch"
+import sys
 p, tools_csv = sys.argv[1], sys.argv[2]
 tools = [t for t in tools_csv.split(",") if t]
+# Schema reel de Vibe (vibe/core/config/_settings.py) : pas de [mcp.auto_approve]
+# ni [mcp.tools] (ignores). Les permissions par outil vivent dans [tools.<cle>]
+# avec permission = always|ask|never. Cle = "<serveur_normalise>_<outil>" ; la
+# normalisation preserve les tirets de 'secondbrain-memory-kit'. Bloc fence
+# idempotent, meme pattern que le writer Codex.
+marker_start = "# MEMORY-KIT-PERMS:START"
+marker_end = "# MEMORY-KIT-PERMS:END"
+lines = [marker_start]
+for t in tools:
+    lines.append(f"[tools.secondbrain-memory-kit_{t}]")
+    lines.append('permission = "always"')
+    lines.append("")
+lines.append(marker_end)
+block = "\n".join(lines)
 with open(p, encoding="utf-8") as f:
     txt = f.read()
-m = re.search(r"(\[mcp\.auto_approve\]\s*\ntools\s*=\s*\[)([^\]]*)(\])", txt, re.M)
-if not m:
-    print(f"[--] {p} (Mistral Vibe) : [mcp.auto_approve] tools = [...] introuvable")
-    sys.exit(0)
-existing = set(re.findall(r'"([^"]+)"', m.group(2)))
-to_add = [t for t in tools if t not in existing]
-if not to_add:
-    print(f"[--] {p} (Mistral Vibe) : mem_* deja dans [mcp.auto_approve]")
-    sys.exit(0)
-new_inner = m.group(2).rstrip().rstrip(",")
-for t in to_add:
-    new_inner += f',\n    "{t}"'
-new_inner += "\n"
-new = txt[:m.start()] + m.group(1) + new_inner + m.group(3) + txt[m.end():]
-with open(p, "w", encoding="utf-8", newline="\n") as f:
-    f.write(new)
-print(f"[OK] {p} (Mistral Vibe) : +{len(to_add)} outils mem_* dans [mcp.auto_approve]")
+start = txt.find(marker_start)
+if start >= 0:
+    end_search = txt.find(marker_end, start)
+    if end_search < 0:
+        # Marker START orphelin (END perdu par un cleanup precedent).
+        import re as _re
+        txt = _re.sub(r'(?m)^[ \t]*' + _re.escape(marker_start) + r'[ \t]*\r?\n?', '', txt)
+        if not txt.endswith("\n"):
+            txt += "\n"
+        txt += "\n" + block + "\n"
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(txt)
+        print(f"[OK] {p} (Mistral Vibe) : marker START orphelin nettoye + bloc MEMORY-KIT-PERMS reinsere ({len(tools)} outils)")
+        sys.exit(0)
+    end = end_search + len(marker_end)
+    new = txt[:start] + block + txt[end:]
+    if new == txt:
+        print(f"[--] {p} (Mistral Vibe) : bloc MEMORY-KIT-PERMS deja a jour")
+        sys.exit(0)
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        f.write(new)
+    print(f"[OK] {p} (Mistral Vibe) : bloc MEMORY-KIT-PERMS refresh ({len(tools)} outils)")
+else:
+    if not txt.endswith("\n"):
+        txt += "\n"
+    txt += "\n" + block + "\n"
+    with open(p, "w", encoding="utf-8", newline="\n") as f:
+        f.write(txt)
+    print(f"[OK] {p} (Mistral Vibe) : bloc MEMORY-KIT-PERMS insere ({len(tools)} outils)")
 PY
 }
 
