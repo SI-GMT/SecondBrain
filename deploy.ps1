@@ -1693,7 +1693,7 @@ $startMarker
 [[mcp_servers]]
 name = "$ServerName"
 transport = "stdio"
-command = "$Command"
+command = '$Command'
 args = []
 $endMarker
 "@

@@ -1777,7 +1777,7 @@ add_mcp_server_to_vibe_toml_config() {
     local start_marker='# MEMORY-KIT:START'
     local end_marker='# MEMORY-KIT:END'
     local block
-    block="$(printf '%s\n[[mcp_servers]]\nname = "%s"\ntransport = "stdio"\ncommand = "%s"\nargs = []\n%s' \
+    block="$(printf '%s\n[[mcp_servers]]\nname = "%s"\ntransport = "stdio"\ncommand = '\''%s'\''\nargs = []\n%s' \
         "$start_marker" "$server_name" "$command_name" "$end_marker")"
 
     if [[ ! -f "$config_path" ]]; then
