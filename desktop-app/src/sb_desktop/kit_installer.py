@@ -1107,6 +1107,27 @@ def wire_llm_clis(
                 detail=result.detail,
             )
         )
+        # Codex + Vibe expose tools but won't auto-approve them without an
+        # explicit per-tool permission block (each in its own native schema).
+        # JSON CLIs carry their allow-list inside the server entry already.
+        perms_result: mcp_injector.InjectResult | None = None
+        if cli.config_writer == "codex-toml":
+            perms_result = mcp_injector.inject_codex_tool_permissions(
+                target, target_label=cli.label
+            )
+        elif cli.config_writer == "vibe-toml":
+            perms_result = mcp_injector.inject_vibe_tool_permissions(
+                target, target_label=cli.label
+            )
+        if perms_result is not None:
+            results.append(
+                WiringReport(
+                    label=f"{perms_result.target_label} (auto-approve)",
+                    config_path=perms_result.config_path,
+                    status=perms_result.status.value,
+                    detail=perms_result.detail,
+                )
+            )
     return results
 
 

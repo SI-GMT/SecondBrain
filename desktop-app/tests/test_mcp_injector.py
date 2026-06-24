@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 from sb_desktop import mcp_injector
@@ -150,3 +151,97 @@ def test_inject_json_unreadable_file(tmp_path: Path):
     result = mcp_injector.inject_json_mcp_server(target, target_label="Test")
     assert result.status == InjectStatus.SKIPPED
     assert "unreadable" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# Per-tool auto-approve blocks — Vibe + Codex.
+# ---------------------------------------------------------------------------
+
+
+def test_inject_vibe_perms_creates_valid_toml(tmp_path: Path):
+    target = tmp_path / "config.toml"
+    result = mcp_injector.inject_vibe_tool_permissions(target)
+    assert result.status == InjectStatus.CREATED
+    content = target.read_text(encoding="utf-8")
+    assert mcp_injector.PERMS_START_MARKER in content
+    # Vibe schema: [tools.<server>_<tool>] with hyphens preserved.
+    assert "[tools.secondbrain-memory-kit_mem_recall]" in content
+    assert 'permission = "always"' in content
+    data = tomllib.loads(content)
+    # Every exposed tool got a permission table.
+    for tool in mcp_injector.SECONDBRAIN_MCP_TOOLS:
+        key = f"secondbrain-memory-kit_{tool}"
+        assert data["tools"][key]["permission"] == "always"
+
+
+def test_inject_vibe_perms_idempotent(tmp_path: Path):
+    target = tmp_path / "config.toml"
+    mcp_injector.inject_vibe_tool_permissions(target)
+    second = mcp_injector.inject_vibe_tool_permissions(target)
+    assert second.status == InjectStatus.UNCHANGED
+
+
+def test_inject_vibe_perms_does_not_use_phantom_schema(tmp_path: Path):
+    target = tmp_path / "config.toml"
+    mcp_injector.inject_vibe_tool_permissions(target)
+    content = target.read_text(encoding="utf-8")
+    # The legacy [mcp.auto_approve] / [mcp.tools] tables are ignored by Vibe.
+    assert "[mcp.auto_approve]" not in content
+    assert "[mcp.tools]" not in content
+
+
+def test_inject_codex_perms_creates_valid_toml(tmp_path: Path):
+    target = tmp_path / "config.toml"
+    result = mcp_injector.inject_codex_tool_permissions(target)
+    assert result.status == InjectStatus.CREATED
+    content = target.read_text(encoding="utf-8")
+    assert "[mcp_servers.secondbrain-memory-kit.tools.mem_recall]" in content
+    assert 'approval_mode = "auto"' in content
+    data = tomllib.loads(content)
+    tools = data["mcp_servers"]["secondbrain-memory-kit"]["tools"]
+    for tool in mcp_injector.SECONDBRAIN_MCP_TOOLS:
+        assert tools[tool]["approval_mode"] == "auto"
+
+
+def test_inject_codex_perms_idempotent(tmp_path: Path):
+    target = tmp_path / "config.toml"
+    mcp_injector.inject_codex_tool_permissions(target)
+    second = mcp_injector.inject_codex_tool_permissions(target)
+    assert second.status == InjectStatus.UNCHANGED
+
+
+def test_codex_server_inject_preserves_perms_block(tmp_path: Path):
+    """Re-wiring the server must NOT eat the auto-approve sub-tables.
+
+    The orphan-purge regex matches ``[mcp_servers.<server>.tools.X]``; the
+    PERMS fence must shield them. Regression guard.
+    """
+    target = tmp_path / "config.toml"
+    # First: server block, then perms block (the real wiring order).
+    mcp_injector.inject_codex_mcp_server(target)
+    mcp_injector.inject_codex_tool_permissions(target)
+    # Re-wire the server (idempotent pass).
+    mcp_injector.inject_codex_mcp_server(target)
+    content = target.read_text(encoding="utf-8")
+    # Perms tables survived and the file still parses.
+    assert "[mcp_servers.secondbrain-memory-kit.tools.mem_recall]" in content
+    data = tomllib.loads(content)
+    assert (
+        data["mcp_servers"]["secondbrain-memory-kit"]["tools"]["mem_recall"][
+            "approval_mode"
+        ]
+        == "auto"
+    )
+    # Exactly one server command entry (no duplicate / orphan).
+    assert content.count("command = 'memory-kit-mcp'") == 1
+
+
+def test_full_codex_wire_then_perms_parses(tmp_path: Path):
+    """Server + perms in one file is valid TOML with no key collision."""
+    target = tmp_path / "config.toml"
+    target.write_text("[history]\npersistence = true\n", encoding="utf-8")
+    mcp_injector.inject_codex_mcp_server(target)
+    mcp_injector.inject_codex_tool_permissions(target)
+    data = tomllib.loads(target.read_text(encoding="utf-8"))
+    assert data["history"]["persistence"] is True
+    assert data["mcp_servers"]["secondbrain-memory-kit"]["command"] == "memory-kit-mcp"

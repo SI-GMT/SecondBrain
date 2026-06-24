@@ -40,9 +40,34 @@ log = logging.getLogger(__name__)
 START_MARKER = "# MEMORY-KIT:START"
 END_MARKER = "# MEMORY-KIT:END"
 
+# Tool-permission blocks live in their own fenced region, distinct from the
+# server-declaration block above. Codex purges orphan ``[mcp_servers.X...]``
+# sections on re-wire; the per-tool approval sub-tables sit inside this
+# PERMS fence and must be protected from that purge (see
+# ``inject_codex_mcp_server``). Mirrors deploy.ps1 / deploy.sh.
+PERMS_START_MARKER = "# MEMORY-KIT-PERMS:START"
+PERMS_END_MARKER = "# MEMORY-KIT-PERMS:END"
+
 DEFAULT_SERVER_NAME = "secondbrain-memory-kit"
 DEFAULT_COMMAND = "memory-kit-mcp"
 LEGACY_SERVER_NAMES = ("memory-kit",)
+
+# Canonical list of MCP tools exposed by the engine — kept in sync with
+# deploy.ps1 ``Get-SecondbrainMcpToolNames`` / deploy.sh
+# ``_secondbrain_mcp_tool_names``. Drives the per-tool auto-approve blocks.
+SECONDBRAIN_MCP_TOOLS: tuple[str, ...] = (
+    "mem", "mem_archeo", "mem_archeo_atlassian", "mem_archeo_context",
+    "mem_archeo_context_finalize", "mem_archeo_git", "mem_archeo_index_files",
+    "mem_archeo_plan", "mem_archeo_project_topology", "mem_archeo_stack",
+    "mem_archive", "mem_archive_rewrite_paths", "mem_check_update",
+    "mem_digest", "mem_doc", "mem_get_topology", "mem_goal",
+    "mem_health_repair", "mem_health_scan", "mem_help", "mem_historize",
+    "mem_init_project", "mem_list", "mem_merge", "mem_migrate", "mem_note",
+    "mem_person", "mem_principle", "mem_promote_domain", "mem_read_archive",
+    "mem_read_context", "mem_read_history", "mem_recall", "mem_reclass",
+    "mem_relocate_project", "mem_rename", "mem_rollback_archive", "mem_search",
+    "mem_update_phase", "mem_vault_migrate", "mem_worklog",
+)
 
 
 class InjectStatus(str, Enum):
@@ -263,13 +288,25 @@ def inject_codex_mcp_server(
         re.escape(START_MARKER) + r"[\s\S]*?" + re.escape(END_MARKER)
     )
     without_fenced = fenced.sub("", existing)
+    # Preserve the MEMORY-KIT-PERMS block (auto-approve sub-tables) so the
+    # orphan purge below — whose regex matches
+    # ``[mcp_servers.<section>.tools.X]`` — neither eats it nor drops it on
+    # reconstruction. Mirrors deploy.ps1 Add-McpServerToTomlConfig.
+    perms_fenced = re.compile(
+        re.escape(PERMS_START_MARKER) + r"[\s\S]*?" + re.escape(PERMS_END_MARKER)
+    )
+    perms_match = perms_fenced.search(existing)
+    perms_block = perms_match.group(0) if perms_match else None
+    without_fenced_search = without_fenced
+    if perms_block:
+        without_fenced_search = perms_fenced.sub("", without_fenced)
     orphan = re.compile(
         r"(?m)^[ \t]*\[mcp_servers\."
         + re.escape(section_name)
         + r"(\.[^\]\r\n]*)?\][\s\S]*?(?=(\r?\n[ \t]*\[)|\Z)"
     )
-    cleaned = orphan.sub("", without_fenced).rstrip()
-    had_orphan = cleaned != without_fenced.rstrip()
+    cleaned = orphan.sub("", without_fenced_search).rstrip()
+    had_orphan = cleaned != without_fenced_search.rstrip()
 
     if fenced.search(existing) and not had_orphan:
         replaced = fenced.sub(block, existing)
@@ -296,6 +333,8 @@ def inject_codex_mcp_server(
 
     sep = "\n\n" if cleaned else ""
     merged = cleaned + sep + block + "\n"
+    if perms_block:
+        merged += "\n" + perms_block + "\n"
     try:
         _atomic_write_text(config_path, merged)
     except OSError as exc:
@@ -405,6 +444,175 @@ def inject_vibe_mcp_server(
         target_label=target_label,
         config_path=config_path,
         status=InjectStatus.ADDED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-tool auto-approve blocks — Codex + Mistral Vibe.
+# ---------------------------------------------------------------------------
+#
+# Each CLI carries its OWN approval schema; the desktop must emit the exact
+# one the CLI parses (a wrong schema is silently ignored, leaving prompts):
+#
+# * **Codex** — ``[mcp_servers.<server>.tools.<tool>]`` with
+#   ``approval_mode = "auto"``.
+# * **Mistral Vibe** — ``[tools.<server>_<tool>]`` with
+#   ``permission = "always"``. The tool key is ``<server>_<tool>`` where the
+#   server name is normalised (``[^A-Za-z0-9_-] -> _`` then strip ``_-``),
+#   which PRESERVES the hyphens in ``secondbrain-memory-kit``. Vibe has no
+#   ``[mcp.auto_approve]`` / ``[mcp.tools]`` table — those are ignored.
+#
+# Both share the fenced ``# MEMORY-KIT-PERMS`` region and the idempotent
+# writer below. Mirrors deploy.ps1 / deploy.sh.
+
+
+def _codex_perms_block(section_name: str, tools: tuple[str, ...]) -> str:
+    lines = [PERMS_START_MARKER]
+    for t in tools:
+        lines.append(f"[mcp_servers.{section_name}.tools.{t}]")
+        lines.append('approval_mode = "auto"')
+        lines.append("")
+    lines.append(PERMS_END_MARKER)
+    return "\n".join(lines)
+
+
+def _vibe_perms_block(server_name: str, tools: tuple[str, ...]) -> str:
+    lines = [PERMS_START_MARKER]
+    for t in tools:
+        lines.append(f"[tools.{server_name}_{t}]")
+        lines.append('permission = "always"')
+        lines.append("")
+    lines.append(PERMS_END_MARKER)
+    return "\n".join(lines)
+
+
+def _write_fenced_perms_block(
+    config_path: Path, target_label: str, block: str
+) -> InjectResult:
+    """Idempotently write a ``# MEMORY-KIT-PERMS`` fenced block.
+
+    Replaces the existing fenced region in place, recovers from an orphan
+    START marker (END lost by an earlier cleanup), or appends a fresh block.
+    """
+    if not config_path.is_file():
+        try:
+            _atomic_write_text(config_path, block + "\n")
+        except OSError as exc:
+            return InjectResult(
+                target_label=target_label,
+                config_path=config_path,
+                status=InjectStatus.SKIPPED,
+                detail=f"write failed: {exc}",
+            )
+        return InjectResult(
+            target_label=target_label,
+            config_path=config_path,
+            status=InjectStatus.CREATED,
+        )
+
+    try:
+        existing = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return InjectResult(
+            target_label=target_label,
+            config_path=config_path,
+            status=InjectStatus.SKIPPED,
+            detail=f"unreadable: {exc}",
+        )
+
+    start = existing.find(PERMS_START_MARKER)
+    if start >= 0:
+        end_search = existing.find(PERMS_END_MARKER, start)
+        if end_search < 0:
+            # Orphan START (END lost by an earlier cleanup): drop the lone
+            # START line, then append a clean block.
+            cleaned = re.sub(
+                r"(?m)^[ \t]*" + re.escape(PERMS_START_MARKER) + r"[ \t]*\r?\n?",
+                "",
+                existing,
+            )
+            if not cleaned.endswith("\n"):
+                cleaned += "\n"
+            merged = cleaned + "\n" + block + "\n"
+            try:
+                _atomic_write_text(config_path, merged)
+            except OSError as exc:
+                return InjectResult(
+                    target_label=target_label,
+                    config_path=config_path,
+                    status=InjectStatus.SKIPPED,
+                    detail=f"write failed: {exc}",
+                )
+            return InjectResult(
+                target_label=target_label,
+                config_path=config_path,
+                status=InjectStatus.UPDATED,
+                detail="orphan START recovered",
+            )
+        end = end_search + len(PERMS_END_MARKER)
+        new = existing[:start] + block + existing[end:]
+        if new == existing:
+            return InjectResult(
+                target_label=target_label,
+                config_path=config_path,
+                status=InjectStatus.UNCHANGED,
+            )
+        try:
+            _atomic_write_text(config_path, new)
+        except OSError as exc:
+            return InjectResult(
+                target_label=target_label,
+                config_path=config_path,
+                status=InjectStatus.SKIPPED,
+                detail=f"write failed: {exc}",
+            )
+        return InjectResult(
+            target_label=target_label,
+            config_path=config_path,
+            status=InjectStatus.UPDATED,
+        )
+
+    base = existing if existing.endswith("\n") else existing + "\n"
+    merged = base + "\n" + block + "\n"
+    try:
+        _atomic_write_text(config_path, merged)
+    except OSError as exc:
+        return InjectResult(
+            target_label=target_label,
+            config_path=config_path,
+            status=InjectStatus.SKIPPED,
+            detail=f"write failed: {exc}",
+        )
+    return InjectResult(
+        target_label=target_label,
+        config_path=config_path,
+        status=InjectStatus.ADDED,
+    )
+
+
+def inject_codex_tool_permissions(
+    config_path: Path,
+    *,
+    target_label: str = "Codex",
+    section_name: str = DEFAULT_SERVER_NAME,
+    tools: tuple[str, ...] = SECONDBRAIN_MCP_TOOLS,
+) -> InjectResult:
+    """Auto-approve every MCP tool for Codex via per-tool sub-tables."""
+    return _write_fenced_perms_block(
+        config_path, target_label, _codex_perms_block(section_name, tools)
+    )
+
+
+def inject_vibe_tool_permissions(
+    config_path: Path,
+    *,
+    target_label: str = "Mistral Vibe",
+    server_name: str = DEFAULT_SERVER_NAME,
+    tools: tuple[str, ...] = SECONDBRAIN_MCP_TOOLS,
+) -> InjectResult:
+    """Auto-approve every MCP tool for Vibe via ``[tools.X]`` permissions."""
+    return _write_fenced_perms_block(
+        config_path, target_label, _vibe_perms_block(server_name, tools)
     )
 
 
